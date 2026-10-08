@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch window (shown before the first frame): the Aerosphere Games logo centred on its background colour. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_bg" />
+    <item
+        android:width="@dimen/splash_window_logo_w"
+        android:height="@dimen/splash_window_logo_h"
+        android:drawable="@drawable/splash_logo_window"
+        android:gravity="center" />
+</layer-list>

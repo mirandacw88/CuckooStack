@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ system splash icon: intentionally empty. The system splash can only show a round icon,
+     which would crop the wide logo, so it shows only the background colour and the logo appears right after. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+</shape>

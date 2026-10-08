@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Opening splash: Aerosphere Games logo centred on its background colour (SplashBackground colour set), 80% of the width up to 520 pt (scripts/splash/make_splash.py).
+     IOSApp.mm keeps an identical overlay up after launch, then fades it out. -->
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22505" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="LSV-01-ctl">
+    <device id="retina6_12" orientation="portrait" appearance="dark"/>
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22504"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="LSV-01-scn">
+            <objects>
+                <viewController id="LSV-01-ctl" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="LSV-01-vw">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="1" verticalHuggingPriority="1" horizontalCompressionResistancePriority="1" verticalCompressionResistancePriority="1" image="SplashLogo" translatesAutoresizingMaskIntoConstraints="NO" id="LSV-01-img">
+                                <rect key="frame" x="39" y="361" width="314" height="104"/>
+                                <constraints>
+                                    <constraint firstAttribute="width" relation="lessThanOrEqual" constant="520" id="LSV-01-cmax"/>
+                                    <constraint firstAttribute="width" secondItem="LSV-01-img" secondAttribute="height" multiplier="1560:576" id="LSV-01-casp"/>
+                                </constraints>
+                            </imageView>
+                        </subviews>
+                        <color key="backgroundColor" name="SplashBackground"/>
+                        <constraints>
+                            <constraint firstItem="LSV-01-img" firstAttribute="centerX" secondItem="LSV-01-vw" secondAttribute="centerX" id="LSV-01-ccx"/>
+                            <constraint firstItem="LSV-01-img" firstAttribute="centerY" secondItem="LSV-01-vw" secondAttribute="centerY" id="LSV-01-ccy"/>
+                            <constraint firstItem="LSV-01-img" firstAttribute="width" secondItem="LSV-01-vw" secondAttribute="width" multiplier="0.8" priority="999" id="LSV-01-cw"/>
+                            <constraint firstItem="LSV-01-img" firstAttribute="width" relation="lessThanOrEqual" secondItem="LSV-01-vw" secondAttribute="width" multiplier="0.8" id="LSV-01-cwmax"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="LSV-01-fr" sceneMemberID="firstResponder"/>
+            </objects>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="SplashLogo" width="520" height="192"/>
+        <namedColor name="SplashBackground">
+            <color red="0.035" green="0.055" blue="0.145" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+        </namedColor>
+    </resources>
+</document>

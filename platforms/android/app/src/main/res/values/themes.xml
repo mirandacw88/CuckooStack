@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.CuckooStack" parent="Theme.AppCompat.NoActionBar">
+        <!-- launch window: logo on white, matching the in-app opening splash (CuckooActivity) -->
+        <item name="android:windowBackground">@drawable/splash_window</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="28">shortEdges</item>
+    </style>
+</resources>
