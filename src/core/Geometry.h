@@ -10,13 +10,6 @@
 
 namespace cs {
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 normal;
-    glm::vec2 uv;
-};
-static_assert(sizeof(Vertex) == 32, "Vertex must stay 32 bytes (GPU layout)");
-
 struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;

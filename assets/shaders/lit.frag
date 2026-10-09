@@ -68,6 +68,7 @@ void main() {
         color = emissive; // MeshBasicMaterial
     } else {
         vec3 N = normalize(vNormal);
+        if (!gl_FrontFacing) N = -N; // two-sided pass (glass shards): light the inside of the shell too
         vec3 V = normalize(F.cameraPos.xyz - vWorld);
         vec3 albedo = vColor.rgb;
         float metal = vParams.x, rough = vParams.y;

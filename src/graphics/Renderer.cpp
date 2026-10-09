@@ -187,6 +187,8 @@ bool Renderer::uploadMeshes() {
         const size_t base = vertices.size();
         if (base + lib[i].vertices.size() > 0xFFFF) { CS_LOGE("Mesh library exceeds 16-bit indices"); return false; }
         meshes_[i] = {static_cast<uint32_t>(indices.size()), static_cast<uint32_t>(lib[i].indices.size()), 0};
+        if (i == size_t(MeshId::HenBody)) heroBase_ = static_cast<uint32_t>(base);
+        if (i >= size_t(MeshId::HenBody) && i <= size_t(MeshId::HenBeak)) heroCount_ += static_cast<uint32_t>(lib[i].vertices.size());
         vertices.insert(vertices.end(), lib[i].vertices.begin(), lib[i].vertices.end());
         for (uint16_t idx : lib[i].indices) indices.push_back(static_cast<uint16_t>(idx + base));
     }
@@ -389,6 +391,17 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
     const auto [worldTextFirst, worldTextCount] = push(list.worldText);
     const bool textReady = uploadedAtlas_ != nullptr;
     f.instances.flush(0, VkDeviceSize(used) * sizeof(Instance));
+    // the posed hen: indices already carry the library's vertex offsets (no base-vertex on some Metal GPUs), so it is
+    // written at the same offsets into a per-frame buffer as long as the library up to its end (made on first use)
+    if (heroCount_ && !f.hero.mapped() &&
+        !f.hero.createMapped(ctx_.allocator, VkDeviceSize(heroBase_ + heroCount_) * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
+        heroCount_ = 0; // out of memory: the hen keeps its rest pose
+    const bool heroPosed = heroCount_ && f.hero.mapped() && list.heroVerts.size() == heroCount_;
+    if (heroPosed) {
+        const VkDeviceSize off = VkDeviceSize(heroBase_) * sizeof(Vertex), bytes = VkDeviceSize(heroCount_) * sizeof(Vertex);
+        std::memcpy(static_cast<uint8_t*>(f.hero.mapped()) + off, list.heroVerts.data(), size_t(bytes));
+        f.hero.flush(off, bytes);
+    }
 
     auto* parts = static_cast<Particle*>(f.particles.mapped());
     const uint32_t smokeCount = static_cast<uint32_t>(std::min(list.particlesSmoke.size(), kMaxParticles));
@@ -443,11 +456,15 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
             for (const Batch& b : batches[size_t(p)]) {
                 const MeshRange& m = meshes_[size_t(b.mesh)];
                 const VkDeviceSize off = VkDeviceSize(b.first) * sizeof(Instance);
+                const bool hero = heroPosed && b.mesh >= MeshId::HenBody && b.mesh <= MeshId::HenBeak;
+                if (hero) { VkBuffer hb = f.hero.handle(); vkCmdBindVertexBuffers(cmd, 0, 1, &hb, &zero); }
                 vkCmdBindVertexBuffers(cmd, 1, 1, &ib, &off);
                 vkCmdDrawIndexed(cmd, m.indexCount, b.count, m.firstIndex, m.vertexOffset, 0);
+                if (hero) vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
             }
         };
         drawPass(Pass::Lit, pipes_.lit);
+        drawPass(Pass::LitTwoSided, pipes_.litTwoSided);
         drawPass(Pass::UnlitAlpha, pipes_.unlitAlpha);
 
         if (worldTextCount && textReady) { // neon sign words, today's-best gate label
@@ -765,7 +782,7 @@ void Renderer::shutdown() {
     vkDeviceWaitIdle(ctx_.device);
     destroyTargets();
     for (Frame& f : frames_) {
-        f.ubo.destroy(); f.instances.destroy(); f.particles.destroy();
+        f.ubo.destroy(); f.instances.destroy(); f.particles.destroy(); f.hero.destroy();
         if (f.inFlight) vkDestroyFence(ctx_.device, f.inFlight, nullptr);
         if (f.imageAvailable) vkDestroySemaphore(ctx_.device, f.imageAvailable, nullptr);
         if (f.pool) vkDestroyCommandPool(ctx_.device, f.pool, nullptr);

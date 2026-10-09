@@ -1,4 +1,5 @@
 #include "Geometry.h"
+#include "HenModel.h"
 
 namespace cs::geo {
 
@@ -191,6 +192,14 @@ std::vector<MeshData> buildMeshLibrary() {
     at(MeshId::Plane) = geo::plane(1, 1);
     at(MeshId::RingFlat) = geo::ring(0.86f, 1.f, 64);
     at(MeshId::Circle) = geo::circle(1, 24);
+    // the hen model in its rest pose (the renderer streams the posed vertices over these every frame)
+    const HenModel& hen = henModel();
+    if (hen.ok)
+        for (int r = 0; r < HenModel::kRegions; ++r) {
+            MeshData& m = at(MeshId(int(MeshId::HenBody) + r));
+            for (const HenModel::V& v : hen.verts[size_t(r)]) m.vertices.push_back({v.pos, v.normal, {0, 0}});
+            m.indices = hen.indices[size_t(r)];
+        }
     return lib;
 }
 

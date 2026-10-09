@@ -69,6 +69,7 @@ private:
         VkFence inFlight = VK_NULL_HANDLE;
         VkSemaphore imageAvailable = VK_NULL_HANDLE;
         VulkanBuffer ubo, instances, particles;
+        VulkanBuffer hero; // the skinned hen (RenderList::heroVerts), at the same vertex offsets as the static library
         VkDescriptorSet frameSet = VK_NULL_HANDLE;
     };
     struct MeshRange { uint32_t firstIndex, indexCount; int32_t vertexOffset; };
@@ -95,6 +96,7 @@ private:
 
     VulkanBuffer vertexBuffer_, indexBuffer_;
     std::array<MeshRange, kMeshCount> meshes_{};
+    uint32_t heroBase_ = 0, heroCount_ = 0; // vertex range of MeshId::HenBody..HenBeak in the library
 
     VulkanImage hdr_, depth_, bloomA_, bloomB_;
     VulkanImage fontAtlas_;

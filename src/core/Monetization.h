@@ -49,6 +49,9 @@ public:
 
     int lifetimeRuns() const { return lifetimeRuns_; }
 
+    // developer menu: clear every cap and cooldown; `adReady` also makes the next game over show an interstitial
+    void debugReset(bool adReady);
+
 private:
     void rollDay() const;
     void save() const;

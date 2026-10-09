@@ -15,9 +15,10 @@ HenSkin skin(const char* body, const char* plate, const char* accent, const char
     return s;
 }
 
-Cosmetic outfit(const char* id, const char* name, Unlock u, int price, int level, HenSkin s) {
+Cosmetic outfit(const char* id, const char* name, Unlock u, int price, int level, HenSkin s, Aura aura = Aura::None) {
     Cosmetic c{id, name, Slot::Outfit, u, price, level};
     c.skin = s;
+    c.skin.aura = aura;
     return c;
 }
 Cosmetic trail(const char* id, const char* name, Unlock u, int price, int level, Trail t, const char* a, const char* b) {
@@ -35,20 +36,20 @@ std::vector<Cosmetic> build() {
     std::vector<Cosmetic> v;
     // outfits
     v.push_back(outfit("hen_classic", "Classic", Unlock::Free, 0, 0, HenSkin{}));
-    v.push_back(outfit("hen_midnight", "Midnight", Unlock::Level, 0, 3, skin("#1d1f2e", "#0c0d14", "#9a5bff", "#29e7ff", 0.2f, 0.45f, 0.02f)));
-    v.push_back(outfit("hen_vapor", "Vaporwave", Unlock::Coins, 600, 0, skin("#ffc2ec", "#2a6f86", "#9a5bff", "#f4ff5a", 0.f, 0.5f, 0.09f)));
-    v.push_back(outfit("hen_toxic", "Toxic", Unlock::Coins, 900, 0, skin("#c6ff4a", "#163a1c", "#ff2bd6", "#f4ff5a", 0.f, 0.5f, 0.12f)));
-    v.push_back(outfit("hen_ice", "Cryo", Unlock::Level, 0, 8, skin("#cfeaff", "#5c7fa8", "#ffffff", "#29e7ff", 0.6f, 0.2f, 0.1f, "#ffffff")));
-    v.push_back(outfit("hen_lava", "Magma", Unlock::Coins, 1500, 0, skin("#3a0d0a", "#120404", "#ff6a2b", "#ff8a1a", 0.3f, 0.5f, 0.02f, "#ff8a1a", "#ff6a2b")));
-    v.push_back(outfit("hen_gold", "Gold Rush", Unlock::Coins, 2500, 0, skin("#ffcc4d", "#1a1408", "#f4ff5a", "#29e7ff", 0.95f, 0.18f, 0.02f, "#ffe9a8", "#fff2b0")));
-    v.push_back(outfit("hen_chrome", "Liquid Chrome", Unlock::Featured, 3000, 0, skin("#e9eef7", "#7d8597", "#29e7ff", "#ff2bd6", 1.f, 0.12f, 0.f, "#ffffff")));
-    v.push_back(outfit("hen_tiger", "Neon Tiger", Unlock::Featured, 2000, 0, skin("#ff8a1a", "#14090a", "#ff2bd6", "#29e7ff", 0.f, 0.5f, 0.06f)));
-    v.push_back(outfit("hen_holo", "Hologram", Unlock::Featured, 2200, 0, skin("#9ff6ff", "#2a3a66", "#29e7ff", "#ffffff", 0.f, 0.3f, 0.35f, "#c9fbff")));
-    v.push_back(outfit("hen_sakura", "Sakura", Unlock::Level, 0, 14, skin("#ffe3f2", "#4a1f3d", "#ff7ae6", "#2bff9a", 0.f, 0.55f, 0.08f)));
+    v.push_back(outfit("hen_midnight", "Midnight", Unlock::Level, 0, 3, skin("#1d1f2e", "#0c0d14", "#9a5bff", "#29e7ff", 0.2f, 0.45f, 0.02f), Aura::Midnight));
+    v.push_back(outfit("hen_vapor", "Vaporwave", Unlock::Coins, 600, 0, skin("#ffc2ec", "#2a6f86", "#9a5bff", "#f4ff5a", 0.f, 0.5f, 0.09f), Aura::Vapor));
+    v.push_back(outfit("hen_toxic", "Toxic", Unlock::Coins, 900, 0, skin("#c6ff4a", "#163a1c", "#ff2bd6", "#f4ff5a", 0.f, 0.5f, 0.12f), Aura::Toxic));
+    v.push_back(outfit("hen_ice", "Cryo", Unlock::Level, 0, 8, skin("#cfeaff", "#5c7fa8", "#ffffff", "#29e7ff", 0.6f, 0.2f, 0.1f, "#ffffff"), Aura::Cryo));
+    v.push_back(outfit("hen_lava", "Magma", Unlock::Coins, 1500, 0, skin("#3a0d0a", "#120404", "#ff6a2b", "#ff8a1a", 0.3f, 0.5f, 0.02f, "#ff8a1a", "#ff6a2b"), Aura::Magma));
+    v.push_back(outfit("hen_gold", "Gold Rush", Unlock::Coins, 2500, 0, skin("#ffcc4d", "#1a1408", "#f4ff5a", "#29e7ff", 0.95f, 0.18f, 0.02f, "#ffe9a8", "#fff2b0"), Aura::Gold));
+    v.push_back(outfit("hen_chrome", "Liquid Chrome", Unlock::Featured, 3000, 0, skin("#e9eef7", "#7d8597", "#29e7ff", "#ff2bd6", 1.f, 0.12f, 0.f, "#ffffff"), Aura::Chrome));
+    v.push_back(outfit("hen_tiger", "Neon Tiger", Unlock::Featured, 2000, 0, skin("#ff8a1a", "#14090a", "#ff2bd6", "#29e7ff", 0.f, 0.5f, 0.06f), Aura::Tiger));
+    v.push_back(outfit("hen_holo", "Hologram", Unlock::Featured, 2200, 0, skin("#9ff6ff", "#2a3a66", "#29e7ff", "#ffffff", 0.f, 0.3f, 0.35f, "#c9fbff"), Aura::Holo));
+    v.push_back(outfit("hen_sakura", "Sakura", Unlock::Level, 0, 14, skin("#ffe3f2", "#4a1f3d", "#ff7ae6", "#2bff9a", 0.f, 0.55f, 0.08f), Aura::Sakura));
     {
         HenSkin g = skin("#101018", "#05050a", "#ff2bd6", "#29e7ff", 0.3f, 0.35f, 0.f);
         g.rainbow = true;
-        v.push_back(outfit("hen_glitch", "Glitch Hen", Unlock::Starter, 0, 0, g));
+        v.push_back(outfit("hen_glitch", "Glitch Hen", Unlock::Starter, 0, 0, g, Aura::Glitch));
     }
     // trails
     v.push_back(trail("trail_none", "No trail", Unlock::Free, 0, 0, Trail::None, "#3a3150", "#2a2440"));
@@ -112,6 +113,22 @@ Wallet::Wallet(IStorage* storage, IAnalytics* analytics) : analytics_(analytics)
     if (!findCosmetic(tryOn_) || tryOnRuns_ <= 0) { tryOn_.clear(); tryOnRuns_ = 0; }
     featuredId_ = rec_.s("feat");
     featuredAds_ = rec_.i("feat_ads");
+}
+
+void Wallet::debugSetCoins(int coins) {
+    coins_ = std::max(0, coins);
+    save();
+}
+
+void Wallet::debugLockAll() {
+    owned_.clear();
+    for (const Cosmetic& c : catalog())
+        if (c.unlock == Unlock::Free) owned_.push_back(c.id);
+    const char* defs[3] = {"hen_classic", "trail_none", "crash_feathers"};
+    for (int i = 0; i < 3; ++i)
+        if (!owns(equipped_[i])) equipped_[i] = defs[i];
+    tryOn_.clear(); tryOnRuns_ = 0; featuredAds_ = 0;
+    save();
 }
 
 void Wallet::save() const {

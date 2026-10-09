@@ -1,4 +1,5 @@
 #include "Hen.h"
+#include "HenModel.h"
 
 namespace cs {
 
@@ -54,6 +55,7 @@ Hen::Hen() {
     const int visorPivot = add(head, {0, 0.05f, 0}, {kPi / 2, 0, 0});
     part(visorPivot, MeshId::Visor, Mat::Cyan, {}, {0, 0, -1.25f}, {1, 1, 1});
 
+    firstLegPart_ = parts_.size();
     for (int k = 0; k < 2; ++k) {
         const float s = k == 0 ? -1.f : 1.f;
         const int lp = add(root, {0.04f, 0.24f, s * 0.12f});
@@ -64,6 +66,17 @@ Hen::Hen() {
                  {0.0125f, 0.13f, 0.0125f});
         legs[k] = lp;
     }
+
+    // the model's bones are the animated nodes; remember where each sits in body space at rest
+    useModel = henModel().ok;
+    std::vector<glm::mat4> world(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const glm::mat4 local = compose(nodes[i].pos, nodes[i].rot, nodes[i].scale);
+        world[i] = nodes[i].parent < 0 ? local : world[size_t(nodes[i].parent)] * local;
+    }
+    const int bones[HenModel::kBones] = {body, head, wings[0], wings[1], tail};
+    const glm::mat4 bodyInv = glm::inverse(world[size_t(body)]);
+    for (int k = 0; k < HenModel::kBones; ++k) boneRestInv_[size_t(k)] = glm::inverse(bodyInv * world[size_t(bones[k])]);
 }
 
 glm::vec3 Hen::accent() const { return skin.rainbow ? hueColor(time * 0.6f) : skin.accent; }
@@ -85,16 +98,145 @@ LitMaterial Hen::material(Mat m) const {
     return l;
 }
 
-void Hen::emit(RenderList& out) const {
+std::vector<glm::mat4> Hen::worldTransforms() const {
     std::vector<glm::mat4> world(nodes.size());
     for (size_t i = 0; i < nodes.size(); ++i) {
         const Node& n = nodes[i];
         const glm::mat4 local = compose(n.pos, n.rot, n.scale);
-        world[i] = n.parent < 0 ? local : world[n.parent] * local;
+        world[i] = n.parent < 0 ? local : world[size_t(n.parent)] * local;
     }
-    for (const Part& p : parts_) {
+    return world;
+}
+
+void Hen::emit(RenderList& out) const {
+    if (shattered_) { emitShards(out); return; }
+    const std::vector<glm::mat4> world = worldTransforms();
+    for (size_t i = useModel ? firstLegPart_ : 0; i < parts_.size(); ++i) {
+        const Part& p = parts_[i];
         if (p.node == tipNode_ && !tipVisible) continue;
         out.add(Pass::Lit, p.mesh) = makeLit(world[p.node] * p.local, material(p.mat));
+    }
+    if (useModel) emitModel(out, world);
+}
+
+// Linear-blend skinning on the CPU: each bone is one of the animated nodes, so everything that animates the
+// procedural hen (wing flaps, head bob, tail wag, squash) bends the model the same way.
+void Hen::poseModel(const std::vector<glm::mat4>& world, std::vector<Vertex>& out) const {
+    const HenModel& m = henModel();
+    const int bones[HenModel::kBones] = {body, head, wings[0], wings[1], tail};
+    const glm::mat4 bodyInv = glm::inverse(world[size_t(body)]);
+    glm::mat4 M[HenModel::kBones];
+    glm::mat3 R[HenModel::kBones];
+    for (int k = 0; k < HenModel::kBones; ++k) {
+        M[k] = bodyInv * world[size_t(bones[k])] * boneRestInv_[size_t(k)];
+        R[k] = glm::mat3(M[k]);
+    }
+    out.reserve(out.size() + m.vertexCount);
+    for (int r = 0; r < HenModel::kRegions; ++r)
+        for (const HenModel::V& v : m.verts[size_t(r)]) {
+            glm::vec3 p{0.f}, n{0.f};
+            for (int k = 0; k < HenModel::kBones; ++k) {
+                if (v.w[k] <= 0.f) continue;
+                p += v.w[k] * glm::vec3(M[k] * glm::vec4(v.pos, 1.f));
+                n += v.w[k] * (R[k] * v.normal);
+            }
+            out.push_back({p, glm::normalize(n), {0.f, 0.f}});
+        }
+}
+
+namespace {
+constexpr Hen::Mat kRegionMat[HenModel::kRegions] = {Hen::Mat::White, Hen::Mat::PinkDim, Hen::Mat::Cyan, Hen::Mat::Plate, Hen::Mat::Gold};
+}
+
+void Hen::emitModel(RenderList& out, const std::vector<glm::mat4>& world) const {
+    poseModel(world, out.heroVerts);
+    const glm::mat4& bodyWorld = world[size_t(body)];
+    for (int r = 0; r < HenModel::kRegions; ++r)
+        out.add(Pass::Lit, MeshId(int(MeshId::HenBody) + r)) = makeLit(bodyWorld, material(kRegionMat[r]));
+}
+
+void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed) {
+    if (!useModel) return;
+    const HenModel& m = henModel();
+    const std::vector<glm::mat4> world = worldTransforms();
+    std::vector<Vertex> posed;
+    poseModel(world, posed);
+    const glm::mat4& bodyWorld = world[size_t(body)];
+    const glm::mat3 bodyRot = glm::mat3(bodyWorld);
+    shatterRest_.resize(posed.size());
+    std::vector<glm::vec3> sum(size_t(m.shardCount), glm::vec3(0.f));
+    std::vector<int> cnt(size_t(m.shardCount), 0);
+    size_t k = 0;
+    for (int r = 0; r < HenModel::kRegions; ++r)
+        for (const HenModel::V& v : m.verts[size_t(r)]) {
+            const glm::vec3 p = glm::vec3(bodyWorld * glm::vec4(posed[k].pos, 1.f));
+            shatterRest_[k] = {p, glm::normalize(bodyRot * posed[k].normal), {0.f, 0.f}};
+            sum[size_t(v.shard)] += p;
+            ++cnt[size_t(v.shard)];
+            ++k;
+        }
+    uint32_t state = seed * 747796405u + 2891336453u;
+    auto rnd = [&state](float lo, float hi) {
+        state = state * 747796405u + 2891336453u;
+        const uint32_t w = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+        return lo + (hi - lo) * float((w >> 22u) ^ w) / 4294967296.f;
+    };
+    shards_.assign(size_t(m.shardCount), {});
+    for (size_t i = 0; i < shards_.size(); ++i) {
+        Shard& s = shards_[i];
+        s.c0 = s.c = cnt[i] ? sum[i] / float(cnt[i]) : impact;
+        glm::vec3 out = s.c0 - impact + glm::vec3(rnd(-0.2f, 0.2f), rnd(0.f, 0.3f), rnd(-0.2f, 0.2f));
+        out = glm::length(out) > 1e-4f ? glm::normalize(out) : glm::vec3(0, 1, 0);
+        s.v = out * rnd(2.5f, 6.f) + velocity * 0.45f + glm::vec3(0, rnd(1.5f, 3.5f), rnd(-1.f, 1.f));
+        s.axis = glm::normalize(glm::vec3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)) + glm::vec3(0.001f));
+        s.angle = 0.f;
+        s.spin = rnd(5.f, 14.f) * (rnd(0, 1) < 0.5f ? -1.f : 1.f);
+    }
+    floorY_ = floorY;
+    shatterT_ = 0.f;
+    shattered_ = true;
+}
+
+void Hen::updateShatter(float dt) {
+    if (!shattered_) return;
+    shatterT_ += dt;
+    for (Shard& s : shards_) {
+        s.v.y -= 14.f * dt;
+        s.c += s.v * dt;
+        s.angle += s.spin * dt;
+        if (s.c.y < floorY_ + 0.04f && s.v.y < 0.f) { // bounce, scattering on the ground
+            s.c.y = floorY_ + 0.04f;
+            s.v.y = -s.v.y * 0.3f;
+            s.v.x *= 0.55f; s.v.z *= 0.55f;
+            s.spin *= 0.5f;
+        }
+    }
+}
+
+// The shards, each a rigid piece: rotated about its own centre, carried along its path, shrinking away at the end.
+void Hen::emitShards(RenderList& out) const {
+    const HenModel& m = henModel();
+    const float fade = 1.f - glm::smoothstep(kShatterLife * 0.6f, kShatterLife, shatterT_);
+    if (fade <= 0.f) return;
+    std::vector<glm::mat3> rot(shards_.size());
+    for (size_t i = 0; i < shards_.size(); ++i) rot[i] = glm::mat3(glm::rotate(glm::mat4(1.f), shards_[i].angle, shards_[i].axis));
+    out.heroVerts.reserve(m.vertexCount);
+    size_t k = 0;
+    for (int r = 0; r < HenModel::kRegions; ++r)
+        for (const HenModel::V& v : m.verts[size_t(r)]) {
+            const size_t si = size_t(v.shard);
+            const Shard& s = shards_[si];
+            const Vertex& rest = shatterRest_[k++];
+            out.heroVerts.push_back({s.c + rot[si] * ((rest.pos - s.c0) * fade), rot[si] * rest.normal, {0.f, 0.f}});
+        }
+    // glassy: a bright, cool fresnel edge on every shard
+    for (int r = 0; r < HenModel::kRegions; ++r) {
+        LitMaterial l = material(kRegionMat[r]);
+        l.rimColor = glm::vec3(0.75f, 0.95f, 1.f);
+        l.rimStrength = 3.2f;
+        l.rimPow = 2.f;
+        l.roughness = std::min(l.roughness, 0.18f);
+        out.add(Pass::LitTwoSided, MeshId(int(MeshId::HenBody) + r)) = makeLit(glm::mat4(1.f), l);
     }
 }
 

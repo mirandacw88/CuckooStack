@@ -19,6 +19,7 @@ public:
     int xpToNext() const;                          // needed for the next level
     float fraction() const { return float(xp_) / float(std::max(1, xpToNext())); }
     int add(int xp);                               // returns how many levels were gained
+    void debugSetLevel(int level);                 // developer menu: jump to a level with 0 xp
 
 private:
     const Tuning& t_;
@@ -37,6 +38,7 @@ public:
     Status status() const;             // Saveable: missed exactly one day; can be kept with an ad or coins
     void played();                     // a run started today
     void keep();                       // save / repair: the missed day counts as played
+    void debugSet(int count, int daysSinceLastRun); // developer menu: e.g. (5, 2) = a 5-day streak, missed yesterday
 
 private:
     void save();
@@ -88,6 +90,7 @@ public:
     bool claimable() const;
     int dayIndex() const { return claims_ % 7; }       // 0..6: which step of the ladder is next
     int claim();                                       // returns the ladder step just claimed
+    void debugSet(int claims, bool claimable);         // developer menu: ladder position, claimable again today
     int claims() const { return claims_; }
 
 private:

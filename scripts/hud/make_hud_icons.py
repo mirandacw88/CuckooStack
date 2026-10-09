@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """HUD icon atlas: every full-colour sprite the HUD draws (coin spin, streak flame, chests, menu icons, close button).
 
-    python3 scripts/hud/make_hud_icons.py       (needs Google Chrome)
+    python3 scripts/hud/make_hud_icons.py       (needs Pillow, and Google Chrome for the vector sprites)
+
+Without Chrome the vector part of the existing atlas is reused as is, so the raster sprites (shop art, outfit
+tiles) can still be updated; drawing changes to the vector sprites need Chrome.
 
 Writes:
   assets/hud/hud_icons.png   COLS x ROWS grid of 192 x 192 px frames (RGBA, transparent background)
   src/core/HudIcons.h        enum class Icon (frame index per sprite) + the grid size, used by Game::hudSprite
 
-Raster sprites: the coin-shop art (piles, chest, menu buttons, price buttons, the FREE frame, ...) comes from the
-artist's sheet, cut out by scripts/hud/extract_shop_sprites.py into assets/hud/shop/*.png; png() embeds those in
-their cells (with an optional baked glow). The 3x art is packed at 192 px per cell and the atlas mip chain serves
-the 2x and 1x screens.
+Raster sprites come from the artist's sheets in assets/hud/source/:
+  - coin-shop art (piles, chest, menu and price buttons, the FREE frame, ...): scripts/hud/extract_shop_sprites.py
+    cuts it into assets/hud/shop/*.png, and png() embeds each in its cell (with an optional baked glow);
+  - Locker outfit tiles: scripts/hud/extract_outfit_tiles.py -> assets/hud/outfits/, pasted with Pillow into
+    2 x 2 cell blocks.
+The 3x art is packed at 192 px per cell (384 px per outfit tile) and the atlas mip chain serves 2x and 1x screens.
 
 Style rules, shared by every icon so they read as one set: dark outline, gradient body lit from the top-left, a
 darker bottom shade, a light rim on the top-left edge and a neon rim on the right, a soft gloss highlight, and a
@@ -27,6 +32,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT_PNG = os.path.join(ROOT, "assets", "hud", "hud_icons.png")
 OUT_H = os.path.join(ROOT, "src", "core", "HudIcons.h")
 SHOP = os.path.join(ROOT, "assets", "hud", "shop")
+OUTFITS = os.path.join(ROOT, "assets", "hud", "outfits")
 CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 F = 192
 COLS = 8
@@ -355,12 +361,12 @@ def settings():
             + '<circle cx="47" cy="47" r="3" fill="#ffffff" opacity="0.5"/>')
 
 
-def png(name, span=1, pad=8, fill=False, glow=0.0):
+def png(name, span=1, pad=8, fill=False, glow=0.0, rows=1, folder=None):
     """A sprite from assets/hud/shop/<name>.png placed in its cell(s) in raw cell pixels. fill=True stretches it to
     the padded cell (9-slice frames, 2:1 buttons); otherwise it keeps its aspect, centred. glow bakes a soft halo of
     the sprite's own colours behind it at that opacity."""
-    data = base64.b64encode(open(os.path.join(SHOP, name + ".png"), "rb").read()).decode()
-    w, h = F * span - 2 * pad, F - 2 * pad
+    data = base64.b64encode(open(os.path.join(folder or SHOP, name + ".png"), "rb").read()).decode()
+    w, h = F * span - 2 * pad, F * rows - 2 * pad
     aspect = "none" if fill else "xMidYMid meet"
     img = f'x="{pad}" y="{pad}" width="{w}" height="{h}" preserveAspectRatio="{aspect}" href="data:image/png;base64,{data}"'
     halo = f'<image {img} filter="url(#pngGlow)" opacity="{glow}"/>' if glow > 0 else ""
@@ -398,6 +404,33 @@ ICONS = [("Coin", [coin(a) for a in (0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5)])
          ("BtnDark", [png("btn_dark", 2, 6, fill=True)], {"span": 2, "raw": True}),
          ("RibbonBest", [png("ribbon_best", 2, 4)], {"span": 2, "raw": True})]
 
+# Locker outfit tiles (scripts/hud/extract_outfit_tiles.py): 2 x 2 cells each (384 px wide = 3x of a ~125 pt tile),
+# packed after everything else, four per double row. Enum names follow the cosmetic ids (hen_lava -> OutfitLava).
+OUTFIT_IDS = ["classic", "midnight", "vapor", "toxic", "ice", "lava", "gold", "chrome", "tiger", "holo", "sakura", "glitch"]
+TILES = [("Outfit" + o.capitalize(), "hen_" + o) for o in OUTFIT_IDS]
+
+
+def paste_tiles(png_path, first_row):
+    """Raster tiles go straight into the atlas with Pillow (Lanczos resize to the 2 x 2 block, centred)."""
+    from PIL import Image
+    atlas = Image.open(png_path).convert("RGBA")
+    rows_needed = first_row + (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
+    if atlas.height < rows_needed * F:
+        grown = Image.new("RGBA", (COLS * F, rows_needed * F))
+        grown.paste(atlas.crop((0, 0, COLS * F, min(atlas.height, first_row * F))), (0, 0))
+        atlas = grown
+    else:
+        atlas.paste(Image.new("RGBA", (COLS * F, atlas.height - first_row * F)), (0, first_row * F))
+    pad = 4
+    for k, (name, src) in enumerate(TILES):
+        col, row = (k % (COLS // 2)) * 2, first_row + (k // (COLS // 2)) * 2
+        t = Image.open(os.path.join(OUTFITS, src + ".png")).convert("RGBA")
+        bw, bh = 2 * F - 2 * pad, 2 * F - 2 * pad
+        s = min(bw / t.width, bh / t.height)
+        t = t.resize((round(t.width * s), round(t.height * s)), Image.LANCZOS)
+        atlas.alpha_composite(t, (col * F + (2 * F - t.width) // 2, row * F + (2 * F - t.height) // 2))
+    atlas.save(png_path)
+
 
 def place(i, content, scale=0.74, span=1, raw=False):
     x, y = (i % COLS) * F, (i // COLS) * F
@@ -409,9 +442,11 @@ def place(i, content, scale=0.74, span=1, raw=False):
 
 
 def main():
-    if not os.path.exists(CHROME):
+    # without Chrome, the vector part is reused from the existing atlas (only valid if those sprites didn't change)
+    reuse = not os.path.exists(CHROME)
+    if reuse and not os.path.exists(OUT_PNG):
         sys.exit("Google Chrome not found (set CHROME=/path/to/chrome)")
-    frames, enum, idx = [], [], 0
+    frames, enum, idx, tall = [], [], 0, []
     for item in ICONS:
         name, art = item[0], item[1]
         opts = item[2] if len(item) > 2 else {}
@@ -424,15 +459,26 @@ def main():
             frames.append(place(idx, a, scale, span, opts.get("raw", False)))
             idx += span
     rows = (idx + COLS - 1) // COLS
-    W, H = COLS * F, rows * F
+    svg_rows = rows
+    for k, (name, _) in enumerate(TILES):  # 2 x 2 blocks
+        col, row = (k % (COLS // 2)) * 2, rows + (k // (COLS // 2)) * 2
+        enum.append((name, row * COLS + col, 1, 2))
+        tall.append(name)
+    rows += (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
+    W, H = COLS * F, svg_rows * F
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">{DEFS}{"".join(frames)}</svg>'
     os.makedirs(os.path.dirname(OUT_PNG), exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "icons.svg")
-        open(path, "w").write(svg)
-        subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
-                        f"--window-size={W},{H}", "--default-background-color=00000000", f"--screenshot={OUT_PNG}",
-                        "file://" + path], check=True, capture_output=True)
+    if reuse:
+        print("Google Chrome not found: keeping the vector sprites already in", OUT_PNG)
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "icons.svg")
+            open(path, "w").write(svg)
+            subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
+                            f"--window-size={W},{H}", "--default-background-color=00000000", f"--screenshot={OUT_PNG}",
+                            "file://" + path], check=True, capture_output=True)
+    paste_tiles(OUT_PNG, svg_rows)
+    W, H = COLS * F, rows * F
     lines = ["// Generated by scripts/hud/make_hud_icons.py; do not edit. Frame indices into assets/hud/hud_icons.png.",
              "#pragma once", "", "namespace cs {", "",
              f"constexpr int kIconCols = {COLS}, kIconRows = {rows};", "",
@@ -447,6 +493,9 @@ def main():
     for name, i, n, span in enum:
         if span > 1:
             lines.append(f"    case Icon::{name}: return {span};")
+    lines += ["    default: return 1;", "    }", "}"]
+    lines += ["", "// sprites taller than one cell (the Locker outfit tiles)", "constexpr int iconRowSpan(Icon i) {", "    switch (i) {"]
+    lines += [f"    case Icon::{name}: return 2;" for name in tall]
     lines += ["    default: return 1;", "    }", "}"]
     lines += ["", "} // namespace cs", ""]
     open(OUT_H, "w").write("\n".join(lines))

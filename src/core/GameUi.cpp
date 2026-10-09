@@ -29,6 +29,16 @@ const char* iconName(Icon i) {
     default: return "";
     }
 }
+// the artist's Locker tile for an outfit (name and portrait baked in); Icon::Count-free sentinel: Close = none
+Icon outfitTile(const std::string& id) {
+    static const std::pair<const char*, Icon> tiles[] = {
+        {"hen_classic", Icon::OutfitClassic}, {"hen_midnight", Icon::OutfitMidnight}, {"hen_vapor", Icon::OutfitVapor},
+        {"hen_toxic", Icon::OutfitToxic}, {"hen_ice", Icon::OutfitIce}, {"hen_lava", Icon::OutfitLava},
+        {"hen_gold", Icon::OutfitGold}, {"hen_chrome", Icon::OutfitChrome}, {"hen_tiger", Icon::OutfitTiger},
+        {"hen_holo", Icon::OutfitHolo}, {"hen_sakura", Icon::OutfitSakura}, {"hen_glitch", Icon::OutfitGlitch}};
+    for (const auto& [name, icon] : tiles) if (id == name) return icon;
+    return Icon::Close;
+}
 std::string mmss(int64_t s) {
     char b[16];
     if (s >= 3600) std::snprintf(b, sizeof b, "%dh %02dm", int(s / 3600), int(s % 3600 / 60));
@@ -421,6 +431,7 @@ void Game::hudScreen() {
     case Screen::Missions: hudMissions(); break;
     case Screen::DailyDrop: hudDailyDrop(); break;
     case Screen::Settings: hudSettings(); break;
+    case Screen::Dev: hudDev(); break;
     case Screen::LevelUp: hudLevelUp(); break;
     case Screen::StreakSave: hudStreakSave(); break;
     case Screen::ParentalGate: hudParentalGate(); break;
@@ -800,6 +811,35 @@ void Game::hudLocker() {
         const bool equipped = wallet_.equipped(it.slot) == it.id;
         const bool selected = sel == it.id;
         const glm::vec3 accent = selected ? kHot : owned ? kNeon : kMuted;
+        const Icon tile = it.slot == Slot::Outfit ? outfitTile(it.id) : Icon::Close;
+        if (tile != Icon::Close) {
+            // artist tile (403 x 270 art in a 2 x 2 cell block: 0.979 of the block wide, 0.656 tall)
+            const float tw = std::min(cellW, cellH / 0.67f) * (selected ? 1.f + 0.025f * std::sin(time_ * 4.f) : 1.f), th = tw * 0.67f;
+            if (selected) {
+                hudRect(c, {tw * 1.25f, th * 1.5f}, kHot, 0.28f * a.alpha, Shape::RadialGlow);
+                hudRect(c, {tw + 8, th + 8}, kHot, 0.95f * a.alpha, Shape::PillOutline, 2.4f / (th + 8));
+            }
+            hudSprite(tile, c, tw / (2 * 0.979f), 0, glm::vec3(1.f), a.alpha);
+            const glm::vec2 corner{c.x + tw / 2 - tw * 0.11f, c.y - th / 2 + th * 0.17f}; // where the sheet's padlock sat
+            if (equipped) hudSprite(Icon::Check, corner, tw * 0.22f, 0, glm::vec3(1.f), a.alpha);
+            else if (!owned) hudSprite(Icon::Lock, corner, tw * 0.2f, 0, glm::vec3(1.f), a.alpha);
+            if (featured && featured->id == it.id && !owned) {
+                const float pulse = 0.5f + 0.5f * std::sin(time_ * 4);
+                const glm::vec2 wc{c.x - tw / 2 + 21, c.y - th / 2 + 10};
+                hudRect(wc, {40, 18}, kVolt, a.alpha, Shape::PillOutline, 1.f);
+                TextStyle f = style(FontId::BodyBold, 10, css("#1a0420"), 0.1f, true);
+                f.opacity = a.alpha;
+                hudText("Week", f, wc.x, wc.y - text_->lineBox(f) / 2);
+                hudRect(c, {tw + 6, th + 6}, kVolt, 0.3f * pulse * a.alpha, Shape::PillOutline, 3.f / th);
+            }
+            nextHitLabel_ = it.id;
+            uiHit(c, {cellW, cellH}, [this, id = std::string(it.id)] {
+                lockerPreview_ = id;
+                applyCosmetics();
+                sfx(Sfx::Lay, 3); buzz(6);
+            });
+            continue;
+        }
         nextHitLabel_ = it.id;
         hudTile(c, {cellW, cellH}, accent, a.alpha, selected, [this, id = std::string(it.id)] {
             lockerPreview_ = id;
@@ -1082,6 +1122,9 @@ void Game::hudSettings() {
     }
     if (!adPolicy_.removeAds()) rows.push_back({"Remove ads", [this] { startPurchase("remove_ads"); }});
     rows.push_back({"Restore purchases", [this] { svc_.store->restore(); showMessage("Restoring purchases…"); }});
+#if !defined(CS_ENV_PROD)
+    rows.push_back({"Developer", [this] { switchScreen(Screen::Dev); }});
+#endif
     const float contentH = rows.size() * 58.f + 30;
     const Panel p = hudPanel("", "Settings", pw, contentH, kNeon, true);
     float y = p.top;
@@ -1096,6 +1139,116 @@ void Game::hudSettings() {
 #else
     hudText("Cuckoo Stack · staging", v, p.c.x, y + 6);
 #endif
+}
+
+// ---------------------------------------------------------------- developer menu (staging builds only)
+// Everything a tester needs to reach a state quickly: coins, owning / equipping any cosmetic, level, streak, daily
+// drop, missions, ads, audience, and any modal. Prod builds compile it out of Settings (the screen stays unreachable).
+void Game::hudDev() {
+    const float W = viewW_;
+    const float pw = std::min(W - 24, 400.f);
+    const float inner = pw - 2 * 18;
+    // ---- what this tab shows: a list of (label, state, action) buttons, two per row
+    enum class St { Plain, On, Owned, Locked };
+    struct B { std::string label; St st; std::function<void()> fn; };
+    std::vector<B> bs;
+    std::string note;
+    auto cosmetics = [&](Slot slot) {
+        for (const Cosmetic& c : catalog()) {
+            if (c.slot != slot) continue;
+            const bool eq = wallet_.equipped(slot) == c.id, own = wallet_.owns(c.id);
+            bs.push_back({c.name, eq ? St::On : own ? St::Owned : St::Locked, [this, id = std::string(c.id)] {
+                wallet_.grant(id); wallet_.equip(id); lockerPreview_.clear(); applyCosmetics();
+                sfx(Sfx::Lay, 3); buzz(6);
+            }});
+        }
+        bs.push_back({"Unlock all", St::Plain, [this, slot] {
+            for (const Cosmetic& c : catalog()) if (c.slot == slot) wallet_.grant(c.id);
+            showMessage("Unlocked");
+        }});
+        bs.push_back({"Lock all (every tab)", St::Plain, [this] { wallet_.debugLockAll(); applyCosmetics(); showMessage("Locked"); }});
+        note = "Tap to own + equip. Green = equipped, cyan = owned.";
+    };
+    switch (devTab_) {
+    case 0: {
+        for (int n : {100, 1000, 10000, 100000})
+            bs.push_back({"+" + grouped(n), St::Plain, [this, n] { wallet_.earn(n, "debug"); flyCoins({viewW_ / 2, viewH_ / 2}, n, 10); }});
+        bs.push_back({"Set to 0", St::Plain, [this] { wallet_.debugSetCoins(0); coinShown_ = 0; }});
+        bs.push_back({"Set to 50", St::Plain, [this] { wallet_.debugSetCoins(50); coinShown_ = 50; }});
+        note = "Balance: " + grouped(wallet_.coins());
+        break;
+    }
+    case 1: cosmetics(Slot::Outfit); break;
+    case 2: cosmetics(Slot::Trail); break;
+    case 3: cosmetics(Slot::Crash); break;
+    default: {
+        bs.push_back({"Level +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
+        bs.push_back({"Level 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
+        bs.push_back({"Level 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
+        bs.push_back({"Streak 7 days", St::Plain, [this] { dayStreak_.debugSet(7, 0); }});
+        bs.push_back({"Streak missed 1 day", St::Plain, [this] { dayStreak_.debugSet(5, 2); }});
+        bs.push_back({"Streak reset", St::Plain, [this] { dayStreak_.debugSet(0, 0); }});
+        bs.push_back({"Daily drop again", St::Plain, [this] { drop_.debugSet(drop_.claims(), true); }});
+        bs.push_back({"Daily drop day 7", St::Plain, [this] { drop_.debugSet(6, true); }});
+        bs.push_back({"Complete missions", St::Plain, [this] {
+            for (const Mission& m : missions_.list())
+                missionProgress(m.kind == MissionKind::Distance ? missions_.recordDistance(m.target) : missions_.record(m.kind, m.target));
+        }});
+        bs.push_back({"New missions", St::Plain, [this] { for (int i = 0; i < 3; ++i) missions_.reroll(i); }});
+        bs.push_back({adPolicy_.removeAds() ? "Remove ads: on" : "Remove ads: off", adPolicy_.removeAds() ? St::On : St::Plain,
+                      [this] { adPolicy_.setRemoveAds(!adPolicy_.removeAds()); }});
+        bs.push_back({"Reset ad caps", St::Plain, [this] { adPolicy_.debugReset(false); showMessage("Ad caps cleared"); }});
+        bs.push_back({"Ad on next game over", St::Plain, [this] { adPolicy_.debugReset(true); showMessage("Next game over shows an ad"); }});
+        bs.push_back({profile_.child() ? "Audience: under 13" : "Audience: 13+", profile_.child() ? St::On : St::Plain, [this] {
+            const bool child = !profile_.child();
+            profile_.setAudience(child ? Audience::Child : Audience::Teen);
+            svc_.ads->setAudience(child);
+        }});
+        const std::pair<const char*, Screen> screens[] = {{"Show level-up", Screen::LevelUp}, {"Show starter offer", Screen::Starter},
+                                                          {"Show streak save", Screen::StreakSave}, {"Show daily drop", Screen::DailyDrop},
+                                                          {"Show parental gate", Screen::ParentalGate}, {"Show age gate", Screen::AgeGate}};
+        for (const auto& [label, s] : screens) bs.push_back({label, St::Plain, [this, s = s] { switchScreen(s); }});
+        note = "Level " + std::to_string(prog_.level()) + " · streak " + std::to_string(dayStreak_.count()) + " · drop day " +
+               std::to_string(drop_.dayIndex() + 1) + " · runs " + std::to_string(adPolicy_.lifetimeRuns());
+        break;
+    }
+    }
+    // ---- layout
+    constexpr float tabH = 34, rowH = 40, gap = 8;
+    constexpr int kRows = 10; // the Game tab's; every tab gets the same height so the tabs never move under a finger
+    const float contentH = tabH + 14 + 22 + kRows * (rowH + gap);
+    const Panel p = hudPanel("Staging only", "Developer", pw, contentH, kVolt, true);
+    float y = p.top;
+    const char* tabs[] = {"Coins", "Outfits", "Trails", "Crash", "Game"};
+    const float tw = inner / 5;
+    for (int i = 0; i < 5; ++i) {
+        const glm::vec2 c{p.c.x - inner / 2 + tw * (i + 0.5f), y + tabH / 2};
+        const bool on = devTab_ == i;
+        hudRect(c, {tw - 4, tabH}, on ? kVolt : kDeep, (on ? 0.95f : 0.8f) * p.k, Shape::PillOutline, 1.f);
+        if (!on) hudRect(c, {tw - 4, tabH}, kVolt, 0.4f * p.k, Shape::PillOutline, 1.2f / tabH);
+        TextStyle t = style(FontId::BodyBold, 11, on ? css("#1a0420") : kVolt, 0.08f, true);
+        t.opacity = p.k;
+        hudText(tabs[i], t, c.x, c.y - text_->lineBox(t) / 2);
+        nextHitLabel_ = std::string("dev:") + tabs[i];
+        uiHit(c, {tw, tabH + 6}, [this, i] { devTab_ = i; });
+    }
+    y += tabH + 14;
+    TextStyle n = style(FontId::Body, 12, kMuted, 0.02f);
+    n.opacity = p.k;
+    hudText(note, n, p.c.x, y);
+    y += 22;
+    const float bw = (inner - gap) / 2;
+    for (size_t i = 0; i < bs.size(); ++i) {
+        const glm::vec2 c{p.c.x + (i % 2 ? 1.f : -1.f) * (bw / 2 + gap / 2), y + (i / 2) * (rowH + gap) + rowH / 2};
+        const glm::vec3 col = bs[i].st == St::On ? kGreen : bs[i].st == St::Owned ? kNeon : bs[i].st == St::Locked ? kMuted : kVolt;
+        hudRect(c, {bw, rowH}, kDeep, 0.9f * p.k, Shape::PillOutline, 1.f);
+        hudRect(c, {bw, rowH}, col, (bs[i].st == St::On ? 1.f : 0.6f) * p.k, Shape::PillOutline, (bs[i].st == St::On ? 2.2f : 1.2f) / rowH);
+        TextStyle t = style(FontId::BodyBold, 12, bs[i].st == St::Locked ? kMuted : kText, 0.04f);
+        t.opacity = p.k;
+        hudText(bs[i].label, t, c.x, c.y - text_->lineBox(t) / 2);
+        nextHitLabel_ = "dev:" + bs[i].label;
+        uiHit(c, {bw, rowH}, bs[i].fn);
+    }
 }
 
 // ---------------------------------------------------------------- level up: a chest to crack open
@@ -1394,7 +1547,7 @@ void Game::hudToasts() {
 void Game::debugOpenScreen(const std::string& name) {
     static const std::pair<const char*, Screen> kNames[] = {
         {"shop", Screen::Shop}, {"locker", Screen::Locker}, {"missions", Screen::Missions}, {"drop", Screen::DailyDrop},
-        {"settings", Screen::Settings}, {"levelup", Screen::LevelUp}, {"streak", Screen::StreakSave}, {"gate", Screen::ParentalGate},
+        {"settings", Screen::Settings}, {"dev", Screen::Dev}, {"levelup", Screen::LevelUp}, {"streak", Screen::StreakSave}, {"gate", Screen::ParentalGate},
         {"notif", Screen::NotifPrimer}, {"replay", Screen::ReplayPrimer}, {"starter", Screen::Starter}, {"continue", Screen::Continue},
         {"age", Screen::AgeGate}};
     for (const auto& [n, sc] : kNames)

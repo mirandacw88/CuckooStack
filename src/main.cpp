@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     std::string capturePath;
     int captureFrame = 120;
     bool autoplay = false, tapOnce = false, forceSurge = false, gpuTiming = false, fresh = false;
-    std::string screenName, tapLabel, endCardPath;
+    std::string screenName, tapLabel, endCardPath, outfit;
     FlagRemoteConfig flagRc;
     int extraCoins = 0;
     float renderScale = 1.f;
@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--screen") == 0 && i + 1 < argc) screenName = argv[++i];
         else if (std::strcmp(argv[i], "--coins") == 0 && i + 1 < argc) extraCoins = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--tap") == 0 && i + 1 < argc) tapLabel = argv[++i]; // taps that button at frame 30
+        else if (std::strcmp(argv[i], "--outfit") == 0 && i + 1 < argc) outfit = argv[++i]; // wear a cosmetic, e.g. hen_lava
         else if (std::strcmp(argv[i], "--endcard") == 0 && i + 1 < argc) endCardPath = argv[++i]; // writes the replay end card
         else if (std::strcmp(argv[i], "--rc") == 0 && i + 1 < argc) {
             const std::string kv = argv[++i];
@@ -153,6 +154,7 @@ int main(int argc, char** argv) {
     services.audio = &synth; services.storage = &storage; services.haptics = &haptics; services.remoteConfig = &flagRc;
     cs::Game game(services);
     if (extraCoins > 0) game.debugAddCoins(extraCoins);
+    if (!outfit.empty()) game.debugWear(outfit);
     if (!endCardPath.empty()) { // the Android replay end card, for review: --endcard out.ppm
         cs::ReplayMeta m;
         m.distance = 412; m.newBest = true; m.day = "Thu, Oct 8";
