@@ -11,6 +11,14 @@
 namespace cs {
 
 // Procedural meshes built once by Geometry.cpp and uploaded by the renderer.
+// Mesh vertex (Geometry.h builds them). 32 bytes, matches the vertex layout in VulkanPipeline.cpp.
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec2 uv;
+};
+static_assert(sizeof(Vertex) == 32, "Vertex must stay 32 bytes (GPU layout)");
+
 enum class MeshId : uint8_t {
     Box,         // 1x1x1, three.js BoxGeometry face layout (per-face UVs)
     Sphere,      // r=1, 32x24
@@ -24,6 +32,8 @@ enum class MeshId : uint8_t {
     Plane,       // 1x1 in XY, facing +Z
     RingFlat,    // ring 0.86..1 in XY (shockwaves)
     Circle,      // r=1 disc in XY
+    // the hen model (HenModel.h), one mesh per colour region; skinned on the CPU every frame (RenderList::heroVerts)
+    HenBody, HenAccent, HenLens, HenShade, HenBeak,
     Count
 };
 constexpr size_t kMeshCount = static_cast<size_t>(MeshId::Count);
@@ -55,7 +65,8 @@ struct Particle {
 };
 static_assert(sizeof(Particle) == 32, "Particle must stay 32 bytes (GPU layout)");
 
-enum class Pass : uint8_t { Lit = 0, UnlitAlpha = 1, UnlitAdd = 2, Count };
+// LitTwoSided: lit without back-face culling (the hen's glass shards, open shells seen from both sides)
+enum class Pass : uint8_t { Lit = 0, UnlitAlpha = 1, UnlitAdd = 2, LitTwoSided = 3, Count };
 constexpr size_t kPassCount = static_cast<size_t>(Pass::Count);
 
 struct PointLight { glm::vec3 pos{0.f}; glm::vec3 color{0.f}; float intensity = 0.f; float distance = 0.f; };
@@ -88,6 +99,9 @@ struct RenderList {
     std::array<std::array<std::vector<Instance>, kMeshCount>, kPassCount> buckets;
     std::vector<Particle> particlesAdd;   // additive sparks, dust, rain splashes
     std::vector<Particle> particlesSmoke; // normal-blended puffs
+    // posed vertices of the MeshId::HenBody..HenBeak meshes, in that order (the renderer streams them instead of the
+    // rest pose); empty = draw the rest pose
+    std::vector<Vertex> heroVerts;
     // HUD in paint order (like DOM stacking): Plane quads (unlit shapes), SDF glyphs and sprites, interleaved.
     // hudKind[i] says which pipeline draws hud[i] (HudKind); the renderer batches consecutive runs.
     std::vector<Instance> hud;
@@ -99,7 +113,7 @@ struct RenderList {
 
     void clear() {
         for (auto& pass : buckets) for (auto& v : pass) v.clear();
-        particlesAdd.clear(); particlesSmoke.clear(); hud.clear(); hudKind.clear(); worldText.clear();
+        particlesAdd.clear(); particlesSmoke.clear(); hud.clear(); hudKind.clear(); worldText.clear(); heroVerts.clear();
     }
     Instance& add(Pass p, MeshId m) {
         return buckets[static_cast<size_t>(p)][static_cast<size_t>(m)].emplace_back();

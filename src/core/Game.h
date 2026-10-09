@@ -68,7 +68,7 @@ public:
     void setDebugAutoSurge(bool on) { autoSurge_ = on; } // debug builds: surge 4 m into every run
     enum class Screen : uint8_t {
         None, AgeGate, Continue, Shop, Locker, Missions, DailyDrop, Settings, LevelUp, StreakSave, ParentalGate,
-        NotifPrimer, ReplayPrimer, Starter
+        NotifPrimer, ReplayPrimer, Starter, Dev
     };
     Screen screen() const { return screen_; }
     const Wallet& wallet() const { return wallet_; }
@@ -80,6 +80,7 @@ public:
     // desktop screenshots (src/main.cpp --screen / --coins)
     void debugOpenScreen(const std::string& name);
     void debugAddCoins(int n) { wallet_.earn(n, "debug"); coinShown_ = float(wallet_.coins()); }
+    void debugWear(const std::string& id) { wallet_.grant(id); wallet_.equip(id); applyCosmetics(); }
     // the Share Replay end card (EndCard.h), RGBA8
     std::vector<uint8_t> endCard(int width, int height, const ReplayMeta& meta) const;
     // tests: tap the first visible button whose label starts with `label` (returns false if none)
@@ -173,6 +174,7 @@ private:
     void hudOverRewards(float& bottom);
     void hudScreen();
     void hudAgeGate(); void hudContinue(); void hudShop(); void hudLocker(); void hudMissions(); void hudDailyDrop();
+    void hudDev();     // developer menu (staging builds only, from Settings)
     void hudSettings(); void hudLevelUp(); void hudStreakSave(); void hudParentalGate(); void hudPrimer(); void hudStarter();
     void hudToasts();
     void hudCoinFx();
@@ -272,9 +274,12 @@ private:
     Boost boost_ = Boost::None;               // armed for the next run (title screen)
     Boost runBoost_ = Boost::None;            // the current run's boost
     Trail trail_ = Trail::None;
+    float auraAcc_[4] = {};          // per-layer emission accumulators (emitAura)
+    glm::vec3 auraPrev_{0.f};        // hen position last frame, so aura particles ride along with it
     CrashFx crash_ = CrashFx::Feathers;
     float trailAcc_ = 0;
     void emitTrail(float dt);
+    void emitAura(float dt);
     void crashFx(glm::vec3 p);
     void missionProgress(int completedMask);
 
@@ -317,6 +322,7 @@ private:
     std::string nextHitLabel_;
     void uiHit(glm::vec2 c, glm::vec2 size, std::function<void()> fn);
     Slot lockerTab_ = Slot::Outfit;
+    int devTab_ = 0;   // developer menu: 0 coins, 1 outfits, 2 trails, 3 crash fx, 4 game
     std::string lockerPreview_;               // outfit shown on the hen while browsing
     int gateA_ = 0, gateB_ = 0, gateAnswer_ = -1; std::array<int, 4> gateChoices_{}; std::function<void()> gateThen_;
     int ageYear_ = 0;                         // age gate wheel (0 = nothing picked yet)

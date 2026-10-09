@@ -74,9 +74,9 @@ glm::vec2 Game::hudButton(std::string_view label, glm::vec2 c, glm::vec3 color, 
 // `size` is the height; wide sprites (iconSpan, e.g. the coin piles) are that many times wider
 void Game::hudSprite(Icon icon, glm::vec2 c, float size, float rot, glm::vec3 tint, float alpha, int frame) {
     if (!hudIcons_.built() || alpha <= 0.003f || size <= 0.01f) return;
-    const int i = int(icon) + frame * iconSpan(icon), span = iconSpan(icon);
+    const int i = int(icon) + frame * iconSpan(icon), span = iconSpan(icon), rows = iconRowSpan(icon);
     const float col = float(i % kIconCols), row = float(i / kIconCols);
-    hudAtlasQuad({col / kIconCols, row / kIconRows, (col + span) / kIconCols, (row + 1.f) / kIconRows}, c, {size * span, size}, rot, tint, alpha);
+    hudAtlasQuad({col / kIconCols, row / kIconRows, (col + span) / kIconCols, (row + rows) / kIconRows}, c, {size * span, size * rows}, rot, tint, alpha);
 }
 
 void Game::hudAtlasQuad(glm::vec4 uv, glm::vec2 c, glm::vec2 size, float rot, glm::vec3 tint, float alpha) {

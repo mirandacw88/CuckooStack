@@ -30,6 +30,14 @@ void AdPolicy::rollDay() const {
     for (int& u : used_) u = 0;
 }
 
+void AdPolicy::debugReset(bool adReady) {
+    for (int& u : used_) u = 0;
+    for (int64_t& t : lastAt_) t = 0;
+    lastAdAt_ = 0;
+    if (adReady) { runsSinceAd_ = t_.adEveryRuns; lifetimeRuns_ = std::max(lifetimeRuns_, t_.adGraceRuns); }
+    save();
+}
+
 void AdPolicy::save() const {
     rec_.set("since", runsSinceAd_);
     rec_.set("runs", lifetimeRuns_);

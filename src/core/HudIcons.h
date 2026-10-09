@@ -3,7 +3,7 @@
 
 namespace cs {
 
-constexpr int kIconCols = 8, kIconRows = 9;
+constexpr int kIconCols = 8, kIconRows = 15;
 
 enum class Icon : int {
     Coin = 0,
@@ -52,6 +52,18 @@ enum class Icon : int {
     BtnGold = 62,
     BtnDark = 64,
     RibbonBest = 66,
+    OutfitClassic = 72,
+    OutfitMidnight = 74,
+    OutfitVapor = 76,
+    OutfitToxic = 78,
+    OutfitIce = 88,
+    OutfitLava = 90,
+    OutfitGold = 92,
+    OutfitChrome = 94,
+    OutfitTiger = 104,
+    OutfitHolo = 106,
+    OutfitSakura = 108,
+    OutfitGlitch = 110,
 };
 
 constexpr int kCoinFrames = 8;
@@ -71,6 +83,37 @@ constexpr int iconSpan(Icon i) {
     case Icon::BtnGold: return 2;
     case Icon::BtnDark: return 2;
     case Icon::RibbonBest: return 2;
+    case Icon::OutfitClassic: return 2;
+    case Icon::OutfitMidnight: return 2;
+    case Icon::OutfitVapor: return 2;
+    case Icon::OutfitToxic: return 2;
+    case Icon::OutfitIce: return 2;
+    case Icon::OutfitLava: return 2;
+    case Icon::OutfitGold: return 2;
+    case Icon::OutfitChrome: return 2;
+    case Icon::OutfitTiger: return 2;
+    case Icon::OutfitHolo: return 2;
+    case Icon::OutfitSakura: return 2;
+    case Icon::OutfitGlitch: return 2;
+    default: return 1;
+    }
+}
+
+// sprites taller than one cell (the Locker outfit tiles)
+constexpr int iconRowSpan(Icon i) {
+    switch (i) {
+    case Icon::OutfitClassic: return 2;
+    case Icon::OutfitMidnight: return 2;
+    case Icon::OutfitVapor: return 2;
+    case Icon::OutfitToxic: return 2;
+    case Icon::OutfitIce: return 2;
+    case Icon::OutfitLava: return 2;
+    case Icon::OutfitGold: return 2;
+    case Icon::OutfitChrome: return 2;
+    case Icon::OutfitTiger: return 2;
+    case Icon::OutfitHolo: return 2;
+    case Icon::OutfitSakura: return 2;
+    case Icon::OutfitGlitch: return 2;
     default: return 1;
     }
 }

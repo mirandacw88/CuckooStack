@@ -88,6 +88,15 @@ add_custom_command(OUTPUT ${_hud_cpp}
   COMMENT "Embedding HUD sprites"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hud_cpp})
+# the hen model (scripts/models/build_hen_mesh.py), embedded the same way
+set(_hen_mesh ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/hen.mesh)
+set(_hen_cpp ${CMAKE_CURRENT_BINARY_DIR}/fonts/hen_mesh.cpp)
+add_custom_command(OUTPUT ${_hen_cpp}
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${_hen_mesh} -DOUTPUT=${_hen_cpp} -DSYMBOL=hen_mesh -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+  DEPENDS ${_hen_mesh} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+  COMMENT "Embedding the hen model"
+  VERBATIM)
+list(APPEND CS_FONT_SOURCES ${_hen_cpp})
 add_library(cs_fonts STATIC ${CS_FONT_SOURCES})
 
 # ---------------------------------------------------------------- core: game logic, OS-free
@@ -96,6 +105,7 @@ add_library(cs_core STATIC
   src/core/Daily.cpp
   src/core/Difficulty.cpp
   src/core/Economy.cpp
+  src/core/HenModel.cpp
   src/core/EndCard.cpp
   src/core/Effects.cpp
   src/core/FileStorage.cpp

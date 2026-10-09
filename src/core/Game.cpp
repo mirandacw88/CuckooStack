@@ -247,6 +247,7 @@ void Game::reset() {
     x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
     timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = 0; camKick_ = 0;
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
+    hen_.unshatter();
     hen_.nodes[hen_.root].pos = glm::vec3(0.f);
     resetSurge();
 }
@@ -532,7 +533,16 @@ void Game::die(bool ceiling) {
     glm::vec3 p = hen_.nodes[hen_.root].pos; p.y += 0.55f;
     if (ceiling) { henV_ = {-1.5f - speed_ * 0.2f, -3, rng_.range(1, 2.5f)}; henW_ = {rng_.range(-3, 3), rng_.range(-4, 4), -6}; }
     else { henV_ = {-2.5f - speed_ * 0.3f, 6.5f, rng_.range(1, 2.5f)}; henW_ = {rng_.range(-3, 3), rng_.range(-4, 4), 7}; }
-    spawnFeathers(p, 34, 1.3f);
+    // the base crash: the hen shatters like glass (the procedural hen, without the model, bursts into feathers);
+    // the equipped crash effect (crashFx) plays on top
+    if (hen_.canShatter()) {
+        hen_.shatter(p, henV_ * 0.6f, level_.heightAt(p.x) * Uf, uint32_t(time_ * 1000.f));
+        burst(p, 160, {glow("#e6fbff", 3.5f), glow("#9ff6ff", 3.f), C().white}, 3, 12, 1.2f, 0.05f, 0.8f, 0, false, 1.4f, 7); // glass dust
+        burst(p, 24, {glow("#ffffff", 6.f)}, 1, 4, 0.25f, 0.35f, 0.2f, 0, false, 2.f, 0);                                     // glints
+        rings_.spawn(p, glow("#9ff6ff", 2.5f), 3.f, 0.5f, true);
+    } else if (crash_ != CrashFx::Feathers) {
+        spawnFeathers(p, 34, 1.3f);
+    }
     burst(p, 110, {C().cyan, C().pink, C().white, C().volt}, 3, 11, 0.9f, 0.11f, 0, 0, false, 1.8f, 6);
     puff({p.x, p.y - 0.3f, 0}, 18, C().smoke, 2, 0.6f);
     rings_.spawn({p.x, p.y, 0.6f}, C().pink, 3.4f, 0.6f, true); rings_.spawn({p.x, p.y, 0.6f}, C().cyan, 2.2f, 0.45f, true);
@@ -567,6 +577,7 @@ void Game::revive() {
     baseY_ = std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U; vy_ = 0; hop_ = 0; hopV_ = 0;
     hen_.nodes[hen_.root].pos = {float(x_), float(baseY_), 0};
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
+    hen_.unshatter();
     graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
     timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
     beat_.start(); svc_.audio->musicStart();
@@ -705,6 +716,232 @@ void Game::emitTrail(float dt) {
     }
 }
 
+// The outfit's signature effect, worn on the hen: emitted from points on its body and head, carrying most of the
+// hen's own velocity so it stays wrapped around the hen at full run speed (and streams off behind it).
+void Game::emitAura(float dt) {
+    const Hen::Node& root = hen_.nodes[hen_.root];
+    glm::vec3 hv = dt > 0.f ? (root.pos - auraPrev_) / dt : glm::vec3(0.f);
+    auraPrev_ = root.pos;
+    if (glm::length(hv) > 40.f) hv = glm::vec3(0.f); // a reset / teleport, not motion
+    const Aura aura = hen_.skin.aura;
+    if (aura == Aura::None || dt <= 0.f) return;
+
+    constexpr float S = 1.1f; // hen.root scale
+    const glm::vec3 body = root.pos + glm::vec3(0.f, 0.6f, 0.f) * S, head = root.pos + glm::vec3(0.33f, 1.05f, 0.f) * S;
+    struct Pt { glm::vec3 p, n; };
+    // a random point on the hen (body ellipsoid, sometimes the head) and its outward normal; `out` pushes it off the skin
+    auto surface = [&](float out = 1.f, float headShare = 0.28f) {
+        const float u = rng_.range(0.f, 2 * kPi), v = rng_.range(-1.f, 1.f), r = std::sqrt(1.f - v * v);
+        const glm::vec3 n{r * std::cos(u), v, r * std::sin(u)};
+        if (rng_.next01() < headShare) return Pt{head + n * glm::vec3(0.22f, 0.22f, 0.2f) * out, n};
+        return Pt{body + n * glm::vec3(0.46f, 0.5f, 0.38f) * out, n};
+    };
+    auto ride = [&](glm::vec3 v, float k = 0.9f) { return v + hv * k; };
+    auto count = [&](int layer, float perSecond) {
+        auraAcc_[layer] += perSecond * dt;
+        const int n = int(auraAcc_[layer]);
+        auraAcc_[layer] -= float(n);
+        return n;
+    };
+    auto pick = [&](std::initializer_list<glm::vec3> cs) { return cs.begin()[int(rng_.next01() * cs.size()) % int(cs.size())]; };
+    auto R = [&](float a, float b) { return rng_.range(a, b); };
+    // signature glow: one big soft light in the outfit's colour wrapped around the hen, flickering
+    auto halo = [&](glm::vec3 col, float alpha) {
+        fxAdd_.emit(body + glm::vec3(0, 0.15f, 0), ride({0, 0, 0}, 1.f), 0.06f, R(1.9f, 2.3f), 2.1f, col, alpha * R(0.8f, 1.15f), 0.f, 0.f);
+    };
+
+    switch (aura) {
+    case Aura::Magma: { // on fire: licking flames, rising embers, a smoke plume and the odd flare
+        static const glm::vec3 core = glow("#ffd86a", 2.6f), flame = glow("#ff7a1a", 2.2f), deep = glow("#ff3b1a", 1.8f), spark = glow("#ffb347", 4.5f);
+        // heat glow: one big soft orange light wrapped around the hen, flickering
+        halo(glow("#ff5a1a", 1.f), 0.15f);
+        // flames: big overlapping tongues that start hot (yellow) at the skin and redden and shrink as they rise
+        for (int i = count(0, 460); i-- > 0;) {
+            Pt s = surface(0.85f, 0.3f);
+            if (s.n.y < -0.3f) s.n.y = -s.n.y; // flames climb the hen, they don't hang under it
+            const float r = rng_.next01();
+            const glm::vec3 c = r < 0.3f ? core : r < 0.75f ? flame : deep;
+            fxAdd_.emit(s.p, ride({s.n.x * 0.4f + R(-0.25f, 0.25f), R(1.5f, 3.f), s.n.z * 0.4f}), R(0.3f, 0.55f), R(0.24f, 0.36f), 0.04f,
+                        c, R(0.35f, 0.55f), 1.5f, -3.5f); // many soft, dim blobs blend into one fire
+        }
+        for (int i = count(1, 45); i-- > 0;) {
+            const Pt s = surface(1.f);
+            fxAdd_.emit(s.p, ride({R(-1.f, 1.f), R(1.6f, 3.4f), R(-0.8f, 0.8f)}, 0.6f), R(0.7f, 1.4f), R(0.035f, 0.055f), 0.01f, spark, 1, 1.2f, -0.8f);
+        }
+        for (int i = count(2, 14); i-- > 0;)
+            fxSmoke_.emit(head + glm::vec3(R(-0.15f, 0.15f), 0.25f, R(-0.1f, 0.1f)), ride({R(-0.3f, 0.3f), R(1.f, 1.6f), R(-0.2f, 0.2f)}, 0.5f),
+                          R(1.f, 1.6f), 0.18f, 0.65f, hexColor("#24120e"), 0.5f, 1.f, -0.4f);
+        for (int i = count(3, 2.5f); i-- > 0;) { // flare: a quick burst of fire off one spot
+            const Pt s = surface(1.f);
+            for (int k = 0; k < 18; ++k)
+                fxAdd_.emit(s.p, ride({s.n.x * R(1.f, 2.5f), R(1.5f, 3.5f), s.n.z * R(1.f, 2.5f)}), R(0.25f, 0.45f), R(0.1f, 0.16f), 0.f,
+                            pick({core, flame, spark}), 1, 3.f, -2.f);
+        }
+        break;
+    }
+    case Aura::Cryo: { // frozen: frost mist rolling off, ice glitter clinging, snow falling away
+        static const glm::vec3 ice = glow("#cfeaff", 3.f), cyan = glow("#29e7ff", 3.2f), white = glow("#ffffff", 3.5f);
+        halo(glow("#7fd6ff", 1.f), 0.14f);
+        for (int i = count(0, 22); i-- > 0;) {
+            const Pt s = surface(1.f, 0.15f);
+            fxSmoke_.emit(s.p, ride({s.n.x * 0.5f, R(-0.5f, -0.1f), s.n.z * 0.5f}, 0.7f), R(0.9f, 1.4f), 0.25f, 0.8f, hexColor("#bfe4ff"), 0.5f, 1.5f, 0.3f);
+        }
+        for (int i = count(1, 170); i-- > 0;) {
+            const Pt s = surface(1.04f);
+            fxAdd_.emit(s.p, ride({R(-0.15f, 0.15f), R(-0.1f, 0.25f), R(-0.15f, 0.15f)}, 0.97f), R(0.35f, 0.8f), R(0.07f, 0.12f), 0.f, pick({ice, cyan, white}), 1, 2.f, 0.f);
+        }
+        for (int i = count(2, 30); i-- > 0;) {
+            const Pt s = surface(1.1f);
+            fxAdd_.emit(s.p, ride({R(-0.4f, 0.4f), R(-0.2f, 0.4f), R(-0.4f, 0.4f)}, 0.5f), R(0.8f, 1.3f), 0.085f, 0.05f, ice, 0.9f, 1.f, 2.5f);
+        }
+        break;
+    }
+    case Aura::Toxic: { // radioactive: bubbling ooze, dripping slime, green gas
+        static const glm::vec3 lime = glow("#c6ff4a", 3.f), green = glow("#2bff9a", 3.f), pink = glow("#ff2bd6", 2.6f);
+        halo(glow("#6aff3a", 1.f), 0.14f);
+        for (int i = count(0, 120); i-- > 0;) {
+            const Pt s = surface(1.f);
+            fxAdd_.emit(s.p, ride({s.n.x * 0.3f, R(0.6f, 1.4f), s.n.z * 0.3f}), R(0.5f, 0.9f), R(0.08f, 0.12f), R(0.16f, 0.24f), pick({lime, green, green}), 0.9f, 2.f, -0.5f);
+        }
+        for (int i = count(1, 30); i-- > 0;) {
+            Pt s = surface(0.95f, 0.f);
+            s.p.y = body.y - 0.45f;
+            fxAdd_.emit(s.p, ride({0, R(-0.3f, 0.f), 0}, 0.8f), R(0.5f, 0.8f), 0.11f, 0.06f, lime, 1, 0.5f, 9.f);
+        }
+        for (int i = count(2, 12); i-- > 0;)
+            fxSmoke_.emit(surface(1.f).p, ride({R(-0.4f, 0.4f), R(0.3f, 0.8f), R(-0.4f, 0.4f)}, 0.6f), R(1.f, 1.5f), 0.15f, 0.6f, hexColor("#3f8a2a"), 0.35f, 1.f, -0.2f);
+        for (int i = count(3, 10); i-- > 0;) // the odd magenta spark (the outfit's accent)
+            fxAdd_.emit(surface(1.05f).p, ride({R(-1.5f, 1.5f), R(0.5f, 2.f), R(-1.f, 1.f)}), 0.3f, 0.06f, 0.f, pink, 1, 3.f, 2.f);
+        break;
+    }
+    case Aura::Gold: { // rich: a cloud of gold glitter, star twinkles, gold dust raining off
+        static const glm::vec3 gold = glow("#ffd23a", 3.6f), pale = glow("#fff2b0", 3.6f), star = glow("#ffffff", 5.f);
+        halo(glow("#ffc21a", 1.f), 0.14f);
+        for (int i = count(0, 220); i-- > 0;) {
+            const Pt s = surface(R(1.f, 1.25f));
+            fxAdd_.emit(s.p, ride({R(-0.2f, 0.2f), R(-0.1f, 0.3f), R(-0.2f, 0.2f)}, 0.95f), R(0.3f, 0.7f), R(0.05f, 0.08f), 0.f, pick({gold, gold, pale}), 1, 2.f, 0.f);
+        }
+        for (int i = count(1, 14); i-- > 0;) // twinkles: big, very bright, gone in a blink
+            fxAdd_.emit(surface(1.08f).p, ride({0, 0, 0}, 1.f), 0.22f, 0.42f, 0.f, star, 1, 0.f, 0.f);
+        for (int i = count(2, 40); i-- > 0;)
+            fxAdd_.emit(surface(1.f, 0.1f).p, ride({R(-0.5f, 0.5f), R(0.f, 0.6f), R(-0.5f, 0.5f)}, 0.5f), R(0.8f, 1.2f), 0.075f, 0.04f, gold, 1, 1.f, 5.f);
+        break;
+    }
+    case Aura::Chrome: { // liquid metal: mirror glints, mercury drips, cyan / magenta reflections
+        static const glm::vec3 glint = glow("#ffffff", 5.f), silver = glow("#dfe5f0", 2.f), cyan = glow("#29e7ff", 3.f), pink = glow("#ff2bd6", 3.f);
+        halo(rng_.next01() < 0.5f ? glow("#29e7ff", 1.f) : glow("#ff2bd6", 1.f), 0.1f);
+        for (int i = count(0, 34); i-- > 0;)
+            fxAdd_.emit(surface(1.02f).p, ride({0, 0, 0}, 1.f), R(0.12f, 0.22f), R(0.3f, 0.4f), 0.f, glint, 1, 0.f, 0.f);
+        for (int i = count(1, 26); i-- > 0;) {
+            Pt s = surface(0.95f, 0.f);
+            s.p.y = body.y - R(0.35f, 0.5f);
+            fxAdd_.emit(s.p, ride({0, R(-0.4f, 0.f), 0}, 0.85f), R(0.45f, 0.7f), 0.11f, 0.07f, silver, 1, 0.5f, 10.f);
+        }
+        for (int i = count(2, 100); i-- > 0;) {
+            const Pt s = surface(1.03f);
+            fxAdd_.emit(s.p, ride({s.n.x * 0.3f, s.n.y * 0.3f, s.n.z * 0.3f}, 0.95f), R(0.25f, 0.45f), 0.08f, 0.f, rng_.next01() < 0.5f ? cyan : pink, 0.9f, 2.f, 0.f);
+        }
+        break;
+    }
+    case Aura::Tiger: { // electric: crackling sparks off the skin and arc bursts
+        static const glm::vec3 orange = glow("#ff8a1a", 3.6f), pink = glow("#ff2bd6", 3.6f), white = glow("#ffffff", 4.f);
+        halo(std::fmod(time_, 0.5f) < 0.25f ? glow("#ff6a1a", 1.f) : glow("#ff2bd6", 1.f), 0.13f);
+        for (int i = count(0, 240); i-- > 0;) {
+            const Pt s = surface(1.f);
+            const float sp = R(2.5f, 5.f);
+            fxAdd_.emit(s.p, ride(s.n * sp + glm::vec3(R(-1, 1), R(-1, 1), R(-1, 1))), R(0.1f, 0.22f), R(0.07f, 0.1f), 0.01f, pick({orange, pink, orange, white}), 1, 7.f, 0.f);
+        }
+        for (int i = count(1, 6.f); i-- > 0;) { // an arc: a jagged line of sparks between two points on the hen
+            const glm::vec3 a = surface(1.05f).p, b = surface(1.05f).p;
+            for (int k = 0; k <= 14; ++k) {
+                const float t = k / 14.f;
+                const glm::vec3 j{R(-0.06f, 0.06f), R(-0.06f, 0.06f), R(-0.06f, 0.06f)};
+                fxAdd_.emit(glm::mix(a, b, t) + j * std::sin(t * kPi) * 2.f, ride({0, 0, 0}, 1.f), R(0.08f, 0.14f), 0.11f, 0.03f, k % 3 ? white : pink, 1, 0.f, 0.f);
+            }
+        }
+        break;
+    }
+    case Aura::Holo: { // hologram: pixels drifting off, a scan line sweeping up through the hen
+        static const glm::vec3 cyan = glow("#9ff6ff", 3.f), deep = glow("#29e7ff", 3.2f), white = glow("#ffffff", 3.6f);
+        halo(glow("#29e7ff", 1.f), 0.13f);
+        for (int i = count(0, 140); i-- > 0;) {
+            const Pt s = surface(1.02f);
+            fxAdd_.emit(s.p, ride({R(-0.1f, 0.1f), R(0.7f, 1.6f), R(-0.1f, 0.1f)}), R(0.4f, 0.8f), 0.09f, 0.09f, pick({cyan, deep}), 0.85f, 0.f, 0.f);
+        }
+        {   // scan line: a ring of light rising through the body every 1.4 s
+            const float k = std::fmod(time_ / 1.4f, 1.f), y = body.y - 0.6f + k * 1.55f;
+            for (int i = count(1, 260); i-- > 0;) {
+                const float u = R(0.f, 2 * kPi), rr = std::sqrt(std::max(0.f, 1.f - std::pow((y - body.y) / 0.62f, 2.f))) * 0.5f + 0.08f;
+                fxAdd_.emit({body.x + std::cos(u) * rr, y, body.z + std::sin(u) * rr * 0.8f}, ride({0, 0, 0}, 1.f), 0.12f, 0.08f, 0.05f, white, 0.9f, 0.f, 0.f);
+            }
+        }
+        for (int i = count(2, 8); i-- > 0;) { // glitch tear: a short horizontal smear
+            const Pt s = surface(1.05f);
+            for (int k = 0; k < 8; ++k) fxAdd_.emit(s.p + glm::vec3(k * 0.05f - 0.2f, 0, 0), ride({0, 0, 0}, 1.f), 0.1f, 0.05f, 0.05f, deep, 1, 0.f, 0.f);
+        }
+        break;
+    }
+    case Aura::Sakura: { // spring: petals peeling off and drifting away, pink sparkles
+        static const glm::vec3 petal = glow("#ff9fe0", 2.2f), blush = glow("#ffd6ef", 2.2f), spark = glow("#ff7ae6", 3.4f);
+        halo(glow("#ff7ae6", 1.f), 0.13f);
+        for (int i = count(0, 60); i-- > 0;) {
+            const Pt s = surface(1.05f, 0.35f);
+            fxAdd_.emit(s.p, ride({R(-1.4f, -0.3f), R(0.2f, 1.f), R(-0.6f, 0.6f)}, 0.6f), R(1.4f, 2.2f), R(0.13f, 0.18f), 0.1f, rng_.next01() < 0.6f ? petal : blush, 0.95f, 1.6f, 0.9f);
+        }
+        for (int i = count(1, 50); i-- > 0;)
+            fxAdd_.emit(surface(1.08f).p, ride({R(-0.2f, 0.2f), R(0.f, 0.4f), R(-0.2f, 0.2f)}, 0.95f), R(0.3f, 0.6f), 0.07f, 0.f, spark, 1, 2.f, 0.f);
+        break;
+    }
+    case Aura::Vapor: { // vaporwave: pastel orbs floating up, a soft pink / cyan haze
+        static const glm::vec3 pink = glow("#ff9ce6", 2.6f), cyan = glow("#7ff0ff", 2.6f), yellow = glow("#f4ff5a", 2.6f), violet = glow("#9a5bff", 3.f);
+        halo(std::sin(time_ * 1.5f) > 0.f ? glow("#ff9ce6", 1.f) : glow("#7ff0ff", 1.f), 0.13f);
+        for (int i = count(0, 80); i-- > 0;) {
+            const Pt s = surface(R(1.f, 1.2f));
+            fxAdd_.emit(s.p, ride({R(-0.3f, 0.3f), R(0.4f, 1.f), R(-0.3f, 0.3f)}, 0.8f), R(0.9f, 1.5f), R(0.14f, 0.22f), 0.03f, pick({pink, cyan, yellow, violet}), 0.85f, 1.2f, -0.2f);
+        }
+        for (int i = count(1, 10); i-- > 0;)
+            fxSmoke_.emit(surface(1.f).p, ride({R(-0.3f, 0.3f), R(0.2f, 0.5f), R(-0.3f, 0.3f)}, 0.7f), R(1.f, 1.5f), 0.2f, 0.6f,
+                          rng_.next01() < 0.5f ? hexColor("#ff9ce6") : hexColor("#7ff0ff"), 0.25f, 1.f, 0.f);
+        break;
+    }
+    case Aura::Midnight: { // the night sky: stardust swirling around the hen and shooting stars
+        static const glm::vec3 violet = glow("#9a5bff", 3.4f), blue = glow("#5b8cff", 3.2f), white = glow("#ffffff", 4.f);
+        halo(glow("#6a3bff", 1.f), 0.15f);
+        for (int i = count(0, 180); i-- > 0;) {
+            const Pt s = surface(R(1.05f, 1.35f));
+            const glm::vec3 swirl = glm::normalize(glm::cross(s.n, glm::vec3(0, 1, 0)) + glm::vec3(0.001f)) * R(0.6f, 1.2f);
+            fxAdd_.emit(s.p, ride(swirl, 0.95f), R(0.5f, 1.f), R(0.06f, 0.09f), 0.f, pick({violet, blue, violet, white}), 1, 1.f, 0.f);
+        }
+        for (int i = count(1, 5.f); i-- > 0;) { // shooting star: a bright streak arcing off the hen
+            const Pt s = surface(1.1f);
+            const glm::vec3 v{R(-3.f, -1.5f), R(1.f, 2.5f), R(-0.5f, 0.5f)};
+            for (int k = 0; k < 10; ++k)
+                fxAdd_.emit(s.p - v * (k * 0.012f), ride(v, 0.7f), 0.45f - k * 0.025f, 0.15f - k * 0.01f, 0.f, k ? violet : white, 1, 0.5f, 1.f);
+        }
+        break;
+    }
+    case Aura::Glitch: { // glitch: hue-cycling shards that jump and tear, with an RGB split
+        halo(hueColor(time_ * 0.9f), 0.13f);
+        for (int i = count(0, 200); i-- > 0;) {
+            const Pt s = surface(R(1.f, 1.2f));
+            const glm::vec3 jump{std::round(R(-2.f, 2.f)) * 0.12f, std::round(R(-1.f, 1.f)) * 0.06f, 0.f};
+            const glm::vec3 c = hueColor(time_ * 0.9f + s.p.y * 0.8f) * 3.2f;
+            fxAdd_.emit(s.p + jump, ride({R(-2.5f, 2.5f), 0, 0}, 1.f), R(0.06f, 0.16f), R(0.1f, 0.16f), R(0.1f, 0.16f), c, 1, 12.f, 0.f);
+        }
+        for (int i = count(1, 14); i-- > 0;) { // RGB split: the same tear in red and cyan, offset
+            const Pt s = surface(1.05f);
+            for (int k = 0; k < 6; ++k) {
+                const glm::vec3 p = s.p + glm::vec3(k * 0.06f - 0.15f, 0, 0);
+                fxAdd_.emit(p + glm::vec3(-0.04f, 0, 0), ride({0, 0, 0}, 1.f), 0.1f, 0.09f, 0.09f, C().red, 1, 0.f, 0.f);
+                fxAdd_.emit(p + glm::vec3(0.04f, 0, 0), ride({0, 0, 0}, 1.f), 0.1f, 0.09f, 0.09f, C().cyan, 1, 0.f, 0.f);
+            }
+        }
+        break;
+    }
+    default: break;
+    }
+}
+
 void Game::crashFx(glm::vec3 p) {
     switch (crash_) {
     case CrashFx::Pixels:
@@ -712,6 +949,9 @@ void Game::crashFx(glm::vec3 p) {
         break;
     case CrashFx::Confetti:
         burst(p, 140, {C().volt, C().pink, C().green, C().cyan}, 3, 9, 1.6f, 0.1f, 1.5f, 0, false, 2.2f, 4);
+        break;
+    case CrashFx::Feathers:
+        spawnFeathers(p, 34, 1.3f);
         break;
     case CrashFx::CoinShower:
         burst(p, 110, {glow("#ffd23a", 3), glow("#fff2b0", 2.4f), C().volt}, 3, 10, 1.4f, 0.12f, 2.f, 0, false, 1.6f, 9);
@@ -1089,10 +1329,12 @@ void Game::updateHen(float dt) {
         squash_ += (0 - squash_) * std::min(1.f, dt * 12);
         body.scale = {1 - squash_ * 0.5f, 1 + squash_, 1 - squash_ * 0.5f};
         const bool onSurface = state_ == State::Play && eggs_.empty() && vy_ == 0;
+        const bool onEggs = state_ == State::Play && !eggs_.empty() && hop_ == 0; // running on the rolling eggs
+        const bool running = onSurface || onEggs;
         const bool falling = state_ == State::Play && vy_ < -1;
         const bool tall = eggs_.size() > 4;
-        runPhase_ += dt * (onSurface ? speed_ * 4.5f : 0);
-        body.pos.y = onSurface ? std::abs(std::sin(runPhase_)) * 0.06f : std::sin(time_ * 3) * 0.012f;
+        runPhase_ += dt * (running ? std::max(speed_, 2.f) * 4.5f : 0);
+        body.pos.y = running ? std::abs(std::sin(runPhase_)) * 0.06f : std::sin(time_ * 3) * 0.012f;
         const float leanT = onSurface ? -0.14f : falling ? 0.2f : tall ? std::sin(time_ * 2.6f) * 0.05f - 0.04f : -0.05f;
         lean_ += (leanT - lean_) * std::min(1.f, dt * 8);
         root.rot = {0, 0, lean_};
@@ -1103,7 +1345,7 @@ void Game::updateHen(float dt) {
             else if (flap_ > 0) rx = s * (-(std::sin(flap_ * 18) * flap_ * 1.1f) - 0.02f);
             else if (tall) rx = s * (-0.35f - std::sin(time_ * 2.6f + s) * 0.12f);
             else rx = s * (onSurface ? -0.1f - std::abs(std::sin(runPhase_)) * 0.2f : -0.02f);
-            hen_.nodes[hen_.legs[k]].rot.z = onSurface ? std::sin(runPhase_ + k * kPi) * 0.75f
+            hen_.nodes[hen_.legs[k]].rot.z = running ? std::sin(runPhase_ + k * kPi) * 0.75f
                                            : falling ? 0.35f + std::sin(time_ * 20 + k) * 0.25f : 0.f;
         }
         if (state_ == State::Title) {
@@ -1117,6 +1359,7 @@ void Game::updateHen(float dt) {
         }
         hen_.nodes[hen_.tail].rot.z = std::sin(time_ * (onSurface ? 14.f : 4.f)) * (onSurface ? 0.12f : 0.05f);
         head.pos.y = 0.92f + beat_.pulse() * 0.045f;
+        if (state_ == State::Title) emitAura(dt); // title screen and Locker preview (the run calls it below)
         // jet trail from the battery pack
         if (state_ == State::Play) {
             const float px = root.pos.x - 0.26f, py = root.pos.y + 0.82f;
@@ -1125,12 +1368,14 @@ void Game::updateHen(float dt) {
                             {rng_.range(-1.2f, -0.4f), rng_.range(-0.1f, 0.4f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.11f, 0.01f,
                             rng_.next01() < 0.75f ? C().cyan : C().pink, 0.9f, 1.5f, -0.5f);
             emitTrail(dt);
+            emitAura(dt);
             if (onSurface && baseY_ < 0.01 && rng_.next01() < 0.5f)
                 fxAdd_.emit({float(x_) + rng_.range(-0.1f, 0.1f), 0.03f, rng_.range(-0.15f, 0.15f)}, {rng_.range(-2, -0.5f), rng_.range(0.8f, 1.8f), rng_.range(-0.6f, 0.6f)},
                             rng_.range(0.25f, 0.4f), 0.045f, 0.02f, C().water, 1, 1, 9);
         }
     } else {
         deadT_ += dt;
+        hen_.updateShatter(dt);
         henV_.y -= 22 * dt;
         root.pos += henV_ * dt;
         root.rot += henW_ * dt;
@@ -1317,7 +1562,21 @@ void Game::buildRenderList() {
         out.add(Pass::Lit, MeshId::Egg) = makeLit(g, egg);
         out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(g * compose({}, {kPi / 2, 0, ringRot}, glm::vec3(1.f)), ringCol[ring]);
     };
-    for (const Egg& e : eggs_) emitEgg(e.pos, e.rot, e.scale, e.ring, e.ringRot);
+    // the stack: each egg lies on its side and rolls about its long axis as the hen runs on top; neighbours turn
+    // opposite ways, like meshed gears. The long axis is turned ~70 degrees toward the screen plane and stretched a
+    // little (x1.3) so the oval, pointy-ended egg silhouette reads (alternating which end points forward). The neon
+    // ring runs lengthwise around the shell, so the roll reads as a spinning stripe. Sized (x1.12) so the round side
+    // fills its U-tall slot.
+    for (size_t i = 0; i < eggs_.size(); ++i) {
+        const Egg& e = eggs_[i];
+        const float sgn = i % 2 ? 1.f : -1.f;
+        const float roll = sgn * (float(x_) / 0.3f) + e.sway;
+        const glm::vec3 s{e.scale.x * 1.12f, e.scale.z * 1.12f, e.scale.y * 1.3f}; // x, height, long axis
+        const glm::mat4 m = compose(e.pos, {0, sgn * 1.22f, 0}, glm::vec3(1.f)) * compose({}, {0, 0, roll}, glm::vec3(1.f)) *
+                            compose({}, {kPi / 2, 0, 0}, glm::vec3(1.f)) * compose({}, {s.x, s.z, s.y});
+        out.add(Pass::Lit, MeshId::Egg) = makeLit(m, egg);
+        out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(m * compose({}, {1.02f, 1.17f, 1.02f}), ringCol[e.ring]);
+    }
     LitMaterial shell; shell.color = hexColor("#d4dbe8"); shell.metalness = 1; shell.roughness = 0.24f;
     for (const Debris& d : debris_) {
         switch (d.kind) {

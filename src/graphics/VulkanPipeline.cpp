@@ -266,6 +266,8 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     set(spv::lit_vert, spv::lit_vert_size, spv::lit_frag, spv::lit_frag_size);
     d.input = VertexInput::MeshInstanced; d.cull = VK_CULL_MODE_BACK_BIT; d.depthTest = true; d.depthWrite = true;
     lit = buildPipeline(dev, cache_, d);
+    d.cull = VK_CULL_MODE_NONE;
+    litTwoSided = buildPipeline(dev, cache_, d);
 
     set(spv::unlit_vert, spv::unlit_vert_size, spv::unlit_frag, spv::unlit_frag_size);
     d.cull = VK_CULL_MODE_NONE; d.depthWrite = false; d.blend = Blend::Alpha;
@@ -292,7 +294,7 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     t.pass = scenePass; t.layout = textLayout;
     textWorld = buildPipeline(dev, cache_, t);
 
-    if (!sky || !lit || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld) return false;
+    if (!sky || !lit || !litTwoSided || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld) return false;
     return createPresentObjects(presentFormat);
 }
 
@@ -354,7 +356,7 @@ void VulkanPipeline::destroy() {
     if (!ctx_) return;
     VkDevice dev = ctx_->device;
     destroyPresentObjects();
-    for (VkPipeline* p : {&sky, &lit, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld}) {
+    for (VkPipeline* p : {&sky, &lit, &litTwoSided, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld}) {
         if (*p) vkDestroyPipeline(dev, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }

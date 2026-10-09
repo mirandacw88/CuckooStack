@@ -19,6 +19,7 @@ enum class Unlock : uint8_t {
     Featured,  // coins, or N rewarded ads while it's the featured outfit of the week
 };
 enum class Trail : uint8_t { None, Sparks, Rainbow, Fire, Gold, Glitch };
+// Every crash shatters the hen like glass (Hen::shatter); the equipped crash effect plays on top of that.
 enum class CrashFx : uint8_t { Feathers, Pixels, Confetti, CoinShower };
 
 struct Cosmetic {
@@ -80,6 +81,10 @@ public:
     // featured outfit of the week: rewarded-ad progress (resets when the featured outfit changes)
     int featuredProgress(const std::string& id) const { return featuredId_ == id ? featuredAds_ : 0; }
     int addFeaturedProgress(const std::string& id);        // returns the new count
+
+    // developer menu (staging builds): set the balance, lock everything that isn't free
+    void debugSetCoins(int coins);
+    void debugLockAll();
 
 private:
     void save() const;

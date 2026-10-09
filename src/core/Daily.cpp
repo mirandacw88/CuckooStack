@@ -11,6 +11,14 @@ Progression::Progression(IStorage* storage, const Tuning& t) : t_(t), rec_(stora
     xp_ = std::max(0, rec_.i("xp"));
 }
 
+void Progression::debugSetLevel(int level) {
+    level_ = std::max(1, level);
+    xp_ = 0;
+    rec_.set("level", level_);
+    rec_.set("xp", xp_);
+    rec_.save();
+}
+
 int Progression::xpToNext() const { return t_.levelBaseXp + t_.levelStepXp * (level_ - 1); }
 
 int Progression::add(int xp) {
@@ -59,6 +67,14 @@ void Streak::played() {
     count_ = last_ != kNoDay && today - last_ == 1 ? count_ + 1 : 1;
     last_ = today;
     best_ = std::max(best_, count_);
+    save();
+}
+
+void Streak::debugSet(int count, int daysSinceLastRun) {
+    count_ = std::max(0, count);
+    best_ = std::max(best_, count_);
+    last_ = count_ > 0 ? civilDay(clock_->today()) - daysSinceLastRun : kNoDay;
+    if (last_ == kNoDay) rec_.erase("last");
     save();
 }
 
@@ -199,6 +215,14 @@ DailyDrop::DailyDrop(IStorage* storage, IClock* clock) : clock_(clock), rec_(sto
 }
 
 bool DailyDrop::claimable() const { return last_ != clock_->today(); }
+
+void DailyDrop::debugSet(int claims, bool claimable) {
+    claims_ = std::max(0, claims);
+    last_ = claimable ? std::string() : clock_->today();
+    rec_.set("claims", claims_);
+    rec_.set("last", last_);
+    rec_.save();
+}
 
 int DailyDrop::claim() {
     if (!claimable()) return -1;

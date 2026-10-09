@@ -37,6 +37,7 @@ public:
     VkPipelineLayout bloomLayout = VK_NULL_HANDLE;
     VkPipelineLayout textLayout = VK_NULL_HANDLE; // set 0: font atlas (bloomSetLayout shape), ScenePush
 
+    VkPipeline litTwoSided = VK_NULL_HANDLE;
     VkPipeline sky = VK_NULL_HANDLE, lit = VK_NULL_HANDLE, unlitAlpha = VK_NULL_HANDLE, unlitAdd = VK_NULL_HANDLE,
                particleAdd = VK_NULL_HANDLE, particleAlpha = VK_NULL_HANDLE, bloom = VK_NULL_HANDLE,
                composite = VK_NULL_HANDLE, hud = VK_NULL_HANDLE, textHud = VK_NULL_HANDLE, textWorld = VK_NULL_HANDLE,
