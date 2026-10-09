@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["${APPLE_TEAM_ID}.${APP_ID}"],
+        "components": [{ "/": "/c/*", "comment": "challenge links: open the game on that day's course" }]
+      }
+    ]
+  }
+}

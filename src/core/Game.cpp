@@ -1,7 +1,11 @@
 #include "Game.h"
+#include "EndCard.h"
+#include "Links.h"
 #include "Log.h"
 #include "Materials.h"
+#include "Reminders.h"
 
+#include <cctype>
 #include <ctime>
 #include <sstream>
 
@@ -42,45 +46,174 @@ glm::vec3 discoColor(int gx, int gz, int st) {
 
 float easeOutBack(float t) { const float c1 = 2.2f, c3 = c1 + 1; return 1 + c3 * std::pow(t - 1, 3.f) + c1 * std::pow(t - 1, 2.f); }
 
-std::string todayStr() {
-    const std::time_t now = std::time(nullptr);
-    const std::tm* t = std::localtime(&now);
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-    return buf;
+GameServices withDefaults(GameServices s) {
+    static NullAudio audio; static NullAds ads; static SystemClock clock; static NullAnalytics analytics;
+    static NullRemoteConfig rc; static NullStore store; static NullNotifications notifications; static NullReplay replay;
+    static NullLeaderboards leaderboards; static NullBackend backend;
+    if (!s.audio) s.audio = &audio;
+    if (!s.ads) s.ads = &ads;
+    if (!s.clock) s.clock = &clock;
+    if (!s.analytics) s.analytics = &analytics;
+    if (!s.remoteConfig) s.remoteConfig = &rc;
+    if (!s.store) s.store = &store;
+    if (!s.notifications) s.notifications = &notifications;
+    if (!s.replay) s.replay = &replay;
+    if (!s.leaderboards) s.leaderboards = &leaderboards;
+    if (!s.backend) s.backend = &backend;
+    return s;
 }
 
 const glm::vec3 kCapOk = glow("#ffbe3a", 1.5f), kCapDanger = glow("#ff2a3a", 2.2f), kTileWhite = glow("#ffffff", 1.25f);
 } // namespace
 
 Game::Game(const GameServices& services)
-    : svc_(services), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1), dda_(services.storage), world_(rng_) {
-    if (!svc_.audio) svc_.audio = &nullAudio_;
-    if (!svc_.ads) svc_.ads = &nullAds_;
+    : svc_(withDefaults(services)), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1), dda_(svc_.storage), world_(rng_),
+      profile_(svc_.storage, svc_.clock), wallet_(svc_.storage, svc_.analytics), adPolicy_(svc_.storage, svc_.clock, tune_),
+      prog_(svc_.storage, tune_), dayStreak_(svc_.storage, svc_.clock), missions_(svc_.storage, svc_.clock), drop_(svc_.storage, svc_.clock) {
+    tune_.load(svc_.remoteConfig);
     const Grade& g = grade(0);
     fog_ = g.fog; skyMid_ = g.mid; skyBot_ = g.bot; skyHaze_ = g.haze; pinkLight_ = g.light;
     loadRecords();
     svc_.audio->setMuted(muted_);
     if (!fonts_.build()) CS_LOGE("Font atlas could not be built; text disabled");
     text_ = std::make_unique<TextLayout>(fonts_);
-    if (!hudIcons_.buildLivesIcons()) CS_LOGE("HUD sprites could not be decoded");
+    if (!hudIcons_.buildIcons()) CS_LOGE("HUD sprites could not be decoded");
     resize(390, 844);
+    coinShown_ = float(wallet_.coins());
+    applyCosmetics();
     reset();
+    svc_.replay->setEndCardRenderer([this](int w, int h, const ReplayMeta& m) { return endCard(w, h, m); });
+    {   // a challenge accepted earlier today is still on
+        Record r(svc_.storage, "cluckstack-challenge");
+        if (r.s("day") == svc_.clock->today() && r.i("m") > 0)
+            challenge_ = Challenge{r.s("day"), r.s("n"), r.s("c"), r.i("m"), r.i("beaten") != 0, 1.f};
+    }
+    onForeground();
+}
+
+std::vector<uint8_t> Game::endCard(int width, int height, const ReplayMeta& meta) const { return renderEndCard(fonts_, hudIcons_, width, height, meta); }
+
+// A new session (launch, or back from the background after a while): audience, analytics, the title's queue.
+void Game::onForeground() {
+    profile_.sessionStarted();
+    if (profile_.audience() == Audience::Unknown) {
+        if (screen_ != Screen::AgeGate) openScreen(Screen::AgeGate);
+    } else {
+        svc_.ads->setAudience(profile_.child());
+        svc_.analytics->userProperty("audience", profile_.child() ? "child" : "teen_adult");
+        svc_.replay->setEnabled(!profile_.child() && profile_.flag("replays"));
+    }
+    track("session_start", {{"session", std::to_string(profile_.sessions())}, {"days_since_install", std::to_string(profile_.daysSinceInstall())},
+                            {"level", std::to_string(prog_.level())}, {"coins", std::to_string(wallet_.coins())}});
+    missions_.refresh();
+    // reminders: did the last one bring the player back? (3 ignored in a row -> back off to every third day)
+    {
+        int opened = -1;
+        if (svc_.notifications->consumeOpened(opened)) {
+            profile_.setCounter("notif_ignored", 0);
+            track("notif_open", {{"id", std::to_string(opened)}});
+        } else {
+            const int next = profile_.counter("notif_next");
+            if (next > 0 && svc_.clock->now() > next) profile_.setCounter("notif_ignored", profile_.counter("notif_ignored") + 1);
+        }
+        profile_.setCounter("notif_next", 0);
+    }
+    queueSessionScreens();
+}
+
+void Game::rescheduleReminders() {
+    ReminderState st;
+    st.enabled = !profile_.child() && profile_.flag("notif") && svc_.notifications->permission() == NotifPermission::Granted;
+    st.usualHour = profile_.usualHour();
+    st.streak = dayStreak_.count();
+    st.playedToday = dayStreak_.playedToday();
+    st.dropStep = drop_.dayIndex();
+    st.ignored = profile_.counter("notif_ignored");
+    const std::vector<Reminder> list = planReminders(*svc_.clock, tune_, st);
+    svc_.notifications->replaceAll(list);
+    int64_t next = 0;
+    for (const Reminder& r : list) if (!next || r.at < next) next = r.at;
+    profile_.setCounter("notif_next", int(next));
+}
+
+void Game::onBackground() {
+    track("session_end", {{"runs_today", std::to_string(day_.attempts)}});
+    rescheduleReminders();
+}
+
+void Game::track(const char* event, AnalyticsParams params) { svc_.analytics->event(event, params); }
+
+// ---------- challenge links ----------
+namespace {
+std::string urlDecode(const std::string& s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '+') out += ' ';
+        else if (s[i] == '%' && i + 2 < s.size()) { out += char(std::strtol(s.substr(i + 1, 2).c_str(), nullptr, 16)); i += 2; }
+        else out += s[i];
+    }
+    return out;
+}
+std::string queryParam(const std::string& url, const std::string& key) {
+    const size_t q = url.find('?');
+    if (q == std::string::npos) return {};
+    std::istringstream in(url.substr(q + 1));
+    for (std::string kv; std::getline(in, kv, '&');) {
+        const size_t eq = kv.find('=');
+        if (eq != std::string::npos && kv.substr(0, eq) == key) return urlDecode(kv.substr(eq + 1));
+    }
+    return {};
+}
+} // namespace
+
+void Game::openLink(const std::string& url) {
+    if (url.find("/c") == std::string::npos) return;   // only challenge links for now
+    if (profile_.child()) return;                       // social features are 13+
+    const std::string day = queryParam(url, "d");
+    const int meters = std::atoi(queryParam(url, "m").c_str());
+    std::string name = queryParam(url, "n").substr(0, 16);
+    for (char& c : name) if (static_cast<unsigned char>(c) < 32) c = ' ';
+    const bool expired = day != svc_.clock->today();
+    track("challenge_open", {{"expired", expired ? "1" : "0"}, {"meters", std::to_string(meters)}});
+    if (meters <= 0 || meters > 100000) return;
+    if (expired) { toast("That course expired. Today\u2019s is live!", Icon::Missions); return; }
+    std::string id = queryParam(url, "c").substr(0, 40);
+    for (char c : id) if (!std::isalnum(static_cast<unsigned char>(c))) { id.clear(); break; }
+    challenge_ = Challenge{day, name, id, meters, false, 1.f};
+    saveChallenge();
+    toast("Beat " + (name.empty() ? std::string("your friend") : name) + ": " + std::to_string(meters) + " m", Icon::Trophy);
+    if (state_ == State::Play) return;                 // the marker shows from the next run
+}
+
+void Game::saveChallenge() {
+    Record r(svc_.storage, "cluckstack-challenge");
+    r.clear();
+    if (challenge_) {
+        r.set("day", challenge_->day); r.set("n", challenge_->name); r.set("c", challenge_->id); r.set("m", challenge_->meters);
+        r.set("beaten", challenge_->beaten ? 1 : 0);
+    }
+    r.save();
+}
+
+std::string Game::challengeLink(int meters) const {
+    std::string url = std::string(links::kSite) + "/c?d=" + svc_.clock->today() + "&m=" + std::to_string(meters);
+    if (!sharedChallengeId_.empty()) url += "&c=" + sharedChallengeId_;
+    return url + "&utm_source=share&utm_medium=challenge";
+}
+
+// Share: with friend nudges available, register the challenge first (waits at most 1.5 s for the id), so the
+// sharer hears about it when a friend beats them.
+void Game::doShare(const std::string& caption, int meters, const std::string& id) {
+    sharedChallengeId_ = id;
+    svc_.replay->share(caption, challengeLink(meters));
 }
 
 // ---------- persistence ----------
 void Game::loadRecords() {
-    day_.date = todayStr();
+    day_.date = svc_.clock->today();
     if (!svc_.storage) return;
     if (auto v = svc_.storage->get("cluckstack-best")) best_ = std::atoi(v->c_str());
     if (auto v = svc_.storage->get("cluckstack-music")) muted_ = *v == "off";
-    if (auto v = svc_.storage->get(lives::KEY)) lives_ = std::max(0, std::atoi(v->c_str()));
-    // the app was closed during a run: that run still costs its life
-    if (auto v = svc_.storage->get(lives::RUN_KEY); v && *v == "1") {
-        lives_ = std::max(0, lives_ - 1);
-        svc_.storage->set(lives::RUN_KEY, "0");
-        saveLives();
-    }
     if (auto v = svc_.storage->get("cluckstack-daily")) {
         std::istringstream in(*v);
         DayRecord r;
@@ -95,7 +228,7 @@ void Game::saveDay() {
     svc_.storage->set("cluckstack-daily", out.str());
 }
 void Game::rollDay() {
-    const std::string t = todayStr();
+    const std::string t = svc_.clock->today();
     if (day_.date != t) day_ = {t, 0, 0, 0};
 }
 
@@ -118,14 +251,22 @@ void Game::reset() {
     resetSurge();
 }
 
-void Game::saveLives() {
-    if (svc_.storage) svc_.storage->set(lives::KEY, std::to_string(lives_));
-}
-
 void Game::start() {
-    if (lives_ <= 0) { openOffer(); return; }
-    offerOpen_ = offerPending_ = false;
-    if (svc_.storage) svc_.storage->set(lives::RUN_KEY, "1");
+    if (profile_.audience() == Audience::Unknown) { openScreen(Screen::AgeGate); return; }
+    // between runs: the interstitial (if due) plays first, then the run starts once it's dismissed
+    if (state_ == State::Dead && !pendingStart_ && adPolicy_.interstitialDue() && svc_.ads->interstitialReady() && svc_.ads->showInterstitial()) {
+        adPolicy_.interstitialShown();
+        track("ad_interstitial_shown", {{"lifetime_runs", std::to_string(adPolicy_.lifetimeRuns())}});
+        pendingStart_ = true;
+        return;
+    }
+    pendingStart_ = false;
+    lockerPreview_.clear();
+    applyCosmetics();
+    if (dayStreak_.status() == Streak::Status::Saveable && !profile_.child()) track("streak_lost", {{"count", std::to_string(dayStreak_.count())}});
+    const int streakBefore = dayStreak_.count();
+    dayStreak_.played();
+    if (dayStreak_.count() != streakBefore) track("streak_update", {{"count", std::to_string(dayStreak_.count())}});
     reset();
     state_ = State::Play;
     beat_.start(); svc_.audio->musicStart();
@@ -133,8 +274,23 @@ void Game::start() {
     overDelay_ = -1;
     for (float& p : popT_) p = 0;
     intro_ = 1;
+    run_ = RunStats{};
+    // new players: extra (invisible) help on the first runs, fading out, so the first session ends on a high
+    {
+        const int runs = adPolicy_.lifetimeRuns();
+        dda_.setBoost(runs < tune_.newbieRuns ? tune_.newbieBoost * (1.f - float(runs) / float(std::max(1, tune_.newbieRuns))) : 0.f);
+    }
+    runBoost_ = boost_; boost_ = Boost::None;
+    run_.boosted = runBoost_ != Boost::None;
+    continuePending_ = continueOffered_ = false;
     rings_.spawn({0, 0.02f, 0}, C().cyan, 2.2f, 0.6f, false);
     burst({0, 0.1f, 0}, 30, {C().cyan, C().pink}, 2, 5, 0.6f, 0.1f, 0.3f, 0, true);
+    svc_.replay->runStarted();
+    replaySaved_ = false;
+    if (challenge_ && challenge_->day != svc_.clock->today()) { challenge_.reset(); saveChallenge(); }
+    if (challenge_) challenge_->opacity = 1.f;
+    track("run_start", {{"attempt", std::to_string(day_.attempts)}, {"boost", runBoost_ == Boost::Surge ? "surge" : runBoost_ == Boost::Overclock ? "overclock" : "none"},
+                        {"outfit", wallet_.active(Slot::Outfit).id}});
 }
 
 void Game::placeGate() {
@@ -143,52 +299,159 @@ void Game::placeGate() {
 }
 
 void Game::press() {
-    if (offerOpen_) { watchAd(); return; } // keyboard / generic tap on the offer = its main button
-    if (state_ == State::Title) { start(); return; } // start() opens the offer when out of lives
+    if (screen_ != Screen::None) { if (primary_) primary_(); return; } // keyboard / generic tap = the screen's main action
+    if (pendingStart_) return;
+    if (state_ == State::Title) { start(); return; }
     if (state_ == State::Play) { lay(); return; }
-    if (state_ == State::Dead && deadT_ > 0.8f && overDelay_ <= 0) start();
-}
-
-// ---------- lives + rewarded ads ----------
-void Game::openOffer() {
-    if (offerOpen_) return;
-    offerOpen_ = true;
-    offerT_ = 0;
-}
-
-bool Game::offerPlayAnyway() const {
-    return lives::GRANT_WHEN_AD_UNAVAILABLE && offerT_ >= lives::AD_WAIT_SECONDS && svc_.ads->rewardedState() != RewardedState::Ready;
-}
-
-void Game::watchAd() {
-    if (svc_.ads->rewardedState() == RewardedState::Ready) { svc_.ads->showRewarded(); return; } // reward arrives via consumeReward()
-    if (offerPlayAnyway()) grantLives();
-    // still loading: the button shows "Loading ad..." and the platform keeps trying
-}
-
-void Game::grantLives() {
-    lives_ += lives::REWARD;
-    saveLives();
-    offerOpen_ = false;
-    gainAnimT_ = 0.f;
-    const glm::vec3 hp = hen_.nodes[hen_.root].pos;
-    popup("+" + std::to_string(lives::REWARD) + " LIVES", hp + glm::vec3(0.5f, 1.6f, 0), PopKind::Sector);
-    sfx(Sfx::Corn); buzz(20);
-    flashScreen(srgbColor("#2bff9a"), 0.2f);
+    if (state_ == State::Dead && deadT_ > 0.8f && overDelay_ <= 0 && !continuePending_) start();
 }
 
 void Game::pressAt(float px, float py) {
     // mute button: 44x44 pt, top-right, 16 pt margin
     const float bx = viewW_ - 16 - 22, by = safeTop_ + 16 + 22;
-    if (std::abs(px - bx) < 26 && std::abs(py - by) < 26) { toggleMute(); return; }
-    if (offerOpen_) { // modal: only its own controls react
-        if (offerClose_.hit(px, py)) offerOpen_ = false;
-        else if (offerButton_.hit(px, py)) watchAd();
+    if (screen_ == Screen::None && std::abs(px - bx) < 26 && std::abs(py - by) < 26) { toggleMute(); return; }
+    for (size_t i = hits_.size(); i-- > 0;)
+        if (hits_[i].r.hit(px, py)) { auto fn = hits_[i].fn; fn(); return; }
+    if (screen_ != Screen::None) return; // modal: taps outside its controls do nothing
+    press();
+}
+
+bool Game::tapButton(const std::string& label) {
+    for (size_t i = hits_.size(); i-- > 0;)
+        if (hits_[i].label.rfind(label, 0) == 0) { auto fn = hits_[i].fn; fn(); return true; }
+    return false;
+}
+
+void Game::uiHit(glm::vec2 c, glm::vec2 size, std::function<void()> fn) {
+    hits_.push_back({{c, size * 0.5f}, std::move(fn), nextHitLabel_});
+    nextHitLabel_.clear();
+}
+
+// ---------- screens ----------
+void Game::openScreen(Screen s) {
+    if (screen_ == s) return;
+    if (screen_ != Screen::None) screenStack_.push_back(screen_);
+    screen_ = s;
+    screenT_ = 0;
+    if (s == Screen::Shop) track("iap_view", {});
+}
+
+void Game::closeScreen() {
+    if (screen_ == Screen::Locker) { lockerPreview_.clear(); applyCosmetics(); }
+    screen_ = screenStack_.empty() ? Screen::None : screenStack_.back();
+    if (!screenStack_.empty()) screenStack_.pop_back();
+    screenT_ = 0.35f; // the screen underneath doesn't replay its entrance
+    primary_ = nullptr;
+}
+
+void Game::queueScreen(Screen s) {
+    for (Screen q : screenQueue_) if (q == s) return;
+    screenQueue_.push_back(s);
+}
+
+// ---------- rewarded ads ----------
+bool Game::rewardReady(Placement p) const {
+    return adPolicy_.canOffer(p) && svc_.ads->rewardedState() == RewardedState::Ready;
+}
+
+bool Game::requestReward(Placement p, std::function<void()> grant) {
+    track("ad_offer_accepted", {{"placement", placementName(p)}});
+    if (!adPolicy_.canOffer(p)) { showMessage("Come back later for more"); return false; }
+    if (svc_.ads->rewardedState() != RewardedState::Ready || !svc_.ads->showRewarded(placementName(p))) {
+        showMessage(svc_.ads->rewardedState() == RewardedState::Loading ? "Loading the video\u2026 try again in a moment" : "No video available right now");
+        return false;
+    }
+    pendingReward_ = PendingReward{p, std::move(grant)};
+    pendingRewardT_ = 0;
+    return true;
+}
+
+void Game::pollAds() {
+    if (svc_.ads->consumeReward() && pendingReward_) {
+        const Placement p = pendingReward_->placement;
+        auto grant = std::move(pendingReward_->grant);
+        pendingReward_.reset();
+        adPolicy_.rewardedWatched(p);
+        if (state_ == State::Dead) adPolicy_.rewardedAtThisGameOver();
+        track("ad_rewarded_complete", {{"placement", placementName(p)}});
+        grant();
         return;
     }
-    // title screen 'Privacy settings' (shown only when UMP requires it): top-left, mirrors the mute button
-    if (privacyButton_ && state_ == State::Title && px < 16 + 150 && std::abs(py - by) < 26) { svc_.ads->showPrivacyOptions(); return; }
-    press();
+    // closed early: no reward. The callback can arrive just after the dismiss, so allow a moment.
+    if (pendingReward_ && !svc_.ads->adShowing()) {
+        pendingRewardT_ += rdt_;
+        if (pendingRewardT_ > 1.5f) { track("ad_rewarded_skipped", {{"placement", placementName(pendingReward_->placement)}}); pendingReward_.reset(); }
+    }
+}
+
+// ---------- purchases ----------
+void Game::startPurchase(const std::string& productId) {
+    auto go = [this, productId] {
+        track("iap_start", {{"product", productId}});
+        if (!svc_.store->purchase(productId)) showMessage("The store isn\u2019t available right now");
+    };
+    if (profile_.child()) parentalGate(go); else go();
+}
+
+void Game::onPurchase(const PurchaseEvent& e) {
+    const ProductDef* p = findProduct(e.productId);
+    if (!p) return;
+    track("iap_result", {{"product", e.productId}, {"result", e.result == PurchaseResult::Success ? "success" : e.result == PurchaseResult::Cancelled ? "cancelled"
+                                                                     : e.result == PurchaseResult::Pending ? "pending" : "failed"},
+                         {"restored", e.restored ? "1" : "0"}});
+    if (e.result == PurchaseResult::Pending) { showMessage("Purchase pending approval"); return; }
+    if (e.result != PurchaseResult::Success) { if (e.result == PurchaseResult::Failed) showMessage("Purchase didn\u2019t go through"); return; }
+    adPolicy_.purchaseMade();
+    const glm::vec2 mid{viewW_ / 2, viewH_ * 0.45f};
+    switch (p->kind) {
+    case ProductKind::Coins:
+        wallet_.earn(p->coins, "iap");
+        flyCoins(mid, p->coins, 18);
+        toast("Thanks for your support!", Icon::Shop, p->coins);
+        break;
+    case ProductKind::RemoveAds:
+        adPolicy_.setRemoveAds(true);
+        if (!profile_.flag("noads_bonus")) {
+            profile_.setFlag("noads_bonus", true);
+            wallet_.earn(tune_.removeAdsBonus, "iap_noads_bonus");
+            flyCoins(mid, tune_.removeAdsBonus, 12);
+        }
+        if (!e.restored) toast("Ads removed. Enjoy!", Icon::NoAds);
+        break;
+    case ProductKind::Starter:
+        wallet_.grant("hen_glitch");
+        if (!profile_.flag("starter_coins")) {
+            profile_.setFlag("starter_coins", true);
+            wallet_.earn(tune_.starterCoins, "iap_starter");
+            flyCoins(mid, tune_.starterCoins, 18);
+        }
+        if (!e.restored) { wallet_.equip("hen_glitch"); applyCosmetics(); toast("Glitch Hen unlocked!", Icon::Star); }
+        if (screen_ == Screen::Starter) closeScreen();
+        break;
+    }
+    if (!e.restored) {
+        hudBurst(mid, 40, {srgbColor("#ffd23a"), srgbColor("#ff2bd6"), srgbColor("#29e7ff"), srgbColor("#f4ff5a")}, 520.f);
+        sfx(Sfx::SurgeStart); buzz(30);
+        flashScreen(srgbColor("#ffd23a"), 0.25f);
+    }
+}
+
+void Game::parentalGate(std::function<void()> then) {
+    gateA_ = 6 + rng_.index(4); gateB_ = 7 + rng_.index(3);
+    const int ans = gateA_ * gateB_;
+    gateAnswer_ = rng_.index(4);
+    int k = 0;
+    for (int i = 0; i < 4; ++i) gateChoices_[size_t(i)] = i == gateAnswer_ ? ans : ans + (++k) * (rng_.next01() < 0.5f ? -1 : 1) * (3 + rng_.index(5));
+    gateThen_ = std::move(then);
+    openScreen(Screen::ParentalGate);
+}
+
+// ---------- cosmetics ----------
+void Game::applyCosmetics() {
+    const Cosmetic* preview = lockerPreview_.empty() ? nullptr : findCosmetic(lockerPreview_);
+    hen_.skin = preview && preview->slot == Slot::Outfit ? preview->skin : wallet_.active(Slot::Outfit).skin;
+    trail_ = preview && preview->slot == Slot::Trail ? preview->trail : wallet_.active(Slot::Trail).trail;
+    crash_ = preview && preview->slot == Slot::Crash ? preview->crash : wallet_.active(Slot::Crash).crash;
 }
 
 void Game::toggleMute() {
@@ -208,6 +471,8 @@ void Game::lay() {
     eggs_.push_back(e);
     hopV_ = 2.6f; flap_ = 1; squash_ = -0.2f;
     sfx(Sfx::Lay, static_cast<int>(eggs_.size()) - 1); buzz(8);
+    run_.eggs++;
+    missionProgress(missions_.record(MissionKind::Eggs));
     const glm::vec3 col = eggs_.size() % 2 ? C().cyan : C().pink;
     rings_.spawn({float(x_), ty + 0.03f, 0}, col, 0.85f, 0.32f, false);
     for (int i = 0; i < 16; ++i) {
@@ -239,6 +504,8 @@ void Game::knock(int k) {
 
 void Game::perfect(float top) {
     streak_++;
+    run_.perfects++;
+    missionProgress(missions_.record(MissionKind::Perfects));
     const int pts = 3 * streak_;
     bonus_ += pts;
     popup((streak_ > 1 ? "PERFECT \u00d7" + std::to_string(streak_) : std::string("PERFECT")) + " +" + std::to_string(pts), {float(x_), top + 1.2f, 0}, PopKind::Perfect);
@@ -251,6 +518,8 @@ void Game::perfect(float top) {
 
 void Game::closeCall(float top) {
     bonus_ += 2;
+    run_.closeCalls++;
+    missionProgress(missions_.record(MissionKind::CloseCalls));
     popup("CLOSE CALL +2", {float(x_), top + 0.9f, 0}, PopKind::Perfect);
     sfx(Sfx::Perfect, 7); timeScale_ = std::min(timeScale_, 0.4f);
     rings_.spawn({float(x_), top, 0.3f}, C().white, 1.4f, 0.4f, true);
@@ -276,6 +545,41 @@ void Game::die(bool ceiling) {
     sfx(Sfx::Squawk); buzz(60); shake_ = 0.55f;
     beat_.stop(); svc_.audio->musicStop(true);
     timeScale_ = 0.2f; chromaKick_ = 1.5f;
+    crashFx(p);
+    run_.seconds = std::max(run_.seconds, 0.f);
+    // Continue? (once with an ad or coins, a second time with more coins); otherwise the run is over now
+    const int cost = run_.continues == 0 ? tune_.continueCost : tune_.continueCost2;
+    const bool adOk = run_.continues == 0 && rewardReady(Placement::Continue);
+    continuePending_ = run_.continues < 2 && (adOk || wallet_.canAfford(cost));
+    continueOffered_ = false;
+    overDelay_ = 1e6f; // results stay hidden until the run is really over (finishRun sets the real delay)
+    if (continuePending_) track("ad_offer_shown", {{"placement", "continue"}, {"ad", adOk ? "1" : "0"}});
+    else finishRun();
+}
+
+void Game::revive() {
+    if (screen_ == Screen::Continue) closeScreen();
+    continuePending_ = continueOffered_ = false;
+    run_.continues++;
+    state_ = State::Play; deadT_ = 0; overDelay_ = -1;
+    eggs_.clear();
+    meter_ = MAXE; prevFull_ = MAXE;
+    baseY_ = std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U; vy_ = 0; hop_ = 0; hopV_ = 0;
+    hen_.nodes[hen_.root].pos = {float(x_), float(baseY_), 0};
+    hen_.nodes[hen_.root].rot = glm::vec3(0.f);
+    graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
+    timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
+    beat_.start(); svc_.audio->musicStart();
+    const glm::vec3 p{float(x_), float(baseY_) + 0.6f, 0};
+    rings_.spawn(p, C().cyan, 3.2f, 0.6f, true); rings_.spawn(p, C().pink, 2.2f, 0.5f, true);
+    burst(p, 90, {C().cyan, C().white, C().volt}, 3, 10, 0.8f, 0.1f, 0.6f, 0, false, 2, 3);
+    flashScreen(srgbColor("#29e7ff"), 0.35f); chromaKick_ = 1.2f;
+    popup("REBOOTED", p + glm::vec3(2.2f, 1.6f, 0), PopKind::Surge);
+    sfx(Sfx::SurgeStart); buzz(40);
+}
+
+void Game::finishRun() {
+    continuePending_ = false;
     const bool isBest = score_ > best_, isDayBest = score_ > day_.best;
     if (isDayBest) day_.best = score_;
     const double pbBefore = day_.bestDist;
@@ -284,23 +588,137 @@ void Game::die(bool ceiling) {
     saveDay();
     if (isBest) { best_ = score_; if (svc_.storage) svc_.storage->set("cluckstack-best", std::to_string(best_)); }
     finalScore_ = score_; finalDist_ = static_cast<int>(std::floor(x_));
+    newBestRun_ = (isBest || isDayBest) && score_ > 0;
     {
         const double gap = std::ceil(pbBefore - x_);
         std::string hook;
         if (pbBefore <= 0) hook = "First run of today\u2019s course";
-        else if (x_ > pbBefore) hook = "New furthest today \u00b7 +" + std::to_string(static_cast<int>(std::floor(x_ - pbBefore))) + "m";
+        else if (x_ > pbBefore) hook = x_ - pbBefore < 1 ? std::string("New furthest today \u00b7 by a hair")
+                                                         : "New furthest today \u00b7 +" + std::to_string(static_cast<int>(std::floor(x_ - pbBefore))) + "m";
         else if (gap <= 25) hook = "So close \u00b7 " + std::to_string(static_cast<int>(gap)) + "m short of your best";
         else hook = std::to_string(static_cast<int>(std::floor(day_.bestDist))) + "m furthest today";
         overNote_ = "Attempt " + std::to_string(day_.attempts) + " \u00b7 " + hook;
         static const char* kLines[] = {"Flatlined", "Signal lost", "Scrambled", "Fried circuits"};
         overTag_ = isBest && score_ > 0 ? "New all-time best" : isDayBest && score_ > 0 ? "New daily best" : kLines[rng_.index(4)];
     }
-    overDelay_ = 0.9f; overT_ = 0;
-    lives_ = std::max(0, lives_ - 1);
-    saveLives();
-    if (svc_.storage) svc_.storage->set(lives::RUN_KEY, "0");
-    offerPending_ = lives_ == 0; // out of lives: the offer opens over the game-over screen
-    lifeFrom_ = lives_ + 1; lifeTo_ = lives_; lifeAnimT_ = 0.f; lifeSplitDone_ = false; // life-lost animation (HUD badge)
+    // rewards: coins and XP for the distance, mission progress
+    runCoins_ = std::max(1, finalDist_ / tune_.metersPerCoin + run_.surges * tune_.coinsPerSurge); // every run pays something
+    runCoins_ = int(std::lround(runCoins_ * tune_.eventCoinMult));                                   // live event
+    coinsDoubled_ = false;
+    if (runCoins_ > 0) wallet_.earn(runCoins_, "run");
+    runXp_ = finalDist_ * tune_.xpPerMeter;
+    levelFrom_ = prog_.level();
+    xpFrom_ = prog_.fraction();
+    missionProgress(missions_.record(MissionKind::Runs));
+    missionProgress(missions_.recordDistance(finalDist_));
+    levelGained(prog_.add(runXp_));
+    if (!profile_.child() && finalDist_ > 0) svc_.leaderboards->submit(finalDist_);
+    if (beatenPending_ && challenge_ && !challenge_->id.empty()) svc_.backend->challengeBeaten(challenge_->id, finalDist_);
+    beatenPending_ = false;
+    adPolicy_.runFinished();
+    adPolicy_.newGameOver();
+    wallet_.runFinished();
+    track("run_end", {{"distance", std::to_string(finalDist_)}, {"score", std::to_string(score_)}, {"seconds", std::to_string(int(run_.seconds))},
+                      {"attempt", std::to_string(day_.attempts)}, {"new_best", newBestRun_ ? "1" : "0"}, {"surges", std::to_string(run_.surges)},
+                      {"continues", std::to_string(run_.continues)}, {"coins", std::to_string(runCoins_)}, {"boosted", run_.boosted ? "1" : "0"}});
+    overDelay_ = continueOffered_ ? 0.2f : 0.9f; overT_ = 0;
+    continueOffered_ = false;
+    if (newBestRun_ && !profile_.child() && !profile_.flag("replay_asked") && svc_.replay->state() != ReplayState::Unavailable) {
+        profile_.setFlag("replay_asked", true);
+        queueScreen(Screen::ReplayPrimer);
+        track("replay_primer_shown", {});
+    } else if (newBestRun_ && !profile_.child() && profile_.sessions() >= 2 && !profile_.flag("notif_asked") &&
+        svc_.notifications->permission() != NotifPermission::Denied) {
+        profile_.setFlag("notif_asked", true);
+        queueScreen(Screen::NotifPrimer);
+        track("notif_primer_shown", {});
+    }
+    rescheduleReminders();
+}
+
+void Game::levelGained(int levels) {
+    if (levels <= 0) return;
+    levelUps_ += levels;
+    chestCoins_ = tune_.levelChestCoins + 10 * (prog_.level() - 1);
+    chestOpened_ = chestDoubled_ = false;
+    for (const Cosmetic& c : catalog())
+        if (c.unlock == Unlock::Level && c.level <= prog_.level() && !wallet_.owns(c.id)) {
+            wallet_.grant(c.id);
+            toast(std::string("Unlocked: ") + c.name, Icon::Star);
+        }
+    track("level_up", {{"level", std::to_string(prog_.level())}});
+    queueScreen(Screen::LevelUp);
+}
+
+void Game::onNotificationsAccepted() {
+    profile_.setFlag("notif", true);
+    svc_.notifications->requestPermission(); // the OS prompt; reminders are planned once it's granted
+    rescheduleReminders();
+}
+
+void Game::missionProgress(int mask) {
+    for (int i = 0; i < 3; ++i) {
+        if (!(mask & (1 << i))) continue;
+        const Mission& m = missions_.list()[size_t(i)];
+        const int coins = int(std::lround(tune_.missionReward * tune_.eventCoinMult));
+        wallet_.earn(coins, "mission");
+        toast(Missions::describe(m), Icon::Check, coins);
+        track("mission_complete", {{"kind", std::to_string(int(m.kind))}, {"target", std::to_string(m.target)}});
+        levelGained(prog_.add(tune_.xpPerMission));
+    }
+}
+
+// ---------- cosmetic effects ----------
+void Game::emitTrail(float dt) {
+    if (trail_ == Trail::None) return;
+    const Hen::Node& root = hen_.nodes[hen_.root];
+    const glm::vec3 at{root.pos.x - 0.32f, root.pos.y + 0.55f, 0.f};
+    trailAcc_ += dt * (trail_ == Trail::Rainbow ? 70.f : 50.f);
+    while (trailAcc_ >= 1.f) {
+        trailAcc_ -= 1.f;
+        const glm::vec3 j{rng_.range(-0.08f, 0.08f), rng_.range(-0.12f, 0.12f), rng_.range(-0.1f, 0.1f)};
+        switch (trail_) {
+        case Trail::Sparks:
+            fxAdd_.emit(at + j, {rng_.range(-2.4f, -1.f), rng_.range(-0.3f, 0.8f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.25f, 0.45f), 0.06f, 0,
+                        rng_.next01() < 0.5f ? C().cyan : C().pink, 1, 2, 3);
+            break;
+        case Trail::Rainbow:
+            fxAdd_.emit(at + j, {rng_.range(-1.6f, -0.8f), rng_.range(-0.1f, 0.2f), 0}, rng_.range(0.5f, 0.7f), 0.12f, 0.02f,
+                        hueColor(time_ * 0.8f + j.y * 3.f) * 2.6f, 0.9f, 1, 0);
+            break;
+        case Trail::Fire:
+            fxAdd_.emit(at + j, {rng_.range(-1.8f, -0.6f), rng_.range(0.6f, 1.6f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.1f, 0.0f,
+                        rng_.next01() < 0.6f ? C().ember : C().volt, 1, 2, -2);
+            break;
+        case Trail::Gold:
+            fxAdd_.emit(at + j, {rng_.range(-1.2f, -0.4f), rng_.range(-0.2f, 0.5f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.5f, 0.9f), 0.05f, 0.02f,
+                        glow("#ffd23a", 2.8f), 1, 1, 1);
+            break;
+        case Trail::Glitch: {
+            const bool red = rng_.next01() < 0.5f;
+            fxAdd_.emit(at + j + glm::vec3(red ? -0.04f : 0.04f, 0, 0), {rng_.range(-2.f, -1.2f), 0, 0}, rng_.range(0.15f, 0.3f), 0.09f, 0,
+                        red ? C().red : C().cyan, 1, 0, 0);
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void Game::crashFx(glm::vec3 p) {
+    switch (crash_) {
+    case CrashFx::Pixels:
+        burst(p, 120, {C().cyan, glow("#9a5bff", 3), C().white}, 2, 9, 1.1f, 0.14f, 0.5f, 0, false, 1.5f, 8);
+        break;
+    case CrashFx::Confetti:
+        burst(p, 140, {C().volt, C().pink, C().green, C().cyan}, 3, 9, 1.6f, 0.1f, 1.5f, 0, false, 2.2f, 4);
+        break;
+    case CrashFx::CoinShower:
+        burst(p, 110, {glow("#ffd23a", 3), glow("#fff2b0", 2.4f), C().volt}, 3, 10, 1.4f, 0.12f, 2.f, 0, false, 1.6f, 9);
+        rings_.spawn(p, glow("#ffd23a", 2.5f), 3.8f, 0.7f, true);
+        break;
+    default: break;
+    }
 }
 
 // ---------- effects helpers ----------
@@ -422,11 +840,28 @@ void Game::update(double rawDt) {
         gatePassed_ = true;
         const float top = float(baseY_) + eggs_.size() * Uf;
         popup("NEW DAILY BEST", {float(x_) + 1, top + 2, 0}, PopKind::Sector);
+        missionProgress(missions_.record(MissionKind::BeatBest));
         sfx(Sfx::Perfect); flashScreen(srgbColor("#eafaff"), 0.22f); chromaKick_ = std::max(chromaKick_, 0.6f);
         rings_.spawn({float(gateX_), top + 0.6f, 0.4f}, C().white, 3.2f, 0.7f, true);
         burst({float(gateX_), top + 0.8f, 0}, 40, {C().white, C().cyan, C().volt}, 2, 7, 0.8f, 0.1f, 0.8f, 0, false, 2.5f, 4);
     }
     if (gatePassed_) gateOpacity_ = std::max(0.f, gateOpacity_ - rdt * 1.5f);
+    if (challenge_ && state_ == State::Play && x_ > challenge_->meters && challenge_->opacity >= 1.f) {
+        const bool first = !challenge_->beaten;
+        challenge_->beaten = true;
+        challenge_->opacity = 0.999f; // fades out below
+        saveChallenge();
+        const float top = float(baseY_) + eggs_.size() * Uf;
+        popup(first ? "CHALLENGE BEATEN!" : "PASSED THEM AGAIN", {float(x_) + 1, top + 2.4f, 0}, PopKind::Surge);
+        flashScreen(srgbColor("#ff2bd6"), 0.3f); sfx(Sfx::SurgeStart); buzz(30);
+        rings_.spawn({float(challenge_->meters), top + 0.6f, 0.4f}, C().pink, 3.4f, 0.7f, true);
+        burst({float(challenge_->meters), top + 0.8f, 0}, 60, {C().pink, C().volt, C().white}, 2, 8, 0.9f, 0.1f, 0.8f, 0, false, 2.5f, 4);
+        if (first) {
+            track("challenge_beaten", {{"meters", std::to_string(challenge_->meters)}});
+            if (!challenge_->id.empty()) beatenPending_ = true; // the sharer is nudged with the final distance (finishRun)
+        }
+    }
+    if (challenge_ && challenge_->opacity < 1.f) challenge_->opacity = std::max(0.f, challenge_->opacity - rdt * 1.2f);
 
     { // drift the scene's colour mood toward the current sector's grade
         const Grade& g = grade(gradeIdx_);
@@ -439,14 +874,54 @@ void Game::update(double rawDt) {
     // HUD timers
     flashT_ += rdt;
     if (state_ == State::Title) { titleT_ += rdt; privacyButton_ = svc_.ads->privacyOptionsRequired(); }
-    if (offerOpen_) offerT_ += rdt;
-    updateLivesAnim(rdt);
-    // out of lives: present the rewarded-ad offer once the game-over overlay is up and the heart has broken
-    if (offerPending_ && state_ == State::Dead && overDelay_ <= 0 && (lifeAnimT_ < 0 || lifeAnimT_ > 1.1f)) {
-        offerPending_ = false;
-        openOffer();
+    if (state_ == State::Play) run_.seconds += rdt;
+    screenT_ += rdt;
+    rewardMsgT_ = std::max(0.f, rewardMsgT_ - rdt);
+    updateHudFx(rdt);
+    pollAds();
+    for (PurchaseEvent e; svc_.store->pollEvent(e);) onPurchase(e);
+    if ((productsRefreshT_ -= rdt) <= 0) { products_ = svc_.store->products(); productsRefreshT_ = products_.empty() ? 1.f : 30.f; }
+    if (pendingStart_ && !svc_.ads->adShowing()) start(); // the interstitial was dismissed
+    // the Continue panel, once the crash has played
+    if (state_ == State::Dead) deadRealT_ += rdt; else deadRealT_ = 0;
+    if (state_ == State::Dead && !replaySaved_ && deadRealT_ > 0.62f) { // the crash has played; panels not up yet
+        replaySaved_ = true;
+        ReplayMeta m;
+        m.distance = int(std::floor(x_)); m.score = score_; m.day = dayLabel();
+        m.newBest = x_ > day_.bestDist || score_ > best_;
+        svc_.replay->saveClip(m);
     }
-    if (svc_.ads->consumeReward()) grantLives(); // the player watched a rewarded ad to the end
+    {
+        std::string target;
+        if (svc_.replay->consumeShared(target)) track("replay_shared", {{"target", target}, {"distance", std::to_string(finalDist_)}});
+    }
+    if (pendingShare_) {
+        std::string id;
+        pendingShare_->wait -= rdt;
+        if (svc_.backend->pollChallengeId(id) || pendingShare_->wait <= 0) {
+            const PendingShare p = *pendingShare_;
+            pendingShare_.reset();
+            doShare(p.caption, p.meters, id);
+        }
+    }
+    if (continuePending_ && !continueOffered_ && state_ == State::Dead && deadRealT_ > 0.7f) {
+        continueOffered_ = true;
+        continueT_ = 0;
+        openScreen(Screen::Continue);
+    }
+    if (screen_ == Screen::Continue && !pendingReward_) {
+        continueT_ += rdt;
+        if (continueT_ >= tune_.continueSeconds) { closeScreen(); finishRun(); }
+    }
+    // queued screens (daily drop, level up, ...) open one at a time over the title or the results
+    const bool overlayUp = state_ == State::Title || (state_ == State::Dead && overDelay_ <= 0 && overT_ > 0.9f);
+    if (screen_ == Screen::None && !screenQueue_.empty() && overlayUp && !pendingReward_) {
+        const Screen next = screenQueue_.front();
+        screenQueue_.pop_front();
+        if (next == Screen::Starter) profile_.setCounter("starter_seen", profile_.counter("starter_seen") + 1);
+        if (next == Screen::StreakSave) profile_.setCounter("streak_prompt_day", int(civilDay(svc_.clock->today())));
+        openScreen(next);
+    }
     meterShake_ = std::max(0.f, meterShake_ - rdt);
     scoreBump_ = std::max(0.f, scoreBump_ - rdt);
     for (size_t i = popups_.size(); i-- > 0;) { popups_[i].age += rdt; if (popups_[i].age >= popups_[i].dur) popups_.erase(popups_.begin() + static_cast<long>(i)); }
@@ -454,7 +929,17 @@ void Game::update(double rawDt) {
         overDelay_ -= rdt;
         if (overDelay_ <= 0) {
             overT_ = 0;
-            // offer: opened below, once the life-lost animation has played
+            // the run's coins fly from the results up into the counter
+            if (runCoins_ > 0) flyCoins({viewW_ / 2, overCoinsY_}, runCoins_, std::clamp(runCoins_ / 2, 4, 14));
+            // new best: confetti from both sides of the results, a flash and a fanfare
+            if (newBestRun_) {
+                const glm::vec3 cols[] = {srgbColor("#ff2bd6"), srgbColor("#29e7ff"), srgbColor("#f4ff5a"), srgbColor("#2bff9a")};
+                for (int side = 0; side < 2; ++side)
+                    hudBurst({side ? viewW_ - 30.f : 30.f, viewH_ * 0.45f}, 26, {cols[0], cols[1], cols[2], cols[3]}, 620.f);
+                flashScreen(srgbColor("#f4ff5a"), 0.22f);
+                sfx(Sfx::SurgeStart);
+                queueHaptic(0.f, 25); queueHaptic(0.12f, 25); queueHaptic(0.24f, 40);
+            }
         }
     }
     else overT_ += rdt;
@@ -473,7 +958,8 @@ void Game::updatePlay(float dt, float rdt) {
     if (surging_) { surgeT_ -= rdt; if (surgeT_ <= 0) endSurge(); }
     else if (graceT_ > 0) graceT_ = std::max(0.f, graceT_ - rdt);
     x_ += speed_ * dt;
-    meter_ = std::min(float(MAXE), meter_ + dt / (float(cv.regen) * dda_.regenMul(float(x_))));
+    const float overclock = runBoost_ == Boost::Overclock ? 0.6f : 1.f; // boost: eggs refill faster all run
+    meter_ = std::min(float(MAXE), meter_ + dt / (float(cv.regen) * dda_.regenMul(float(x_)) * overclock));
     const int fullNow = std::min(MAXE, static_cast<int>(std::floor(meter_)));
     if (fullNow > prevFull_) for (int i = std::max(0, prevFull_); i < fullNow; ++i) popT_[i] = 0.35f;
     prevFull_ = fullNow;
@@ -488,7 +974,7 @@ void Game::updatePlay(float dt, float rdt) {
     }
     if (level_.generateUntil(x_ + 45)) { level_.dropBehind(x_); level_.rebuildBlocks(); }
 
-    if (autoSurge_ && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
+    if ((autoSurge_ || runBoost_ == Boost::Surge) && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
     if (smashing()) smashAhead();
     const double hb = 0.22;
     const double hFront = level_.heightAt(x_ + hb) * U;
@@ -638,6 +1124,7 @@ void Game::updateHen(float dt) {
                 fxAdd_.emit({px + rng_.range(-0.03f, 0.03f), py + rng_.range(-0.03f, 0.03f), rng_.range(-0.05f, 0.05f)},
                             {rng_.range(-1.2f, -0.4f), rng_.range(-0.1f, 0.4f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.11f, 0.01f,
                             rng_.next01() < 0.75f ? C().cyan : C().pink, 0.9f, 1.5f, -0.5f);
+            emitTrail(dt);
             if (onSurface && baseY_ < 0.01 && rng_.next01() < 0.5f)
                 fxAdd_.emit({float(x_) + rng_.range(-0.1f, 0.1f), 0.03f, rng_.range(-0.15f, 0.15f)}, {rng_.range(-2, -0.5f), rng_.range(0.8f, 1.8f), rng_.range(-0.6f, 0.6f)},
                             rng_.range(0.25f, 0.4f), 0.045f, 0.02f, C().water, 1, 1, 9);
@@ -655,8 +1142,9 @@ void Game::updateHen(float dt) {
         if (root.pos.y < floorY && henV_.y < 0) { root.pos.y = floorY; henV_ *= 0.35f; henV_.y = std::abs(henV_.y) * 0.4f; henW_ *= 0.5f; }
     }
     // visor turns red when the next wall is too tall
-    const glm::vec3 cyan = hexColor("#29e7ff"), red = hexColor("#ff2b4a");
-    hen_.rimColor = glm::mix(glm::mix(cyan, red, danger_), glm::vec3(1.f), 0.35f);
+    const glm::vec3 cyan = hen_.skin.visor, red = hexColor("#ff2b4a");
+    hen_.time = time_;
+    hen_.rimColor = glm::mix(glm::mix(hen_.skin.rainbow ? hueColor(time_ * 0.6f) : cyan, red, danger_), glm::vec3(1.f), 0.35f);
     hen_.cyanColor = glm::mix(cyan, red, danger_);
     hen_.cyanIntensity = (3.2f + danger_ * std::max(0.f, std::sin(time_ * 22)) * 2.5f) * (std::fmod(time_, 3.7f) < 0.08f ? 0.12f : 1.f);
     hen_.tipVisible = std::fmod(time_, 1.1f) < 0.18f;
@@ -706,11 +1194,14 @@ void Game::updateCamera(float rdt) {
     intro_ = std::max(0.f, intro_ - rdt / 1.3f);
     const float ie = intro_ * intro_ * (3 - 2 * intro_);
     camKick_ *= std::exp(-rdt * 9);
+    // locker open: frame the hen in the top part of the screen, above the sheet, a little closer
+    lockerK_ += ((screen_ == Screen::Locker ? 1.f : 0.f) - lockerK_) * std::min(1.f, rdt * 6.f);
+    const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
     camera_.setFovBoost(surge::FOV_ADD * partyK_);
     const float dist = camera_.followDistance();
-    camera_.setPose({camX_ + sx + drift * 0.8f - camKick_ - ie * 3, camY_ + 1.9f + sy + drift * 0.3f + ie * 4.5f,
-                     dist * (1 - 0.38f * dze) - std::abs(drift) * 0.8f + ie * 6},
-                    {camX_ + drift * 0.3f - camKick_ * 0.5f, camY_ + 0.1f + ie * 1.2f + dze * 0.3f, 0});
+    camera_.setPose({camX_ + sx + drift * 0.8f - camKick_ - ie * 3 - 1.45f * lk, camY_ + 1.9f + sy + drift * 0.3f + ie * 4.5f - 1.9f * lk,
+                     dist * (1 - 0.38f * dze) * (1 - 0.45f * lk) - std::abs(drift) * 0.8f + ie * 6},
+                    {camX_ + drift * 0.3f - camKick_ * 0.5f - 1.45f * lk, camY_ + 0.1f + ie * 1.2f + dze * 0.3f - 3.1f * lk, 0});
 }
 
 void Game::updateAmbient(float dt) {
@@ -861,9 +1352,19 @@ void Game::buildRenderList() {
         out.add(Pass::UnlitAdd, MeshId::Box) = makeUnlit(compose({gx, 0.02f, 1.2f}, {0.06f, 0.02f, 7}), glow("#eafaff", 1.05f), gateOpacity_);
     }
 
+    // a friend's challenge: a pink beam at their distance
+    if (challenge_ && challenge_->opacity > 0 && challenge_->meters > 5) {
+        const float cx = float(challenge_->meters), o = challenge_->opacity * (0.85f + 0.15f * std::sin(time_ * 5));
+        out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose({cx, 8, -0.85f}, {1.1f, 16, 1}), glow("#ff2bd6", 1.1f), o, Shape::HBeam);
+        out.add(Pass::UnlitAdd, MeshId::Box) = makeUnlit(compose({cx, 0.02f, 1.2f}, {0.08f, 0.02f, 7}), glow("#ff2bd6", 1.3f), o);
+    }
+
     emitParty(out, pz);
     world_.emit(out, camX_, camY_, time_, pz, grade(gradeIdx_).light, text_.get(), surge::WINDOW_FLASH * pz * partyK_);
     worldGateLabel();
+    if (challenge_ && challenge_->opacity > 0 && challenge_->meters > 5)
+        worldMarkerLabel(challenge_->meters, challenge_->opacity, challenge_->name.empty() ? "FRIEND'S RUN" : toUpperAscii(challenge_->name) + "'S RUN",
+                         std::to_string(challenge_->meters) + " m", hexColor("#ff2bd6"));
     out.fontAtlas = fonts_.built() ? &fonts_ : nullptr;
     out.hudImage = hudIcons_.built() ? &hudIcons_ : nullptr;
     rings_.emitTo(out);
@@ -892,6 +1393,7 @@ void Game::buildRenderList() {
     f.bloomStrength = 0.85f + pz * 0.3f + chromaKick_ * 0.15f + surge::BLOOM_ADD * partyK_;
     f.vignetteTint = glm::vec4(hueColor(partyTime_ * surge::HUE_SPEED * 1.6f + 0.5f), surge::VIGNETTE_TINT * partyK_);
     f.viewportW = viewW_; f.viewportH = viewH_;
+    f.frostAmount = 0.f; // a glass panel turns it on while the HUD is built (hudFrost)
 
     buildHud();
 }

@@ -1,0 +1,12 @@
+{
+  "_comment": "In-app products: the one list the game (src/core/Economy.h kProducts), the verifyPurchase Cloud Function (firebase/functions) and the store consoles must agree on. economy_test checks Economy.h against this file. Create the products in App Store Connect and Play Console with these ids, for BOTH apps (prod com.cuckoostack.aerospheregames and staging com.cuckoostack.aerospheregames.staging).",
+  "products": [
+    { "id": "coins_s",      "type": "consumable",     "coins": 300,  "usd": "0.99",  "name": "Coin Pack S" },
+    { "id": "coins_m",      "type": "consumable",     "coins": 1000, "usd": "2.99",  "name": "Coin Pack M" },
+    { "id": "coins_l",      "type": "consumable",     "coins": 1800, "usd": "4.99",  "name": "Coin Pack L" },
+    { "id": "coins_xl",     "type": "consumable",     "coins": 4000, "usd": "9.99",  "name": "Coin Pack XL" },
+    { "id": "coins_xxl",    "type": "consumable",     "coins": 9000, "usd": "19.99", "name": "Coin Pack XXL" },
+    { "id": "starter_pack", "type": "non_consumable", "coins": 1500, "usd": "2.99",  "name": "Starter Pack", "grants": ["hen_glitch"] },
+    { "id": "remove_ads",   "type": "non_consumable", "coins": 500,  "usd": "3.99",  "name": "Remove Ads" }
+  ]
+}

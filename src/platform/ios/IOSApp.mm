@@ -2,6 +2,7 @@
 // touch input, safe-area insets, haptics, persistence and an explicit diagnostic alert if Vulkan cannot start.
 #include "IOSAds.h"
 #include "IOSAudio.h"
+#include "IOSServices.h"
 #include "IOSWindow.h"
 #include "../../core/FileStorage.h"
 #include "../../core/Game.h"
@@ -10,6 +11,7 @@
 #include "../../graphics/Quality.h"
 #include "../../graphics/Renderer.h"
 
+#import "CuckooStack-Swift.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
 
@@ -26,6 +28,9 @@ public:
         [g impactOccurred];
     }
 };
+
+// a link that opened the app (challenge links); the game picks it up on its next frame
+std::string gPendingLink;
 
 std::string savePath() {
     NSURL* dir = [[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
@@ -52,7 +57,14 @@ std::string savePath() {
     cs::audio::Synth _synth;
     std::unique_ptr<cs::IOSAudio> _audio;
     cs::IOSAds _ads;
+    cs::IOSAnalytics _analytics;
+    cs::IOSNotifications _notifications;
+    cs::IOSReplay _replay;
+    cs::IOSLeaderboards _leaderboards;
+    cs::IOSBackend _backend;
+    std::unique_ptr<cs::IOSStore> _store;
     std::unique_ptr<cs::Game> _game;
+    CFTimeInterval _backgroundAt; // a long break counts as a new session
     cs::Renderer _renderer;
     BOOL _ready;
     UIView* _splash; // opening splash, identical to LaunchScreen.storyboard; nil once dismissed
@@ -100,7 +112,15 @@ std::string savePath() {
 - (void)viewDidLoad {
     [super viewDidLoad];
     _storage = std::make_unique<cs::FileStorage>(savePath());
-    _game = std::make_unique<cs::Game>(cs::GameServices{&_synth, _storage.get(), &_haptics, &_ads});
+    _store = std::make_unique<cs::IOSStore>();
+    cs::GameServices services;
+    services.audio = &_synth; services.storage = _storage.get(); services.haptics = &_haptics; services.ads = &_ads;
+    services.analytics = &_analytics; services.remoteConfig = &_analytics; services.store = _store.get();
+    services.notifications = &_notifications;
+    services.replay = &_replay;
+    services.leaderboards = &_leaderboards;
+    services.backend = &_backend;
+    _game = std::make_unique<cs::Game>(services);
 #ifndef NDEBUG
     // debug: `xcrun simctl launch <device> com.cuckoostack.aerospheregames --surge` starts a surge 4 m into every run
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--surge"]) _game->setDebugAutoSurge(true);
@@ -110,6 +130,8 @@ std::string savePath() {
     _window = std::make_unique<cs::IOSWindow>((__bridge void*)self.view.layer);
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(pause) name:UIApplicationWillResignActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(resume) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(didEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(willEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -163,6 +185,15 @@ std::string savePath() {
     [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 
+- (void)didEnterBackground {
+    _backgroundAt = CACurrentMediaTime();
+    if (_game) _game->onBackground();
+}
+
+- (void)willEnterForeground {
+    if (_game && _backgroundAt > 0 && CACurrentMediaTime() - _backgroundAt > 30 * 60) _game->onForeground();
+}
+
 - (void)pause {
     if (_audio) _audio->pause();
     [_link invalidate];
@@ -171,6 +202,7 @@ std::string savePath() {
 
 - (void)tick:(CADisplayLink*)link {
     const CFTimeInterval now = link.timestamp;
+    if (!gPendingLink.empty()) { _game->openLink(gPendingLink); gPendingLink.clear(); }
     _game->update(now - _last);
     _last = now;
     if (!_renderer.render(_game->renderList())) {
@@ -236,7 +268,21 @@ std::string savePath() {
 @end
 
 @implementation CSAppDelegate
+// challenge links: universal links (https://<domain>/c?...) and the custom scheme
+- (BOOL)application:(UIApplication*)app openURL:(NSURL*)url options:(NSDictionary<UIApplicationOpenURLOptionsKey, id>*)options {
+    gPendingLink = url.absoluteString.UTF8String;
+    return YES;
+}
+- (BOOL)application:(UIApplication*)application continueUserActivity:(NSUserActivity*)activity
+    restorationHandler:(void (^)(NSArray<id<UIUserActivityRestoring>>*))restorationHandler {
+    if (![activity.activityType isEqualToString:NSUserActivityTypeBrowsingWeb] || !activity.webpageURL) return NO;
+    gPendingLink = activity.webpageURL.absoluteString.UTF8String;
+    return YES;
+}
 - (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+    if (NSURL* url = launchOptions[UIApplicationLaunchOptionsURLKey]) gPendingLink = url.absoluteString.UTF8String;
+    [CSFirebase.shared start]; // first: Crashlytics and Analytics want to see the whole launch
+    [CSNotifications.shared start]; // before the first frame, so a tap on a reminder that launched the app counts
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.rootViewController = [CSGameViewController new];
     [self.window makeKeyAndVisible];

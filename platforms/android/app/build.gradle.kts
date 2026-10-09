@@ -1,19 +1,32 @@
 plugins {
     id("com.android.application")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
-// AdMob IDs come from config/ads.env (shared with iOS): *_TEST for debug builds, *_PROD for release builds.
+// Firebase config per environment: app/src/staging/google-services.json and app/src/prod/google-services.json
+// (git-ignored; download them from the two Firebase projects). Without one, that build runs with Firebase off.
+googleServices {
+    missingGoogleServicesStrategy = com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy.WARN
+}
+
+// AdMob IDs come from config/ads.env (shared with iOS): *_TEST for staging and debug builds, *_PROD for prod
+// release builds (which fail if a PROD ID is missing).
 val adsEnvFile = rootProject.file("../../config/ads.env")
 val adsEnv: Map<String, String> = adsEnvFile.takeIf { it.exists() }?.readLines().orEmpty()
     .map { it.trim() }
     .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("=") }
     .associate { it.substringBefore("=").trim() to it.substringAfter("=").trim().removeSurrounding("\"") }
+// Play Games leaderboard (config/store/leaderboards.env); empty until the Play Games project exists
+val boardsEnv: Map<String, String> = rootProject.file("../../config/store/leaderboards.env").takeIf { it.exists() }?.readLines().orEmpty()
+    .map { it.trim() }
+    .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("=") }
+    .associate { it.substringBefore("=").trim() to it.substringAfter("=").trim() }
+
 fun adsId(key: String): String = adsEnv["${key}_TEST"]?.takeIf { it.isNotBlank() }
     ?: throw GradleException("config/ads.env: ${key}_TEST is missing")
-fun adsProdId(key: String): String = adsEnv["${key}_PROD"]?.takeIf { it.isNotBlank() } ?: run {
-    logger.warn("config/ads.env: ${key}_PROD is empty, so release builds will show TEST ads")
-    adsId(key)
-}
+fun adsProdId(key: String): String = adsEnv["${key}_PROD"]?.takeIf { it.isNotBlank() }
+    ?: "MISSING_${key}_PROD" // checked by the prodRelease guard below, so test IDs can never ship
 
 android {
     namespace = "com.cuckoostack.aerospheregames"
@@ -51,16 +64,53 @@ android {
         }
     }
 
+    // Environments (see README): two Firebase projects, two app IDs so both builds install side by side.
+    flavorDimensions += "env"
+    productFlavors {
+        create("staging") {
+            dimension = "env"
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+            resValue("string", "app_name", "Cuckoo Stack \u03b2")
+            externalNativeBuild { cmake { arguments += "-DCS_ENV=staging" } }
+            manifestPlaceholders["linkHost"] = "cuckoostack-staging.web.app" // challenge links (src/core/Links.h)
+            manifestPlaceholders["linkScheme"] = "cuckoostack-staging"
+            resValue("string", "game_services_project_id", boardsEnv["PLAY_GAMES_APP_ID_STAGING"] ?: "")
+            resValue("string", "play_leaderboard_id", boardsEnv["PLAY_LEADERBOARD_STAGING"] ?: "")
+        }
+        create("prod") {
+            dimension = "env"
+            resValue("string", "app_name", "Cuckoo Stack")
+            externalNativeBuild { cmake { arguments += "-DCS_ENV=prod" } }
+            manifestPlaceholders["linkHost"] = "cuckoostack-prod.web.app"
+            manifestPlaceholders["linkScheme"] = "cuckoostack"
+            resValue("string", "game_services_project_id", boardsEnv["PLAY_GAMES_APP_ID_PROD"] ?: "")
+            resValue("string", "play_leaderboard_id", boardsEnv["PLAY_LEADERBOARD_PROD"] ?: "")
+        }
+    }
+
     buildTypes {
         debug {
             manifestPlaceholders["admobAppId"] = adsId("ADMOB_ANDROID_APP_ID")
             buildConfigField("String", "ADMOB_REWARDED_ID", "\"${adsId("ADMOB_ANDROID_REWARDED")}\"")
+            buildConfigField("String", "ADMOB_INTERSTITIAL_ID", "\"${adsId("ADMOB_ANDROID_INTERSTITIAL")}\"")
         }
         release {
-            manifestPlaceholders["admobAppId"] = adsProdId("ADMOB_ANDROID_APP_ID")
-            buildConfigField("String", "ADMOB_REWARDED_ID", "\"${adsProdId("ADMOB_ANDROID_REWARDED")}\"")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
+
+    // test ads for staging (any build type); real ads only for prodRelease
+    androidComponents {
+        onVariants { variant ->
+            val prodRelease = variant.flavorName == "prod" && variant.buildType == "release"
+            if (variant.buildType == "release") {
+                fun id(key: String) = if (prodRelease) adsProdId(key) else adsId(key)
+                variant.manifestPlaceholders.put("admobAppId", id("ADMOB_ANDROID_APP_ID"))
+                variant.buildConfigFields?.put("ADMOB_REWARDED_ID", com.android.build.api.variant.BuildConfigField("String", "\"${id("ADMOB_ANDROID_REWARDED")}\"", null))
+                variant.buildConfigFields?.put("ADMOB_INTERSTITIAL_ID", com.android.build.api.variant.BuildConfigField("String", "\"${id("ADMOB_ANDROID_INTERSTITIAL")}\"", null))
+            }
         }
     }
 
@@ -76,6 +126,14 @@ android {
     }
 }
 
+// a prod release must never carry test ad IDs: fail the build if config/ads.env has an empty *_PROD value
+tasks.matching { it.name == "preProdReleaseBuild" }.configureEach {
+    doFirst {
+        val missing = listOf("ADMOB_ANDROID_APP_ID", "ADMOB_ANDROID_REWARDED", "ADMOB_ANDROID_INTERSTITIAL").filter { adsEnv["${it}_PROD"].isNullOrBlank() }
+        if (missing.isNotEmpty()) throw GradleException("config/ads.env: set ${missing.joinToString { "${it}_PROD" }} before building prodRelease")
+    }
+}
+
 dependencies {
     implementation("androidx.games:games-activity:4.4.2")
     implementation("com.google.oboe:oboe:1.11.0")
@@ -83,4 +141,14 @@ dependencies {
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.core:core:1.17.0")
+    implementation("com.android.billingclient:billing:8.0.0")
+    implementation("androidx.work:work-runtime:2.10.0")
+    implementation("com.google.android.gms:play-services-games-v2:20.1.2")
+    implementation(platform("com.google.firebase:firebase-bom:34.0.0"))
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-config")
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-messaging")
 }

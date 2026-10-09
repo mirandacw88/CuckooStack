@@ -16,10 +16,13 @@ public:
     ~VulkanImage() { destroy(); }
 
     bool create(VkDevice device, VmaAllocator allocator, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-                VkImageAspectFlags aspect, bool transient);
+                VkImageAspectFlags aspect, bool transient, uint32_t mipLevels = 1);
     void destroy();
     // Copies tightly packed pixels into the image and leaves it in SHADER_READ_ONLY_OPTIMAL.
     bool upload(VulkanContext& ctx, const void* pixels, size_t bytes);
+    // Same, one tightly packed buffer per mip level (level 0 first; each half the size of the previous).
+    struct Level { const void* pixels; size_t bytes; };
+    bool uploadMips(VulkanContext& ctx, const Level* levels, uint32_t count);
 
     VkImage image() const { return image_; }
     VkImageView view() const { return view_; }
@@ -34,6 +37,7 @@ private:
     VmaAllocation allocation_ = VK_NULL_HANDLE;
     VkExtent2D extent_{};
     VkFormat format_ = VK_FORMAT_UNDEFINED;
+    uint32_t mips_ = 1;
 };
 
 } // namespace cs

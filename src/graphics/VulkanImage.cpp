@@ -2,17 +2,19 @@
 #include "VulkanBuffer.h"
 #include "VulkanContext.h"
 
+#include <algorithm>
+
 namespace cs {
 
 bool VulkanImage::create(VkDevice device, VmaAllocator allocator, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-                         VkImageAspectFlags aspect, bool transient) {
+                         VkImageAspectFlags aspect, bool transient, uint32_t mipLevels) {
     destroy();
-    device_ = device; allocator_ = allocator; extent_ = extent; format_ = format;
+    device_ = device; allocator_ = allocator; extent_ = extent; format_ = format; mips_ = std::max(1u, mipLevels);
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
     ci.format = format;
     ci.extent = {extent.width, extent.height, 1};
-    ci.mipLevels = 1;
+    ci.mipLevels = mips_;
     ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -33,29 +35,45 @@ bool VulkanImage::create(VkDevice device, VmaAllocator allocator, VkExtent2D ext
     vi.image = image_;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vi.format = format;
-    vi.subresourceRange = {aspect, 0, 1, 0, 1};
+    vi.subresourceRange = {aspect, 0, mips_, 0, 1};
     VK_TRY(vkCreateImageView(device, &vi, nullptr, &view_));
     return true;
 }
 
 bool VulkanImage::upload(VulkanContext& ctx, const void* pixels, size_t bytes) {
+    const Level l{pixels, bytes};
+    return uploadMips(ctx, &l, 1);
+}
+
+bool VulkanImage::uploadMips(VulkanContext& ctx, const Level* levels, uint32_t count) {
+    count = std::min(count, mips_);
+    size_t bytes = 0;
+    for (uint32_t i = 0; i < count; ++i) bytes += levels[i].bytes;
     VulkanBuffer staging;
     if (!staging.createMapped(ctx.allocator, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) return false;
-    staging.write(pixels, bytes);
+    {
+        size_t off = 0;
+        for (uint32_t i = 0; i < count; ++i) { staging.write(levels[i].pixels, levels[i].bytes, off); off += levels[i].bytes; }
+    }
     staging.flush(0, bytes);
     ctx.immediateSubmit([&](VkCommandBuffer cmd) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = image_;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips_, 0, 1};
         b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-        VkBufferImageCopy copy{};
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.imageExtent = {extent_.width, extent_.height, 1};
-        vkCmdCopyBufferToImage(cmd, staging.handle(), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        size_t off = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = off;
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+            copy.imageExtent = {std::max(1u, extent_.width >> i), std::max(1u, extent_.height >> i), 1};
+            vkCmdCopyBufferToImage(cmd, staging.handle(), image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            off += levels[i].bytes;
+        }
         b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;

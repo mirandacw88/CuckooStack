@@ -47,6 +47,16 @@ public:
     // Debug/testing: write the next presented frame to a binary PPM (desktop golden-image checks).
     void captureNextFrame(const std::string& ppmPath) { capturePath_ = ppmPath; }
 
+    // Video recording (Android Share Replay): a second swapchain on the encoder's input surface. Every other frame
+    // the finished image (HUD included) is scaled into it on the GPU, so no pixels come back to the CPU.
+    // False when unsupported (no readback usage, rotated display, formats without blit).
+    bool startRecording(PlatformSurface& encoderSurface, VkExtent2D size);
+    void stopRecording();
+    bool recording() const { return recChain_.valid(); }
+    // While set, the recorder receives this image (RGBA8, e.g. the replay end card) instead of the screen.
+    bool setRecordOverlay(const uint8_t* rgba, uint32_t width, uint32_t height);
+    void clearRecordOverlay() { recOverlayOn_ = false; }
+
     // Logical drawable size in pixels (orientation the user sees)
     VkExtent2D logicalExtent() const { return swapchain_.logicalExtent(); }
 
@@ -97,7 +107,7 @@ private:
     const HudImage* uploadedHudImage_ = nullptr;
     VkFramebuffer sceneFb_ = VK_NULL_HANDLE, bloomAFb_ = VK_NULL_HANDLE, bloomBFb_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> presentFbs_;
-    VkSampler linearClamp_ = VK_NULL_HANDLE;
+    VkSampler linearClamp_ = VK_NULL_HANDLE, linearMip_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     VkDescriptorSet compositeSet_ = VK_NULL_HANDLE, prefilterSet_ = VK_NULL_HANDLE, blurHSet_ = VK_NULL_HANDLE, blurVSet_ = VK_NULL_HANDLE;
 
@@ -116,6 +126,14 @@ private:
     float renderScale_ = 1.f;
     std::string pipelineCachePath_;
     VkExtent2D sceneExtent() const;
+
+    VkSurfaceKHR recSurface_ = VK_NULL_HANDLE;
+    VulkanSwapchain recChain_;
+    std::array<VkSemaphore, kFramesInFlight> recAcquired_{};
+    uint32_t recTick_ = 0, recIndex_ = UINT32_MAX;
+    VulkanImage recOverlay_;
+    bool recOverlayOn_ = false;
+    void recordBlit(VkCommandBuffer cmd, uint32_t imageIndex);
 
     bool resizePending_ = false;
     bool warnedOverflow_ = false;

@@ -16,11 +16,13 @@ class VulkanContext;
 class VulkanSwapchain {
 public:
     // fallbackExtent: platform drawable size, used only when the surface leaves the extent to the app.
-    bool create(VulkanContext& ctx, VkExtent2D fallbackExtent);
+    // surface: the context's main surface by default; a second surface (video recorder) can have its own chain.
+    // extraUsage: added to the image usage (TRANSFER_DST for the recorder, which receives blits).
+    bool create(VulkanContext& ctx, VkExtent2D fallbackExtent, VkSurfaceKHR surface = VK_NULL_HANDLE, VkImageUsageFlags extraUsage = 0);
     void destroy();
 
     // VK_SUCCESS / VK_SUBOPTIMAL_KHR / VK_ERROR_OUT_OF_DATE_KHR (caller recreates)
-    VkResult acquire(VkSemaphore signal, uint32_t& imageIndex);
+    VkResult acquire(VkSemaphore signal, uint32_t& imageIndex, uint64_t timeout = UINT64_MAX);
     VkResult present(VkSemaphore wait, uint32_t imageIndex);
 
     bool valid() const { return swapchain_ != VK_NULL_HANDLE; }

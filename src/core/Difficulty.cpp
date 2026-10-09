@@ -47,7 +47,7 @@ void Dda::save() const {
 }
 
 float Dda::level(float x) const {
-    float a = assist_;
+    float a = assist_ + boost_;
     if (zoneS_ > 0.f) {
         const float d = x - zoneC_, sigma = d < 0 ? 50.f : 30.f;
         a += zoneS_ * 0.4f * std::exp(-(d * d) / (2.f * sigma * sigma));

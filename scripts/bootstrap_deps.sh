@@ -56,4 +56,27 @@ fetch_xcf() { # name version url sha256
 }
 fetch_xcf GoogleMobileAds 13.11.0 "https://dl.google.com/googleadmobadssdk/310516d18f0d600c/googlemobileadsios-spm-13.11.0.zip" 310516d18f0d600c9e45ed42b955a6b8ec52108d380f7cd8ed1e424e9d3fec22
 fetch_xcf UserMessagingPlatform 3.1.0 "https://dl.google.com/googleadmobadssdk/90fe6bf3b0f4ce0d/googleusermessagingplatformios-spm-3.1.0.zip" 90fe6bf3b0f4ce0d0199628c0871de58b6f673375148b98d52348aecc86db231
+# Firebase iOS SDK (static xcframeworks from the official release zip): only the products the game uses, only the
+# iOS device + simulator slices. Pinned by version and SHA-256 of the release asset.
+FB_VERSION=12.19.1
+FB_SHA=8e9fb852fcd79cca65de1eb537505717eee8e472f88c67eb74e56d5327f27f8f
+if [ ! -f "$TP/Firebase/FirebaseCore.xcframework/Info.plist" ]; then
+  tmp=$(mktemp -d)
+  curl -sfL -o "$tmp/Firebase.zip" "https://github.com/firebase/firebase-ios-sdk/releases/download/$FB_VERSION/Firebase.zip"
+  echo "$FB_SHA  $tmp/Firebase.zip" | shasum -a 256 -c - >/dev/null || { echo "checksum mismatch for Firebase.zip"; rm -rf "${tmp:?}"; exit 1; }
+  (cd "$tmp" && unzip -qo Firebase.zip "Firebase/FirebaseAnalytics/*" "Firebase/FirebaseCrashlytics/*" "Firebase/FirebaseRemoteConfig/*" \
+      "Firebase/FirebaseAuth/*" "Firebase/FirebaseFunctions/*" "Firebase/FirebaseMessaging/*" "Firebase/Firebase.h" "Firebase/module.modulemap")
+  mkdir -p "$TP/Firebase"
+  for x in "$tmp"/Firebase/*/*.xcframework; do
+    n=$(basename "$x")
+    [ -d "$TP/Firebase/$n" ] || cp -R "$x" "$TP/Firebase/"
+  done
+  cp "$tmp/Firebase/Firebase.h" "$tmp/Firebase/module.modulemap" "$TP/Firebase/"
+  for sl in "$TP"/Firebase/*.xcframework/*; do # keep the iOS device + simulator slices only
+    case "$(basename "$sl")" in ios-arm64|ios-arm64_x86_64-simulator|Info.plist|_CodeSignature) ;; *) rm -rf "${sl:?}";; esac
+  done
+  rm -rf "${tmp:?}"
+  echo "Firebase iOS $FB_VERSION (Analytics, Crashlytics, RemoteConfig, Auth, Functions, Messaging)" >> "$TP/VERSIONS.txt"
+  echo "fetch Firebase iOS $FB_VERSION"
+fi
 echo "done"

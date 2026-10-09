@@ -3,6 +3,7 @@
 // Units are CSS px (= logical points). Colours are CSS sRGB values used as-is: the HUD is composited after tone
 // mapping into a UNORM swapchain, exactly like the browser composites the DOM over the WebGL canvas.
 #include "Game.h"
+#include "HudStyle.h"
 #include "Materials.h"
 
 #include <cstdio>
@@ -10,29 +11,7 @@
 
 namespace cs {
 
-namespace {
-
-glm::vec3 css(std::string_view hex) { return srgbColor(hex); }
-// :root custom properties
-const glm::vec3 kNeon = css("#29e7ff"), kHot = css("#ff2bd6"), kVolt = css("#f4ff5a"), kInk = css("#07060f"), kText = css("#eafaff");
-
-TextShadow hard(float dx, glm::vec3 c, float a = 1.f) { return {{dx, 0.f}, 0.f, c, a}; }
-TextShadow blur(float r, glm::vec3 c, float a) { return {{0.f, 0.f}, r, c, a}; }
-
-// cubic-bezier(.2,.8,.3,1) is a strong ease-out; a cubic ease-out matches it within a pixel or two
-float easeOut(float t) { t = clampf(t, 0.f, 1.f); return 1.f - (1.f - t) * (1.f - t) * (1.f - t); }
-
-// .overlay>* { animation: up .55s cubic-bezier(.2,.8,.3,1) both }  (opacity 0 -> 1, translateY 18px -> 0)
-struct Up { float alpha, dy; };
-Up up(float t, float delay) { const float e = easeOut((t - delay) / 0.55f); return {e, 18.f * (1.f - e)}; }
-
-TextStyle style(FontId font, float size, glm::vec3 color, float letterSpacing = 0.f, bool upper = false, float lineHeight = 0.f) {
-    TextStyle s;
-    s.font = font; s.size = size; s.color = color; s.letterSpacing = letterSpacing; s.uppercase = upper; s.lineHeight = lineHeight;
-    return s;
-}
-
-} // namespace
+using namespace hud;
 
 std::string Game::dayLabel() const {
     // d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })  ->  "Tue, Oct 6"
@@ -73,9 +52,9 @@ void Game::hudPill(std::string_view label, float bottom, float alpha) {
 }
 
 // A pill button centred on `center` (same look as .pill); returns its size for hit-testing.
-glm::vec2 Game::hudButton(std::string_view label, glm::vec2 c, glm::vec3 color, float alpha, bool glow) {
-    const TextStyle s = style(FontId::BodyBold, 15, kText, 0.16f, true);
-    const float w = text_->measure(toUpperAscii(label), s) + 52 + 4, h = text_->lineBox(s) + 24 + 4;
+glm::vec2 Game::hudButton(std::string_view label, glm::vec2 c, glm::vec3 color, float alpha, bool glow, std::function<void()> fn, float scale) {
+    const TextStyle s = style(FontId::BodyBold, 15 * scale, kText, 0.16f, true);
+    const float w = text_->measure(toUpperAscii(label), s) + (52 + 4) * scale, h = text_->lineBox(s) + (24 + 4) * scale;
     if (glow) {
         const float pulse = 0.5f - 0.5f * std::cos(time_ / 1.6f * 2 * kPi);
         hudRect(c, {w + 18, h + 18}, color, alpha * (0.08f + 0.08f * pulse), Shape::PillOutline, 8.f / (h + 18));
@@ -86,245 +65,95 @@ glm::vec2 Game::hudButton(std::string_view label, glm::vec2 c, glm::vec3 color, 
     TextStyle t = s;
     t.opacity = alpha;
     hudText(label, t, c.x, c.y - text_->lineBox(s) / 2);
+    if (fn && alpha > 0.3f) { nextHitLabel_ = std::string(label); uiHit(c, {w + 12, std::max(h + 8, 44.f)}, std::move(fn)); }
     return {w, h};
 }
 
-// ---------------------------------------------------------------- lives badge
-// One heart sprite (assets/hud/lives_icons.png, frames = LivesFrame) and the count next to it.
+// ---------------------------------------------------------------- sprites (assets/hud/hud_icons.png, HudIcons.h)
 
-namespace {
-constexpr float kSheetFrames = 6.f; // frames in assets/hud/lives_icons.png (LivesFrame)
-float easeOutBack(float t, float k = 1.9f) { t = clampf(t, 0.f, 1.f); const float c = k + 1; return 1 + c * std::pow(t - 1, 3.f) + k * std::pow(t - 1, 2.f); }
-float seg(float t, float a, float b) { return clampf((t - a) / (b - a), 0.f, 1.f); } // 0..1 progress of t through [a, b]
-// life-lost timeline (seconds)
-constexpr float SWELL = 0.14f, CRACK_IN = 0.10f, SPLIT = 0.26f, SPLIT_LEN = 0.62f, ROLL_OUT = 0.18f, ROLL_IN = 0.32f,
-                POP = 0.64f, POP_LEN = 0.30f, HOLD_END = 1.3f, FADE_END = 1.7f;
-} // namespace
-
-void Game::hudSprite(LivesFrame frame, glm::vec2 c, float size, float rot, glm::vec3 tint, float alpha) {
+// `size` is the height; wide sprites (iconSpan, e.g. the coin piles) are that many times wider
+void Game::hudSprite(Icon icon, glm::vec2 c, float size, float rot, glm::vec3 tint, float alpha, int frame) {
     if (!hudIcons_.built() || alpha <= 0.003f || size <= 0.01f) return;
-    const float i = float(int(frame));
+    const int i = int(icon) + frame * iconSpan(icon), span = iconSpan(icon);
+    const float col = float(i % kIconCols), row = float(i / kIconCols);
+    hudAtlasQuad({col / kIconCols, row / kIconRows, (col + span) / kIconCols, (row + 1.f) / kIconRows}, c, {size * span, size}, rot, tint, alpha);
+}
+
+void Game::hudAtlasQuad(glm::vec4 uv, glm::vec2 c, glm::vec2 size, float rot, glm::vec3 tint, float alpha) {
+    if (!hudIcons_.built() || alpha <= 0.003f || size.x <= 0.01f || size.y <= 0.01f) return;
     Instance inst;
-    inst.model = compose({c, 0.f}, {0.f, 0.f, rot}, {size, -size, 1.f}); // HUD space is Y-down
+    inst.model = compose({c, 0.f}, {0.f, 0.f, rot}, {size.x, -size.y, 1.f}); // HUD space is Y-down
     inst.color = glm::vec4(tint, alpha);
-    inst.emissive = glm::vec4(i / kSheetFrames, 0.f, (i + 1.f) / kSheetFrames, 1.f); // atlas UV rect
+    inst.emissive = uv; // atlas UV rect
     list_.hud.push_back(inst);
     list_.hudKind.push_back(HudSprite);
 }
 
-float Game::livesBadgeWidth(float iconSize) const {
-    TextStyle n = style(FontId::Display, iconSize * 0.8f, kText, 0.f, false, 1.f);
-    return iconSize * 0.86f + 8.f + text_->measure(std::to_string(std::max(lives_, lifeFrom_)), n);
+// Frosted glass behind a HUD panel: the composite pass blurs the scene inside this rounded rect (one per frame).
+void Game::hudFrost(glm::vec2 c, glm::vec2 size, float radius, float amount) {
+    list_.frame.frostRect = {c, size};
+    list_.frame.frostRadius = radius;
+    list_.frame.frostAmount = std::clamp(amount, 0.f, 1.f);
 }
 
-void Game::updateLivesAnim(float rdt) {
-    if (gainAnimT_ >= 0) { gainAnimT_ += rdt; if (gainAnimT_ > 0.9f) gainAnimT_ = -1; }
-    for (HudShard& h : shards_) {
-        if (h.life <= 0) continue;
-        h.life -= rdt;
-        h.v.y += 900.f * rdt; // HUD points / s^2, Y down
-        h.v *= 1.f - std::min(1.f, rdt * 1.2f);
-        h.p += h.v * rdt;
-        h.rot += h.spin * rdt;
-    }
-    if (lifeAnimT_ < 0) return;
-    const float prev = lifeAnimT_;
-    lifeAnimT_ += rdt;
-    if (prev < SPLIT && lifeAnimT_ >= SPLIT && !lifeSplitDone_) { // the heart breaks: shards + sound + haptic
-        lifeSplitDone_ = true;
-        sfx(Sfx::LifeLost);
-        buzz(25);
-        const glm::vec3 cols[] = {kHot, css("#ff9cee"), kText, css("#ff3b5c")};
-        for (size_t k = 0; k < shards_.size(); ++k) {
-            HudShard& h = shards_[k];
-            const float a = -kPi / 2 + rng_.range(-1.5f, 1.5f), sp = rng_.range(140.f, 340.f);
-            h.p = badgeIconCenter_ + glm::vec2(rng_.range(-6.f, 6.f), rng_.range(-6.f, 6.f));
-            h.v = {std::cos(a) * sp, std::sin(a) * sp};
-            h.rot = rng_.range(0.f, 6.28f); h.spin = rng_.range(-14.f, 14.f);
-            h.maxLife = h.life = rng_.range(0.45f, 0.8f);
-            h.size = rng_.range(3.f, 7.5f);
-            h.heart = k % 4 == 0;
-            h.color = cols[k % 4];
+// A frame cell (FrameTech, FrameGlass, ...) stretched to any size: the corners keep `corner` points, the edges and
+// centre stretch. `slice` is the corner's share of the cell height (0.25 = 48 px of 192; 0.5 for round-ended pills
+// and the two-cell sheet sprites like BtnBlue / FrameFree, drawn with corner = height / 2 so only the middle widens).
+void Game::hudNineSlice(Icon frame, glm::vec2 c, glm::vec2 size, float corner, glm::vec3 tint, float alpha, float slice) {
+    const int i = int(frame), span = iconSpan(frame);
+    const float cw = 1.f / kIconCols, ch = 1.f / kIconRows;
+    const float u0 = (i % kIconCols) * cw, v0 = (i / kIconCols) * ch;
+    const float us[4] = {u0, u0 + cw * slice, u0 + cw * (span - slice), u0 + cw * span};
+    const float vs[4] = {v0, v0 + ch * slice, v0 + ch * (1 - slice), v0 + ch};
+    corner = std::min({corner, size.x / 2, size.y / 2});
+    const float xs[4] = {c.x - size.x / 2, c.x - size.x / 2 + corner, c.x + size.x / 2 - corner, c.x + size.x / 2};
+    const float ys[4] = {c.y - size.y / 2, c.y - size.y / 2 + corner, c.y + size.y / 2 - corner, c.y + size.y / 2};
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 3; ++x) {
+            const float w = xs[x + 1] - xs[x], h = ys[y + 1] - ys[y];
+            if (w <= 0.01f || h <= 0.01f) continue;
+            hudAtlasQuad({us[x], vs[y], us[x + 1], vs[y + 1]}, {(xs[x] + xs[x + 1]) / 2, (ys[y] + ys[y + 1]) / 2}, {w, h}, 0, tint, alpha);
         }
-    }
-    if (lifeAnimT_ > FADE_END) lifeAnimT_ = -1;
 }
 
-void Game::hudLivesBadge(glm::vec2 left, float S, float alpha) {
-    if (alpha <= 0.003f) return;
-    const float t = lifeAnimT_;
-    const bool losing = t >= 0;
-    const float iconW = S * 0.86f;
-    glm::vec2 ic{left.x + iconW / 2, left.y};
-    badgeIconCenter_ = ic;
-
-    // anticipation + impact: swell, then shake while the crack spreads
-    float scale = 1.f;
-    if (losing) {
-        scale += 0.35f * easeOutBack(seg(t, 0, SWELL), 1.2f) * (1.f - seg(t, SWELL, 0.5f));
-        const float shake = (1.f - seg(t, CRACK_IN, SPLIT + 0.1f)) * (t >= CRACK_IN ? 1.f : 0.f);
-        ic.x += std::sin(t * 75.f) * 4.5f * shake;
-        ic.y += std::cos(t * 63.f) * 2.f * shake;
+// The coin: an 8-frame spin. spin < 0 turns it slowly with time (a lazy wobble that rests face-on most of the time).
+void Game::hudCoin(glm::vec2 c, float size, float alpha, float spin) {
+    float a = spin;
+    if (a < 0) {
+        const float t = std::fmod(time_ * 0.6f + c.x * 0.013f, 3.f); // a quick turn every 3 s, staggered by position
+        a = t < 0.7f ? t / 0.7f : 0.f;
     }
-    if (gainAnimT_ >= 0) scale += 0.45f * std::sin(seg(gainAnimT_, 0, 0.5f) * kPi) * (1.f - seg(gainAnimT_, 0.5f, 0.9f));
-
-    // red shockwave glow behind the heart at the moment of impact
-    if (losing && t < 0.7f) {
-        const float g = seg(t, 0, 0.18f) * (1.f - seg(t, 0.18f, 0.7f));
-        hudRect(ic, glm::vec2(S * (1.6f + 1.6f * seg(t, 0, 0.7f))), css("#ff2b4a"), 0.75f * g * alpha, Shape::RadialGlow);
-    }
-    if (gainAnimT_ >= 0 && gainAnimT_ < 0.6f)
-        hudRect(ic, glm::vec2(S * (1.4f + 1.8f * seg(gainAnimT_, 0, 0.6f))), css("#2bff9a"), 0.6f * (1.f - seg(gainAnimT_, 0, 0.6f)) * alpha, Shape::RadialGlow);
-
-    // dark rounded backing (like the mute button) so the badge reads over bright windows
-    {
-        const float bw = livesBadgeWidth(S) + 18.f, bh = S + 10.f;
-        const glm::vec2 bc{left.x - 9.f + bw / 2, left.y};
-        hudRect(bc, {bw, bh}, css("#0a0818"), 0.55f * alpha, Shape::PillOutline, 1.f);
-        hudRect(bc, {bw, bh}, kNeon, 0.3f * alpha, Shape::PillOutline, 1.f / bh);
-    }
-
-    const glm::vec3 white(1.f), dim(0.55f);
-    if (!losing) {
-        hudSprite(lives_ > 0 ? LivesFrame::Full : LivesFrame::Empty, ic, S * scale, 0, white, alpha);
-    } else if (t < SPLIT) {
-        hudSprite(LivesFrame::Full, ic, S * scale, 0, white, alpha);
-        hudSprite(LivesFrame::Crack, ic, S * scale, 0, white, alpha * seg(t, CRACK_IN, SPLIT - 0.02f));
-    } else {
-        // the two halves tumble apart under gravity and fade
-        const float u = seg(t, SPLIT, SPLIT + SPLIT_LEN), fall = u * u;
-        const float ha = alpha * (1.f - seg(u, 0.55f, 1.f));
-        hudSprite(LivesFrame::LeftHalf, ic + glm::vec2(-S * 0.55f * u, S * 1.6f * fall), S * scale, -0.9f * u, white, ha);
-        hudSprite(LivesFrame::RightHalf, ic + glm::vec2(S * 0.55f * u, S * 1.4f * fall), S * scale, 0.75f * u, white, ha);
-        // a fresh heart pops back in (an empty glass one at 0 lives)
-        const float p = seg(t, POP, POP + POP_LEN);
-        if (p > 0) hudSprite(lifeTo_ > 0 ? LivesFrame::Full : LivesFrame::Empty, ic, S * easeOutBack(p), 0, lifeTo_ > 0 ? white : dim + 0.45f, alpha * std::min(1.f, p * 3.f));
-    }
-    // shards burst out of the break: tiny hearts and glints
-    for (const HudShard& h : shards_) {
-        if (h.life <= 0) continue;
-        const float k = h.life / h.maxLife;
-        if (h.heart) hudSprite(LivesFrame::Full, h.p, h.size * 3.2f, h.rot * 0.3f, white, alpha * k);
-        else hudRect(h.p, glm::vec2(h.size, h.size * 0.45f), h.color, alpha * k, Shape::Solid, 0, h.rot);
-    }
-
-    // the count: the old number rolls down and fades red, the new one drops in with a bounce
-    TextStyle n = style(FontId::Display, S * 0.8f, kText, 0.f, false, 1.f);
-    n.shadows = {hard(-2, kHot), hard(2, kNeon), blur(14, kHot, 0.5f)};
-    const float nx = left.x + iconW + 8.f, box = text_->lineBox(n);
-    const glm::vec3 red = css("#ff3b5c");
-    if (!losing) {
-        TextStyle c = n;
-        c.opacity = alpha;
-        c.size *= 1.f + (scale - 1.f) * 0.6f;
-        if (lives_ == 0) { c.color = red; c.shadows = {blur(12, red, 0.7f)}; } // offset shadows would block in the slashed 0
-        hudText(std::to_string(lives_), c, nx, left.y - text_->lineBox(c) / 2, TextAlign::Left);
-        return;
-    }
-    {
-        const float e = seg(t, ROLL_OUT, ROLL_OUT + 0.3f);
-        TextStyle o = n;
-        o.color = glm::mix(kText, red, seg(t, 0.05f, ROLL_OUT));
-        o.opacity = alpha * (1.f - e);
-        o.shadows = {hard(-2, red), blur(12, red, 0.6f)};
-        if (o.opacity > 0.01f) hudText(std::to_string(lifeFrom_), o, nx, left.y - box / 2 + 22.f * e * e, TextAlign::Left);
-    }
-    {
-        const float e = seg(t, ROLL_IN, ROLL_IN + 0.32f);
-        if (e > 0) {
-            TextStyle c = n;
-            c.opacity = alpha * std::min(1.f, e * 2.5f);
-            c.color = lifeTo_ > 0 ? glm::mix(red, kText, seg(t, 0.7f, 1.05f)) : red;
-            if (lifeTo_ == 0) c.shadows = {blur(12, red, 0.7f)};
-            hudText(std::to_string(lifeTo_), c, nx, left.y - box / 2 - 22.f * (1.f - easeOutBack(e, 2.4f)), TextAlign::Left);
-        }
-    }
+    const int frame = int(std::fmod(a, 1.f) * 16.f) % 16;             // 16 steps over a full turn; frames repeat after 180 degrees
+    hudSprite(Icon::Coin, c, size, 0, glm::vec3(1.f), alpha, frame % kCoinFrames);
 }
 
-// Out of lives: modal offer over the game-over (or title) screen. The rewarded ad is the way back in.
-void Game::hudOffer() {
-    const float W = viewW_, H = viewH_;
-    const float k = easeOut(offerT_ / 0.35f);
-    hudRect({W / 2, H / 2}, {W, H}, kInk, 0.72f * k); // dim everything behind
-    const float pw = std::min(W - 48.f, 340.f);
+float Game::coinAmountWidth(int amount, float size, bool plus) const {
+    TextStyle n = style(FontId::Display, size * 0.78f, kText, 0.f, false, 1.f);
+    return size * 0.92f + 5.f + text_->measure((plus ? "+" : "") + grouped(amount), n);
+}
 
-    // content, measured first so the panel hugs it with the same padding at the top and the bottom
-    TextStyle tag = style(FontId::BodyBold, 13, kHot, 0.26f, true);
-    tag.shadows = {blur(10, kHot, 0.7f)};
-    tag.opacity = k;
-    TextStyle head = style(FontId::Display, 30, kText, 0.f, false, 1.05f);
-    head.shadows = {hard(-2, kHot), hard(2, kNeon)};
-    head.opacity = k;
-    TextStyle body = style(FontId::Body, 15, kText, 0.f, false, 1.4f);
-    body.opacity = 0.85f * k;
-    const std::vector<std::string> bodyLines =
-        text_->wrap("Watch a short video to get " + std::to_string(lives::REWARD) + " more lives and keep playing.", body, pw - 48);
-    constexpr float PAD = 28.f;              // panel padding, top and bottom
-    constexpr float HEART = 88.f;            // sprite frame size; the heart itself fills ~72% of it
-    const float heartBlock = HEART * 0.86f + 30.f;
-    const float buttonH = text_->lineBox(style(FontId::BodyBold, 15, kText)) + 28.f; // matches hudButton()
-    const float contentH = text_->lineBox(tag) + 10 + text_->lineBox(head) + 8 + text_->lineBox(body) * bodyLines.size() + 14 +
-                           heartBlock + buttonH;
-    const float ph = contentH + 2 * PAD;
-
-    const glm::vec2 c{W / 2, H / 2 + 24.f * (1.f - k)};
-    hudRect(c, {pw + 16, ph + 16}, kHot, 0.10f * k, Shape::PillOutline, 8.f / (ph + 16));
-    hudRect(c, {pw, ph}, css("#0e0a22"), 0.97f * k, Shape::PillOutline, 1.f); // outline thicker than the shape = rounded fill
-    hudRect(c, {pw, ph}, kHot, 0.9f * k, Shape::PillOutline, 1.5f / ph);
-    float y = c.y - ph / 2 + PAD;
-
-    hudText("Out of lives", tag, c.x, y);
-    y += text_->lineBox(tag) + 10;
-    hudText("+" + std::to_string(lives::REWARD) + " lives", head, c.x, y);
-    y += text_->lineBox(head) + 8;
-    for (const std::string& line : bodyLines) {
-        hudText(line, body, c.x, y);
-        y += text_->lineBox(body);
-    }
-    y += 14;
-    {   // the reward: the lives heart, popping in with the panel and gently pulsing
-        const float pop = easeOutBack(offerT_ / 0.45f);
-        const float pulse = 1.f + 0.05f * std::sin(offerT_ * 4.2f);
-        const glm::vec2 hc{c.x, y + HEART / 2};
-        hudRect(hc, glm::vec2(HEART * 2.1f), kHot, (0.35f + 0.1f * std::sin(offerT_ * 4.2f)) * k, Shape::RadialGlow);
-        hudSprite(LivesFrame::Full, hc, HEART * pop * pulse, 0, glm::vec3(1.f), k);
-        y += heartBlock;
-    }
-    const RewardedState st = svc_.ads->rewardedState();
-    std::string label;
-    glm::vec3 color = kHot;
-    float alpha = k;
-    if (st == RewardedState::Ready) label = "Watch ad \u00b7 +" + std::to_string(lives::REWARD) + " lives";
-    else if (offerPlayAnyway()) { label = "Play anyway"; color = kNeon; }
-    else { label = "Loading ad\u2026"; alpha = 0.5f * k; }
-    const glm::vec2 bc{c.x, y + buttonH / 2};
-    const glm::vec2 bs = hudButton(label, bc, color, alpha, st == RewardedState::Ready);
-    offerButton_ = {bc, bs * 0.5f + glm::vec2(6.f)};
-
-    // close: a chunky cartoon button sitting on the panel's top-right corner. It pops in just after the panel,
-    // then breathes gently. Closing returns to the game-over screen, which keeps a "Get 3 lives" button.
-    {
-        constexpr float CLOSE = 66.f; // sprite frame size; the visible button is ~44 pt across
-        const glm::vec2 xc{c.x + pw / 2 - 16.f, c.y - ph / 2 + 16.f};
-        const float pop = easeOutBack(seg(offerT_, 0.15f, 0.5f), 2.4f);
-        const float breathe = 1.f + 0.03f * std::sin(offerT_ * 3.1f);
-        hudSprite(LivesFrame::Close, xc, CLOSE * pop * breathe, 0.08f * std::sin(offerT_ * 2.3f), glm::vec3(1.f), k);
-        offerClose_ = {xc, {30, 30}}; // comfortably above the 44 pt minimum touch target
-    }
+// coin + amount; `p` is the left edge (or centre / right edge per align) at the vertical centre. Returns the size.
+glm::vec2 Game::hudCoinAmount(int amount, glm::vec2 p, float size, float alpha, TextAlign align, bool plus) {
+    const float w = coinAmountWidth(amount, size, plus);
+    float left = align == TextAlign::Left ? p.x : align == TextAlign::Center ? p.x - w / 2 : p.x - w;
+    hudCoin({left + size * 0.46f, p.y}, size, alpha, size >= 24.f ? -1.f : 0.f); // small inline coins stay face-on
+    TextStyle n = style(FontId::Display, size * 0.78f, kGold, 0.f, false, 1.f);
+    n.shadows = {hard(-1.5f, kHot, 0.9f), blur(10, kGold, 0.45f)};
+    n.opacity = alpha;
+    hudText((plus ? "+" : "") + grouped(amount), n, left + size * 0.92f + 5.f, p.y - text_->lineBox(n) / 2, TextAlign::Left);
+    return {w, size};
 }
 
 void Game::hudTitleOverlay() {
     const float W = viewW_, H = viewH_, t = titleT_;
     hudRect({W / 2, H / 2}, {W, H}, kInk, 0.78f, Shape::BottomFade);   // linear-gradient(to bottom, transparent 40%, ink .78)
-    float bottom = H - safeBottom_ - 96;                                // padding-bottom: safe-area + 96px
+    float bottom = H - safeBottom_ - 10;
     const float maxW = W - 32;                                          // 16px side padding
 
-    hudPill(lives_ > 0 ? "Tap to jack in" : "Get " + std::to_string(lives::REWARD) + " lives", bottom, 1.f);
-    bottom -= text_->lineBox(style(FontId::BodyBold, 15, kText)) + 28 + 8 + 14; // pill height + margin-top 8 + gap 14
-    hudLivesBadge({W / 2 - livesBadgeWidth(30.f) / 2, bottom - 20}, 30.f, 1.f);
-    bottom -= 40 + 10;
+    hudTitleMenu(bottom); // menu row, "Tap to jack in", boost chips (GameUi.cpp); moves `bottom` above them
 
-    // p.daily (4th child, delay .24s)
+    // p.daily (4th child, delay .24s); dropped on short screens, where the hen needs the room
+    if (H < 720) return hudTitleHeader();
     TextStyle daily = style(FontId::BodyBold, 13, kNeon, 0.12f, true);
     daily.opacity = 0.95f;
     const std::string note = day_.attempts
@@ -340,7 +169,12 @@ void Game::hudTitleOverlay() {
         for (const auto& l : lines) { hudText(l, daily, W / 2, y); y += text_->lineBox(daily); }
         bottom -= h + 14;
     }
-    // header pinned to the top (below the privacy / mute buttons) so it stays clear of the hen
+    hudTitleHeader();
+}
+
+void Game::hudTitleHeader() {
+    const float W = viewW_, t = titleT_;
+    const float maxW = W - 32;
     float top = safeTop_ + 16 + 44 + 28;
     // .tag (1st child, no delay): "Daily Run · Tue, Oct 6"
     {
@@ -370,21 +204,37 @@ void Game::hudTitleOverlay() {
         h1.opacity = alpha;
         for (const auto& l : lines) { hudText(l, h1, W / 2 + dx, top); top += text_->lineBox(h1); }
     }
+    // live event banner (Remote Config event_coin_mult)
+    if (tune_.eventCoinMult > 1.01f) {
+        const Up a = up(t, 0.4f);
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%gx coins event", std::round(tune_.eventCoinMult * 10.f) / 10.f);
+        TextStyle e = style(FontId::BodyBold, 13, css("#1a0420"), 0.18f, true);
+        e.opacity = a.alpha;
+        const float pulse = 1.f + 0.05f * std::sin(time_ * 5.f);
+        const float w = text_->measure(buf, e) + 56, y = top + 12 + 16 + a.dy;
+        hudRect({W / 2, y}, glm::vec2(w + 14, 46) * pulse, kVolt, 0.25f * a.alpha, Shape::PillOutline, 7.f / 46);
+        hudRect({W / 2, y}, glm::vec2(w, 32) * pulse, kVolt, a.alpha, Shape::PillOutline, 1.f);
+        hudCoin({W / 2 - w / 2 + 20, y}, 26, a.alpha);
+        hudText(buf, e, W / 2 + 12, y - text_->lineBox(e) / 2);
+    }
 }
 
-// Space kept free below "Tap to reboot" for extra game-over buttons: one pill-height row (~48 pt) plus gaps.
-constexpr float OVER_BUTTON_ROW = 72.f;
+
+// The game-over button row (shop / locker / missions / share) sits under "Tap to reboot".
+constexpr float OVER_BUTTON_ROW = 84.f;
 
 void Game::hudOverOverlay() {
     const float W = viewW_, H = viewH_, t = overT_;
-    hudRect({W / 2, H / 2}, {W, H}, kInk, 0.78f, Shape::BottomFade);
-    // the free button row sits where the overlay used to end; everything else moves up by its height
-    overButtonRowBottom_ = H - safeBottom_ - 96;
+    hudRect({W / 2, H / 2}, {W, H}, kInk, 0.84f, Shape::BottomFade);
+    overButtonRowBottom_ = H - safeBottom_ - 10;
     float bottom = overButtonRowBottom_ - OVER_BUTTON_ROW;
     const float maxW = W - 32;
+    hudOverMenu(overButtonRowBottom_);
 
-    hudPill(lives_ > 0 ? "Tap to reboot" : "Get " + std::to_string(lives::REWARD) + " lives", bottom, 1.f);
-    bottom -= text_->lineBox(style(FontId::BodyBold, 15, kText)) + 28 + 8 + 14;
+    hudPill("Tap to reboot", bottom, std::min(1.f, overT_ / 0.4f));
+    bottom -= text_->lineBox(style(FontId::BodyBold, 15, kText)) + 28 + 8 + 16;
+    hudOverRewards(bottom); // coins from the run (+ x2 offer), level bar (GameUi.cpp)
 
     // p.daily#overNote (3rd child, delay .16s)
     {
@@ -457,6 +307,19 @@ void Game::worldGateLabel() {
     TextStyle b = style(FontId::Display, 56, glm::vec3(1.05f));
     b.opacity = gateOpacity_;
     text_->drawBaseline(list_.worldText, std::to_string(static_cast<int>(std::floor(gateX_))) + " m", b, 0.f, 80.f - 128.f, TextAlign::Center, false, plane);
+}
+
+void Game::worldMarkerLabel(double x, float opacity, std::string_view top, std::string_view bottom, glm::vec3 topColor) {
+    if (opacity <= 0.f || !fonts_.built()) return;
+    const float labelY = std::max(camY_ + 3.4f, level_.heightAt(x) * Uf + 2.8f); // above the best-distance label
+    const float k = 2.4f / 512.f;
+    const glm::mat4 plane = compose({float(x), labelY, -0.8f}, glm::vec3(k, k, 1.f));
+    TextStyle a = style(FontId::BodyBold, 40, topColor * 1.1f);
+    a.opacity = opacity;
+    text_->drawBaseline(list_.worldText, top, a, 0.f, 80.f - 62.f, TextAlign::Center, false, plane);
+    TextStyle b = style(FontId::Display, 56, glm::vec3(1.05f));
+    b.opacity = opacity;
+    text_->drawBaseline(list_.worldText, bottom, b, 0.f, 80.f - 128.f, TextAlign::Center, false, plane);
 }
 
 void Game::buildHud() {
@@ -548,33 +411,33 @@ void Game::buildHud() {
         }
     }
 
-    // lives during a run: top-left, opposite the mute button
-    // lives during a run (top-left, opposite the mute button); after a death it stays just long enough to play the
-    // life-lost animation, then fades out (no lives on the game-over screen)
-    if (fonts_.built() && (state_ == State::Play || (state_ == State::Dead && lifeAnimT_ >= 0))) {
-        const float fade = state_ == State::Dead ? 1.f - seg(lifeAnimT_, HOLD_END, FADE_END) : 1.f;
-        hudLivesBadge({16.f, safeTop_ + 16 + 22}, 34.f, fade);
-    }
-
+    hits_.clear();
     // overlays rise from the bottom third, where the thumb rests
     if (fonts_.built()) {
-        if (state_ == State::Title) hudTitleOverlay();
+        // under the frosted-glass shop only the blurred city should show: the title / game-over overlay still runs
+        // (it places the menu row the shop redraws) but its sprites and buttons are dropped
+        const size_t hudMark = list_.hud.size(), hitMark = hits_.size();
+        if (state_ == State::Title && screen_ != Screen::AgeGate && screen_ != Screen::Locker) hudTitleOverlay();
         else if (state_ == State::Dead && overDelay_ <= 0) hudOverOverlay();
-        if (offerOpen_) hudOffer(); // modal, above the overlay
-    }
-
-    // 'Privacy settings' (Google UMP requires an in-app way to change ad consent where it applies): title screen,
-    // top-left, styled like the mute button
-    if (privacyButton_ && state_ == State::Title && fonts_.built()) {
-        TextStyle ps = style(FontId::BodyBold, 12, kNeon, 0.14f, true);
-        const float w = text_->measure("PRIVACY SETTINGS", ps) + 24, cy = safeTop_ + 16 + 22;
-        hudRect({16 + w / 2, cy}, {w, 32}, css("#0a0818"), 0.55f);
-        hudRect({16 + w / 2, cy}, {w, 32}, kNeon, 0.45f, Shape::PillOutline, 1.f / 32.f);
-        hudText("Privacy settings", ps, 16 + w / 2, cy - text_->lineBox(ps) / 2);
+        if (screen_ == Screen::Shop) {
+            list_.hud.erase(list_.hud.begin() + hudMark, list_.hud.end());
+            list_.hudKind.erase(list_.hudKind.begin() + hudMark, list_.hudKind.end());
+            hits_.erase(hits_.begin() + hitMark, hits_.end());
+        }
+        // run boost badge (top-left, under the score) so the player sees what's active
+        if (state_ == State::Play && runBoost_ != Boost::None && run_.seconds < 6.f) {
+            const float a = 1.f - seg(run_.seconds, 4.5f, 6.f);
+            const glm::vec2 c{16 + 20, safeTop_ + 16 + 22};
+            hudSprite(runBoost_ == Boost::Surge ? Icon::Rocket : Icon::EggBolt, c, 40 * (1.f + 0.08f * std::sin(time_ * 6)), 0, glm::vec3(1.f), a);
+        }
+        if (state_ != State::Play && screen_ != Screen::AgeGate) hudTopBar();
+        if (screen_ != Screen::None) hudScreen();
+        hudToasts(); // above panels, so news like "Beat Sam: 412 m" is never dimmed
+        hudCoinFx();
     }
 
     // .mute (z-index 5): 44x44, radius 8, rgba(10,8,24,.55) + 1px rgba(neon,.45), music-note glyph, slash when off
-    {
+    if (screen_ == Screen::None) {
         const glm::vec2 c{W - 16 - 22, safeTop_ + 16 + 22};
         hudRect(c, {44, 44}, css("#0a0818"), 0.55f);
         hudRect(c, {44, 44}, kNeon, 0.45f, Shape::PillOutline, 1.f / 44.f);

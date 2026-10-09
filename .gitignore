@@ -18,3 +18,16 @@ platforms/android/local.properties
 *.iml
 .vscode/
 xcuserdata/
+
+# Firebase config (one per environment; download from each Firebase console project)
+platforms/android/app/src/*/google-services.json
+config/firebase/*/GoogleService-Info.plist
+firebase/functions/node_modules/
+firebase/functions/lib/
+firebase/.firebase/
+firebase/*-debug.log
+third_party/Firebase/
+
+# generated per environment by scripts/firebase_deploy.sh
+firebase/hosting/public/.well-known/
+config/firebase/*/links.env

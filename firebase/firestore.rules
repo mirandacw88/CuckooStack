@@ -1,0 +1,18 @@
+rules_version = '2';
+// Clients never write directly: wallets, purchases and challenges are written by Cloud Functions (Admin SDK).
+// A signed-in player (anonymous auth, linked to Game Center / Play Games) may read only their own wallet.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+    // challenges hold the sharer's push token: only Cloud Functions (createChallenge / challengeBeaten) touch them
+    match /challenges/{id} {
+      allow read, write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -15,6 +15,10 @@ public:
     ~AndroidAudio();
     void start();
     void stop();
+    // also hand every rendered buffer to `tap` (Share Replay's audio track); set before start
+    using Tap = void (*)(void* ctx, const float* samples, int frames, int channels);
+    void setTap(Tap tap, void* ctx);
+    int sampleRate() const;
 
 private:
     struct Impl;

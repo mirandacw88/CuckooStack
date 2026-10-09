@@ -1,5 +1,5 @@
 // Headless acceptance checks for Surge mode (Surge.h), driving the real Game at a fixed 60 Hz step.
-#include "core/Game.h"
+#include "TestUtil.h"
 
 #include <cstdio>
 
@@ -9,13 +9,27 @@ void check(bool ok, const char* what) {
     std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
     if (!ok) failures++;
 }
+// a 13+ player who has answered the age screen and claimed today's drop, so runs start straight away; a fresh
+// save for each check
+struct Env {
+    test::FakeStorage st = test::FakeStorage::ready();
+    test::FakeClock clock;
+    test::FakeAds ads;
+    cs::GameServices svc() {
+        ads.state = cs::RewardedState::Unavailable; // no Continue offers in these checks
+        cs::GameServices s;
+        s.storage = &st; s.ads = &ads; s.clock = &clock;
+        return s;
+    }
+};
 void run(cs::Game& g, float seconds) { for (int i = 0; i < int(seconds * 60); ++i) g.update(1.0 / 60.0); }
 } // namespace
 
 int main() {
     using namespace cs;
     {   // 3. surge: invulnerable, smashes walls, x1.35 speed, points per block
-        Game g({});
+        Env env;
+        Game g(env.svc());
         g.press(); // start the run; never lay an egg
         run(g, 0.3f);
         const float baseSpeed = g.surgeStatus().speed;
@@ -42,14 +56,16 @@ int main() {
         check(g.surgeStatus().partyK < 0.05f, "party mode eased back out");
     }
     {   // 2. a missed ball resets the chain outside a surge
-        Game g({});
+        Env env;
+        Game g(env.svc());
         g.press();
         g.debugSetChain(5, 60.f); // grace keeps her alive so balls can pass behind her; not surging
         run(g, 25.f);
         check(g.surgeStatus().chain == 0, "missing a ball outside a surge resets the chain");
     }
     {   // 5. restart mid-surge resets music, visuals, HUD and timers
-        Game g({});
+        Env env;
+        Game g(env.svc());
         g.press();
         run(g, 0.3f);
         g.debugStartSurge();

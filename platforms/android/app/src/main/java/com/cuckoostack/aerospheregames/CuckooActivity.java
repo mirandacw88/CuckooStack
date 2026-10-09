@@ -32,12 +32,22 @@ public class CuckooActivity extends GameActivity {
 
     private View splash;
     private AdsManager ads;
+    private FirebaseBridge firebase;
+    private StoreManager store;
+    private NotificationsManager notifications;
+    private LeaderboardsManager leaderboards;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // created before super.onCreate: the native thread starts there and may call into them right away
+        firebase = new FirebaseBridge(this);
+        ads = new AdsManager(this, firebase);
+        store = new StoreManager(this, firebase);
+        notifications = new NotificationsManager(this);
+        leaderboards = new LeaderboardsManager(this);
+        readReminderTap(getIntent());
         super.onCreate(savedInstanceState);
         hideSystemBars();
-        ads = new AdsManager(this);
         if (savedInstanceState == null) showSplash(); // not again on configuration changes
         else ads.start();
     }
@@ -75,6 +85,29 @@ public class CuckooActivity extends GameActivity {
     }
 
     @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        readReminderTap(intent);
+    }
+
+    /** Opened by tapping a reminder (ReminderWorker) or a campaign push: the game logs it as notif_open. */
+    private static volatile String pendingLink = "";
+
+    private void readReminderTap(android.content.Intent intent) {
+        if (intent != null && android.content.Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null)
+            pendingLink = intent.getData().toString(); // a challenge link; the game reads it on its next frame
+        if (intent == null || notifications == null) return;
+        if (intent.hasExtra(NotificationsManager.EXTRA_ID)) notifications.setOpened(intent.getIntExtra(NotificationsManager.EXTRA_ID, 0));
+        else if (intent.getExtras() != null && intent.getExtras().containsKey("google.message_id")) notifications.setOpened(0);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @androidx.annotation.NonNull String[] permissions, @androidx.annotation.NonNull int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (notifications != null && results.length > 0) notifications.onPermissionResult(results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED);
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) hideSystemBars();
@@ -108,10 +141,68 @@ public class CuckooActivity extends GameActivity {
 
     // ---- ads, called from native code (src/platform/android/AndroidMain.cpp)
     public int adsRewardedState() { return ads != null ? ads.rewardedState() : AdsManager.UNAVAILABLE; }
-    public boolean adsShowRewarded() { return ads != null && ads.showRewarded(); }
+    public boolean adsShowRewarded(String placement) { return ads != null && ads.showRewarded(placement); }
     public boolean adsConsumeReward() { return ads != null && ads.consumeReward(); }
     public boolean adsPrivacyOptionsRequired() { return ads != null && ads.privacyOptionsRequired(); }
     public void adsShowPrivacyOptions() { if (ads != null) ads.showPrivacyOptions(); }
+    public boolean adsInterstitialReady() { return ads != null && ads.interstitialReady(); }
+    public boolean adsShowInterstitial() { return ads != null && ads.showInterstitial(); }
+    public boolean adsShowing() { return ads != null && ads.adShowing(); }
+    public void adsSetAudience(boolean child) {
+        if (ads != null) ads.setAudience(child);
+        if (firebase != null) firebase.setChild(child);
+    }
+
+    // ---- analytics + remote config
+    public void fbEvent(String name, String[] kv) { if (firebase != null) firebase.logEvent(name, kv); }
+    public void fbUserProperty(String name, String value) { if (firebase != null) firebase.setUserProperty(name, value); }
+    public double fbRemoteNumber(String key) { return firebase != null ? firebase.remoteNumber(key) : Double.NaN; }
+
+    // ---- leaderboards
+    public boolean boardsAvailable() { return leaderboards != null && leaderboards.available(); }
+    public void boardsSubmit(int meters) { if (leaderboards != null) leaderboards.submit(meters); }
+    public void boardsShow() { if (leaderboards != null) leaderboards.show(); }
+
+    // ---- friend nudges
+    public boolean nudgesAvailable() { return firebase != null && notifications != null && firebase.nudgesAvailable(notifications.permission() == 1); }
+    public void nudgeCreate(String day, int meters) { if (firebase != null) firebase.createChallenge(day, meters); }
+    public String nudgePollId() { return firebase != null ? firebase.pollChallengeId() : null; }
+    public void nudgeBeaten(String id, int meters) { if (firebase != null) firebase.challengeBeaten(id, meters); }
+
+    // ---- links
+    public String linkPoll() { final String l = pendingLink; pendingLink = ""; return l; }
+
+    // ---- reminders
+    public int notifPermission() { return notifications != null ? notifications.permission() : 0; }
+    public void notifRequestPermission() { if (notifications != null) notifications.requestPermission(); }
+    public void notifReplaceAll(int[] ids, long[] at, String[] titles, String[] bodies) { if (notifications != null) notifications.replaceAll(ids, at, titles, bodies); }
+    public int notifConsumeOpened() { return notifications != null ? notifications.consumeOpened() : -1; }
+
+    // ---- Share Replay (AndroidReplay.cpp): the clip (or, without one, the text) through the system share sheet
+    public void replayShare(String path, String text) {
+        runOnUiThread(() -> {
+            android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            send.putExtra(android.content.Intent.EXTRA_TEXT, text);
+            if (path != null && !path.isEmpty()) {
+                android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".replays", new java.io.File(path));
+                send.setType("video/mp4");
+                send.putExtra(android.content.Intent.EXTRA_STREAM, uri);
+                send.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                send.setType("text/plain");
+            }
+            android.app.PendingIntent chosen = android.app.PendingIntent.getBroadcast(this, 0, new android.content.Intent(this, ShareTargetReceiver.class),
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_MUTABLE);
+            startActivity(android.content.Intent.createChooser(send, "Share your run", chosen.getIntentSender()));
+        });
+    }
+    public String replayPollShared() { final String c = ShareTargetReceiver.chosen; ShareTargetReceiver.chosen = ""; return c; }
+
+    // ---- in-app purchases
+    public String storeProducts() { return store != null ? store.products() : ""; }
+    public boolean storePurchase(String id) { return store != null && store.purchase(id); }
+    public void storeRestore() { if (store != null) store.restore(); }
+    public String storePollEvent() { return store != null ? store.pollEvent() : null; }
 
     /** Explicit diagnostic exit when Vulkan cannot start (no loader, no compatible GPU, device lost). */
     public void showFatalError(final String message) {
