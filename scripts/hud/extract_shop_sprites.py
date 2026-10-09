@@ -27,6 +27,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHEET = os.path.join(ROOT, "assets", "hud", "source", "coin_shop_sheet.webp")
 OUT = os.path.join(ROOT, "assets", "hud", "shop")
 
+# Sprites the artist delivers as their own files (not cut from the sheet); left alone here.
+ARTIST = {"pile_9000"}  # the 9,000 coin hoard, 2624 x 1632
+
 # name: (left, top, right, bottom) on the sheet; 3x copies unless noted
 BOXES = {
     "coin_green": (55, 1392, 286, 1638),
@@ -34,7 +37,6 @@ BOXES = {
     "pile_1000": (549, 792, 755, 959),       # 2x (the 3x copy is a single stack)
     "pile_1800": (800, 759, 1132, 982),      # 2x
     "pile_4000": (786, 1401, 1185, 1658),
-    "pile_9000": (1551, 758, 1974, 1028),    # 2x (no 3x copy)
     "frame_free": (1176, 744, 1529, 1027),   # 2x
     "close": (1210, 1372, 1368, 1529),
     "tv_ad": (372, 1014, 500, 1137),         # 2x (the 3x copy has "+50" baked on)
@@ -239,7 +241,7 @@ def main():
     sheet = np.asarray(Image.open(SHEET).convert("RGBA"))
     os.makedirs(OUT, exist_ok=True)
     for f in os.listdir(OUT):
-        if f.endswith(".png"): os.remove(os.path.join(OUT, f))
+        if f.endswith(".png") and f[:-4] not in ARTIST: os.remove(os.path.join(OUT, f))
     crops = {n: sheet[t:b, l:r] for n, (l, t, r, b) in BOXES.items()}
     out = {}
     for name, a in crops.items():

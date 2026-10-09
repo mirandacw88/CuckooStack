@@ -19,6 +19,7 @@ Cosmetic outfit(const char* id, const char* name, Unlock u, int price, int level
     Cosmetic c{id, name, Slot::Outfit, u, price, level};
     c.skin = s;
     c.skin.aura = aura;
+    c.skin.model = henModelFor(id); // its own 3D model if one was added (scripts/models/add_outfit_model.py)
     return c;
 }
 Cosmetic trail(const char* id, const char* name, Unlock u, int price, int level, Trail t, const char* a, const char* b) {

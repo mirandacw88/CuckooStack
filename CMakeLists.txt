@@ -97,6 +97,20 @@ add_custom_command(OUTPUT ${_hen_cpp}
   COMMENT "Embedding the hen model"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hen_cpp})
+# outfits with their own hen model (scripts/models/add_outfit_model.py): every assets/models/outfits/<id>.mesh + .jpg
+file(GLOB _outfit_assets CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.mesh
+     ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.jpg)
+foreach(_in ${_outfit_assets})
+  get_filename_component(_name ${_in} NAME)
+  string(REPLACE "." "_" _sym "outfit_${_name}")
+  set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)
+  add_custom_command(OUTPUT ${_out}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${_in} -DOUTPUT=${_out} -DSYMBOL=${_sym} -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_in} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding outfit model ${_name}"
+    VERBATIM)
+  list(APPEND CS_FONT_SOURCES ${_out})
+endforeach()
 add_library(cs_fonts STATIC ${CS_FONT_SOURCES})
 
 # ---------------------------------------------------------------- core: game logic, OS-free
@@ -142,6 +156,7 @@ add_library(cs_graphics STATIC
   src/graphics/VulkanPipeline.cpp
   src/graphics/VulkanSwapchain.cpp)
 target_link_libraries(cs_graphics PUBLIC cs_core volk vma PRIVATE cs_shaders)
+target_include_directories(cs_graphics SYSTEM PRIVATE ${TP}/stb) # stb_image: the hen texture (implementation in HudImage.cpp)
 target_compile_options(cs_graphics PRIVATE ${CS_WARNINGS} ${CS_OPT})
 set_source_files_properties(src/graphics/VmaImpl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 

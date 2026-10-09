@@ -1,11 +1,13 @@
 #include "Renderer.h"
 #include "BakedPatterns.h"
 #include "../core/Font.h"
+#include "../core/HenModel.h"
 #include "../core/HudImage.h"
 #include "../core/Geometry.h"
 #include "../platform/PlatformSurface.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <stb_image.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,7 +18,7 @@ namespace cs {
 namespace {
 
 constexpr size_t kMaxInstances = 20000; // per frame, all instanced passes + HUD
-constexpr size_t kMaxParticles = 4096;  // fxAdd (3200) + fxSmoke (700)
+constexpr size_t kMaxParticles = 6400;  // fxAdd (5600) + fxSmoke (700)
 
 // std140 mirror of frame.glsl
 struct GpuFrame {
@@ -107,7 +109,7 @@ bool Renderer::init(PlatformSurface& platform, bool enableValidation, std::strin
             !puddleMask_.upload(ctx_, mask.data(), mask.size())) { error = "Pattern texture upload failed"; return false; }
     }
 
-    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 + kFramesInFlight}};
+    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 + 3 * kFramesInFlight}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight + 6;
     pci.poolSizeCount = 2;
@@ -171,29 +173,87 @@ bool Renderer::createFrames() {
         VkWriteDescriptorSet wp{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         wp.dstSet = f.frameSet; wp.dstBinding = 1; wp.descriptorCount = 1;
         wp.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wp.pImageInfo = &pi;
-        const VkWriteDescriptorSet both[2] = {w, wp};
-        vkUpdateDescriptorSets(ctx_.device, 2, both, 0, nullptr);
+        // the hen texture (or, if it failed, the puddle mask as a harmless stand-in so the binding is always valid)
+        VkDescriptorImageInfo hi{linearMip_, heroTexture_.view() ? heroTexture_.view() : puddleMask_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wh = wp;
+        wh.dstBinding = 2; wh.pImageInfo = &hi;
+        VkWriteDescriptorSet wn = wp;
+        wn.dstBinding = 3; wn.pImageInfo = &hi;
+        const VkWriteDescriptorSet all[4] = {w, wp, wh, wn};
+        vkUpdateDescriptorSets(ctx_.device, 4, all, 0, nullptr);
     }
+    return true;
+}
+
+// A JPEG decoded into an RGBA image with a box-filtered mip chain.
+static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char* data, size_t size) {
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load_from_memory(data, int(size), &w, &h, &n, 4);
+    if (!px) return false;
+    std::vector<std::vector<uint8_t>> levels{std::vector<uint8_t>(px, px + size_t(w) * h * 4)};
+    stbi_image_free(px);
+    for (int lw = w, lh = h; lw > 1 && lh > 1 && levels.size() < 11;) {
+        const std::vector<uint8_t>& src = levels.back();
+        const int nw = lw / 2, nh = lh / 2;
+        std::vector<uint8_t> dst(size_t(nw) * nh * 4);
+        for (int y = 0; y < nh; ++y)
+            for (int x = 0; x < nw; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    const auto at = [&](int xx, int yy) { return int(src[(size_t(yy) * lw + xx) * 4 + c]); };
+                    dst[(size_t(y) * nw + x) * 4 + c] = uint8_t((at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1) + 2) / 4);
+                }
+        levels.push_back(std::move(dst));
+        lw = nw; lh = nh;
+    }
+    img.destroy();
+    if (!img.create(ctx.device, ctx.allocator, {uint32_t(w), uint32_t(h)}, VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT, false, uint32_t(levels.size())))
+        return false;
+    std::vector<VulkanImage::Level> lv;
+    for (const auto& l : levels) lv.push_back({l.data(), l.size()});
+    return img.uploadMips(ctx, lv.data(), uint32_t(lv.size()));
+}
+
+// The worn textured hen's albedo and normal map (HenModel), bound to every frame set (bindings 2, 3). Only one hen is
+// on screen, so one pair of texture slots is swapped when the outfit changes.
+bool Renderer::uploadHeroTexture(int id) {
+    const HenModel& m = henModel(id);
+    if (!m.ok || !m.textured()) return false;
+    vkDeviceWaitIdle(ctx_.device);
+    if (!uploadJpeg(ctx_, heroTexture_, m.texture, m.textureSize)) return false;
+    const bool hasNormal = m.normalMap && uploadJpeg(ctx_, heroNormal_, m.normalMap, m.normalMapSize);
+    for (Frame& f : frames_) {
+        VkDescriptorImageInfo hi{linearMip_, heroTexture_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        // no normal map: the albedo stands in and the shader's flag (glow sign) skips it
+        VkDescriptorImageInfo ni{linearMip_, hasNormal ? heroNormal_.view() : heroTexture_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
+        for (int k = 0; k < 2; ++k) {
+            w[k].dstSet = f.frameSet; w[k].dstBinding = uint32_t(2 + k); w[k].descriptorCount = 1;
+            w[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[k].pImageInfo = k ? &ni : &hi;
+        }
+        vkUpdateDescriptorSets(ctx_.device, 2, w, 0, nullptr);
+    }
+    uploadedHeroModel_ = id;
     return true;
 }
 
 bool Renderer::uploadMeshes() {
     const std::vector<MeshData> lib = buildMeshLibrary();
     std::vector<Vertex> vertices;
-    std::vector<uint16_t> indices;
+    std::vector<uint32_t> indices; // 32-bit: the hen models alone pass 65k vertices
     // Vertex offsets are baked into the indices so every draw uses vertexOffset = 0: Metal GPU families
     // without base-vertex support (iOS Simulator, Apple2) reject non-zero offsets under MoltenVK.
     for (size_t i = 0; i < lib.size(); ++i) {
         const size_t base = vertices.size();
-        if (base + lib[i].vertices.size() > 0xFFFF) { CS_LOGE("Mesh library exceeds 16-bit indices"); return false; }
         meshes_[i] = {static_cast<uint32_t>(indices.size()), static_cast<uint32_t>(lib[i].indices.size()), 0};
-        if (i == size_t(MeshId::HenBody)) heroBase_ = static_cast<uint32_t>(base);
-        if (i >= size_t(MeshId::HenBody) && i <= size_t(MeshId::HenBeak)) heroCount_ += static_cast<uint32_t>(lib[i].vertices.size());
+        meshBase_[i] = static_cast<uint32_t>(base);
         vertices.insert(vertices.end(), lib[i].vertices.begin(), lib[i].vertices.end());
-        for (uint16_t idx : lib[i].indices) indices.push_back(static_cast<uint16_t>(idx + base));
+        for (uint16_t idx : lib[i].indices) indices.push_back(static_cast<uint32_t>(idx + base));
     }
+    meshBase_[kMeshCount] = static_cast<uint32_t>(vertices.size());
+    heroEnd_ = meshBase_[kMeshCount]; // the hen meshes are the last in the library
     return vertexBuffer_.createStatic(ctx_, vertices.data(), vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) &&
-           indexBuffer_.createStatic(ctx_, indices.data(), indices.size() * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+           indexBuffer_.createStatic(ctx_, indices.data(), indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 }
 
 bool Renderer::createTargets() {
@@ -265,6 +325,11 @@ bool Renderer::onSurfaceCreated(PlatformSurface& platform) {
 }
 
 bool Renderer::render(const RenderList& list) {
+    // close-up showcase (the Locker): the platform's battery-saving scale gives way to full resolution until it closes
+    if (list.frame.showcase != showcase_) {
+        showcase_ = list.frame.showcase;
+        applyRenderScale(showcase_ ? 1.f : requestedScale_);
+    }
     if (!swapchain_.valid() || !sceneFb_) {
         if (!ctx_.surface || !recreateSwapchain()) return true; // nothing to draw into yet
     }
@@ -274,6 +339,10 @@ bool Renderer::render(const RenderList& list) {
         CS_LOGE("Font atlas upload failed; text disabled");
     if (list.hudImage && list.hudImage != uploadedHudImage_ && list.hudImage->built() && !uploadHudImage(*list.hudImage))
         CS_LOGE("HUD sprite upload failed; sprites disabled");
+    if (list.heroModel != uploadedHeroModel_ && henModel(list.heroModel).textured() && !uploadHeroTexture(list.heroModel)) {
+        CS_LOGW("Hen texture upload failed; the textured hen draws untextured");
+        uploadedHeroModel_ = list.heroModel; // don't retry every frame
+    }
 
     Frame& f = frames_[frameIndex_];
     vkWaitForFences(ctx_.device, 1, &f.inFlight, VK_TRUE, UINT64_MAX);
@@ -393,12 +462,15 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
     f.instances.flush(0, VkDeviceSize(used) * sizeof(Instance));
     // the posed hen: indices already carry the library's vertex offsets (no base-vertex on some Metal GPUs), so it is
     // written at the same offsets into a per-frame buffer as long as the library up to its end (made on first use)
-    if (heroCount_ && !f.hero.mapped() &&
-        !f.hero.createMapped(ctx_.allocator, VkDeviceSize(heroBase_ + heroCount_) * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
-        heroCount_ = 0; // out of memory: the hen keeps its rest pose
-    const bool heroPosed = heroCount_ && f.hero.mapped() && list.heroVerts.size() == heroCount_;
+    if (heroEnd_ && !f.hero.mapped() &&
+        !f.hero.createMapped(ctx_.allocator, VkDeviceSize(heroEnd_) * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT))
+        heroEnd_ = 0; // out of memory: the hen keeps its rest pose
+    // the posed hen covers the library meshes heroFirst .. heroFirst + heroMeshes - 1
+    const size_t h0 = size_t(list.heroFirst), h1 = h0 + size_t(std::max(0, list.heroMeshes));
+    const bool heroPosed = heroEnd_ && f.hero.mapped() && list.heroMeshes > 0 && h1 <= kMeshCount && meshBase_[h1] <= heroEnd_ &&
+                           list.heroVerts.size() == meshBase_[h1] - meshBase_[h0];
     if (heroPosed) {
-        const VkDeviceSize off = VkDeviceSize(heroBase_) * sizeof(Vertex), bytes = VkDeviceSize(heroCount_) * sizeof(Vertex);
+        const VkDeviceSize off = VkDeviceSize(meshBase_[h0]) * sizeof(Vertex), bytes = VkDeviceSize(list.heroVerts.size()) * sizeof(Vertex);
         std::memcpy(static_cast<uint8_t*>(f.hero.mapped()) + off, list.heroVerts.data(), size_t(bytes));
         f.hero.flush(off, bytes);
     }
@@ -444,7 +516,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
         const VkDeviceSize zero = 0;
         VkBuffer vb = vertexBuffer_.handle();
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
-        vkCmdBindIndexBuffer(cmd, indexBuffer_.handle(), 0, VK_INDEX_TYPE_UINT16);
+        vkCmdBindIndexBuffer(cmd, indexBuffer_.handle(), 0, VK_INDEX_TYPE_UINT32);
         VkBuffer ib = f.instances.handle();
 
         ScenePush push{};
@@ -456,7 +528,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
             for (const Batch& b : batches[size_t(p)]) {
                 const MeshRange& m = meshes_[size_t(b.mesh)];
                 const VkDeviceSize off = VkDeviceSize(b.first) * sizeof(Instance);
-                const bool hero = heroPosed && b.mesh >= MeshId::HenBody && b.mesh <= MeshId::HenBeak;
+                const bool hero = heroPosed && size_t(b.mesh) >= h0 && size_t(b.mesh) < h1;
                 if (hero) { VkBuffer hb = f.hero.handle(); vkCmdBindVertexBuffers(cmd, 0, 1, &hb, &zero); }
                 vkCmdBindVertexBuffers(cmd, 1, 1, &ib, &off);
                 vkCmdDrawIndexed(cmd, m.indexCount, b.count, m.firstIndex, m.vertexOffset, 0);
@@ -562,7 +634,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
             const VkDeviceSize zero = 0;
             const VkBuffer ib = f.instances.handle();
             vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
-            vkCmdBindIndexBuffer(cmd, indexBuffer_.handle(), 0, VK_INDEX_TYPE_UINT16);
+            vkCmdBindIndexBuffer(cmd, indexBuffer_.handle(), 0, VK_INDEX_TYPE_UINT32);
             const MeshRange& plane = meshes_[size_t(MeshId::Plane)];
             // paint order matters (flash under the HUD, overlay text above its backdrop): draw runs of quads / glyphs
             uint32_t start = 0;
@@ -759,7 +831,11 @@ VkExtent2D Renderer::sceneExtent() const {
 }
 
 void Renderer::setRenderScale(float scale) {
-    scale = std::clamp(scale, 0.4f, 1.f);
+    requestedScale_ = std::clamp(scale, 0.4f, 1.f);
+    applyRenderScale(showcase_ ? 1.f : requestedScale_);
+}
+
+void Renderer::applyRenderScale(float scale) {
     if (std::abs(scale - renderScale_) < 0.01f) return;
     renderScale_ = scale;
     resizePending_ = true; // rebuild the HDR / depth / bloom targets at the next frame
@@ -790,7 +866,7 @@ void Renderer::shutdown() {
         f = Frame{};
     }
     stopRecording();
-    vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy();
+    vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;
     if (linearClamp_) vkDestroySampler(ctx_.device, linearClamp_, nullptr);

@@ -96,7 +96,11 @@ private:
 
     VulkanBuffer vertexBuffer_, indexBuffer_;
     std::array<MeshRange, kMeshCount> meshes_{};
-    uint32_t heroBase_ = 0, heroCount_ = 0; // vertex range of MeshId::HenBody..HenBeak in the library
+    std::array<uint32_t, kMeshCount + 1> meshBase_{};      // first vertex of each library mesh (+ the total at the end)
+    uint32_t heroEnd_ = 0;                                  // the library up to the end of the last hen mesh
+    VulkanImage heroTexture_, heroNormal_;                  // the textured hen model's albedo / normal map (bindings 2, 3)
+    bool uploadHeroTexture(int heroModel);
+    int uploadedHeroModel_ = 0;
 
     VulkanImage hdr_, depth_, bloomA_, bloomB_;
     VulkanImage fontAtlas_;
@@ -125,7 +129,9 @@ private:
     float timestampPeriodNs_ = 1.f;
     void readTimestamps(Frame& f);
 
-    float renderScale_ = 1.f;
+    float renderScale_ = 1.f, requestedScale_ = 1.f;
+    bool showcase_ = false;
+    void applyRenderScale(float scale);
     std::string pipelineCachePath_;
     VkExtent2D sceneExtent() const;
 

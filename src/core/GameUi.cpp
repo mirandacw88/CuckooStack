@@ -336,26 +336,13 @@ void Game::hudOverMenu(float bottom) {
     const float W = viewW_;
     const float a = std::min(1.f, overT_ / 0.5f);
     const float rowY = bottom - 48;
-    // Share Replay (13+): the main viral button, on the left of the row
-    // (13+ only; the replay when there is one, otherwise the result + link)
-    const ReplayState rs = svc_.replay->state();
-    if (!profile_.child()) {
-        const glm::vec2 c{W / 2 - 117.f - 40.f, rowY};
-        const bool ready = rs == ReplayState::Ready, saving = rs == ReplayState::Exporting;
-        nextHitLabel_ = "Share replay";
-        hudIconButton(Icon::Replay, c, 28, a * (saving ? 0.5f : 1.f),
-                      saving ? std::function<void()>{} : std::function<void()>([this] { shareReplay(); }), 0, ready);
-        TextStyle l = style(FontId::BodyBold, 10.5f, iconTint(Icon::Replay), 0.14f, true);
-        l.opacity = 0.95f * a;
-        hudText(saving ? "Saving\u2026" : ready ? "Replay" : "Share", l, c.x, c.y + 30);
-    }
+    // (Share Replay is the big button above the results: hudShareReplayButton)
     const Icon icons[] = {Icon::Shop, Icon::Locker, Icon::Missions};
     const Screen screens[] = {Screen::Shop, Screen::Locker, Screen::Missions};
     int done = 0;
     for (const Mission& m : missions_.list()) done += m.done;
     for (int i = 0; i < 3; ++i) {
-        const bool share = !profile_.child();
-        const glm::vec2 c{W / 2 + (i - 1.f) * 78.f + (share ? 40.f : 0.f), rowY};
+        const glm::vec2 c{W / 2 + (i - 1.f) * 96.f, rowY};
         const Screen sc = screens[i];
         const int badge = i == 2 && done < 3 ? 3 - done : 0;
         const bool selected = screen_ == sc;
@@ -364,6 +351,50 @@ void Game::hudOverMenu(float bottom) {
         TextStyle l = style(FontId::BodyBold, 10.5f, iconTint(icons[i]), 0.14f, true);
         l.opacity = 0.95f * a;
         hudText(iconName(icons[i]), l, c.x, c.y + 30);
+    }
+}
+
+// Share Replay (13+): the main viral call to action, a big neon button centred above the results. The replay when
+// there is one, otherwise the result + link. Pops in after the results, breathes, and a light sweep crosses it.
+void Game::hudShareReplayButton(glm::vec2 c) {
+    if (profile_.child()) return;
+    const ReplayState rs = svc_.replay->state();
+    const bool saving = rs == ReplayState::Exporting;
+    const float W = viewW_;
+    const float pop = easeOutBack(seg(overT_, 0.35f, 0.75f), 1.6f);
+    if (pop <= 0.01f) return;
+    const float k = std::min(1.f, pop) * (saving ? 0.6f : 1.f);
+    const float breathe = 1.f + 0.025f * std::sin(time_ * 3.2f);
+    const glm::vec2 size = glm::vec2(std::min(W - 64.f, 300.f), 64.f) * pop * breathe;
+    const glm::vec3 pink = css("#ff2bd6"), violet = css("#9a5bff");
+    // glow halo, pulsing
+    const float pulse = 0.5f + 0.5f * std::sin(time_ * 3.2f);
+    hudRect(c, size * glm::vec2(1.35f, 2.2f), pink, (0.18f + 0.1f * pulse) * k, Shape::RadialGlow);
+    hudRect(c, size + glm::vec2(14.f), pink, (0.18f + 0.12f * pulse) * k, Shape::PillOutline, 7.f / (size.y + 14));
+    // body: deep fill, a violet-to-pink wash, bright neon rim
+    hudRect(c, size, css("#1a0730"), 0.96f * k, Shape::PillOutline, 1.f);
+    hudRect({c.x - size.x * 0.22f, c.y}, {size.x * 0.9f, size.y * 1.6f}, violet, 0.45f * k, Shape::RadialGlow);
+    hudRect({c.x + size.x * 0.25f, c.y}, {size.x * 0.9f, size.y * 1.6f}, pink, 0.4f * k, Shape::RadialGlow);
+    hudRect(c, size, pink, k, Shape::PillOutline, 2.6f / size.y);
+    hudRect({c.x, c.y - size.y * 0.28f}, {size.x * 0.8f, 2.f}, glm::vec3(1.f), 0.18f * k); // top gloss line
+    // light sweep every ~2.5 s
+    const float g = std::fmod(time_ * 0.4f, 1.f) * 1.6f - 0.3f;
+    if (g > -0.2f && g < 1.2f)
+        hudRect({c.x - size.x / 2 + size.x * clampf(g, 0.f, 1.f), c.y}, {size.y * 0.7f, size.y * 0.92f}, glm::vec3(1.f),
+                0.16f * k * std::sin(clampf(g, 0.f, 1.f) * kPi), Shape::Streak, 0, 0.35f);
+    // icon + label, centred together
+    TextStyle t = style(FontId::Display, 26.f * pop, kText, 0.02f, false, 1.f);
+    t.shadows = {hard(-1.5f, kNeon, 0.9f), hard(1.5f, kHot, 0.9f), blur(14, pink, 0.6f)};
+    t.opacity = k;
+    const std::string label = saving ? "Saving\u2026" : "Share Replay";
+    const float iconS = size.y * 0.9f, gap = 10.f;
+    const float tw = text_->measure(label, t), total = iconS * 0.75f + gap + tw;
+    const float x0 = c.x - total / 2;
+    hudSprite(Icon::Replay, {x0 + iconS * 0.375f, c.y}, iconS * (1.f + 0.06f * pulse), 0, glm::vec3(1.f), k);
+    hudText(label, t, x0 + iconS * 0.75f + gap, c.y - text_->lineBox(t) / 2, TextAlign::Left);
+    if (!saving && overT_ > 0.6f) {
+        nextHitLabel_ = "Share replay";
+        uiHit(c, size + glm::vec2(10.f), [this] { shareReplay(); });
     }
 }
 
@@ -690,7 +721,16 @@ void Game::hudShop() {
         }
         // pile art (two cells wide), sized so the bigger hoards fill the tile like the mockup
         const float pileH = std::min(artH * 1.06f, (tileW - 12) * 0.5f); // cell height; the art fills ~94% of it
-        hudSprite(piles[i - 1], artC, pileH, 0, glm::vec3(1.f), al);
+        if (piles[i - 1] == Icon::Pile9000) { // the hoard, big (as wide as the tile) so it reads as a lot; it overflows the
+            // tile's top edge and the amount and price sit over its lower part (a soft dark glow keeps them readable)
+            const float zs = (tileW - 4) / 3.f;                                  // 3 x 2 block cell: block = tile width
+            const float heapH = zs * 2.f * 0.914f;                               // the art is ~91% of its block's height
+            // raised so the peak pokes ~14% of its height out past the tile's top edge: too many coins to fit the box
+            hudSprite(Icon::Pile9000, {tc.x, tc.y - tileH / 2 + 4 + heapH / 2 - heapH * 0.14f}, zs, 0, glm::vec3(1.f), al);
+            hudRect({tc.x, (amountY + btn.y) / 2}, {tileW * 0.95f, bh * 3.2f}, css("#0a0818"), 0.5f * al, Shape::RadialGlow);
+        }
+        else
+            hudSprite(piles[i - 1], artC, pileH, 0, glm::vec3(1.f), al);
         amount({tc.x, amountY}, d.coins, best ? css("#ff9cf0") : gold ? css("#ffe7a0") : kText, al);
         button(btn, bsz, best ? Icon::BtnDark : gold ? Icon::BtnGold : Icon::BtnBlue, priceOf(d), nullptr, al);
         if (best) { // BEST VALUE ribbon on the top edge (the art has the words)
@@ -1195,6 +1235,8 @@ void Game::hudDev() {
                 missionProgress(m.kind == MissionKind::Distance ? missions_.recordDistance(m.target) : missions_.record(m.kind, m.target));
         }});
         bs.push_back({"New missions", St::Plain, [this] { for (int i = 0; i < 3; ++i) missions_.reroll(i); }});
+        bs.push_back({boost_ == Boost::Surge ? "Surge start: armed" : "Free Surge Start", boost_ == Boost::Surge ? St::On : St::Plain,
+                      [this] { boost_ = Boost::Surge; }});
         bs.push_back({adPolicy_.removeAds() ? "Remove ads: on" : "Remove ads: off", adPolicy_.removeAds() ? St::On : St::Plain,
                       [this] { adPolicy_.setRemoveAds(!adPolicy_.removeAds()); }});
         bs.push_back({"Reset ad caps", St::Plain, [this] { adPolicy_.debugReset(false); showMessage("Ad caps cleared"); }});
@@ -1215,7 +1257,7 @@ void Game::hudDev() {
     }
     // ---- layout
     constexpr float tabH = 34, rowH = 40, gap = 8;
-    constexpr int kRows = 10; // the Game tab's; every tab gets the same height so the tabs never move under a finger
+    constexpr int kRows = 11; // the Game tab's; every tab gets the same height so the tabs never move under a finger
     const float contentH = tabH + 14 + 22 + kRows * (rowH + gap);
     const Panel p = hudPanel("Staging only", "Developer", pw, contentH, kVolt, true);
     float y = p.top;

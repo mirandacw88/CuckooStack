@@ -55,13 +55,14 @@ int main() {
         check(g.state() == Game::State::Dead, "normal collision and death rules apply after the grace period");
         check(g.surgeStatus().partyK < 0.05f, "party mode eased back out");
     }
-    {   // 2. a missed ball resets the chain outside a surge
+    {   // 2. missing balls doesn't reset the count: any 10 balls collected in a run trigger a surge
         Env env;
         Game g(env.svc());
         g.press();
         g.debugSetChain(5, 60.f); // grace keeps her alive so balls can pass behind her; not surging
         run(g, 25.f);
-        check(g.surgeStatus().chain == 0, "missing a ball outside a surge resets the chain");
+        const auto st = g.surgeStatus();
+        check(st.surging || st.chain >= 5, "missed balls keep the disco ball count (or it reached 10 and surged)");
     }
     {   // 5. restart mid-surge resets music, visuals, HUD and timers
         Env env;

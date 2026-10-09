@@ -193,13 +193,15 @@ std::vector<MeshData> buildMeshLibrary() {
     at(MeshId::RingFlat) = geo::ring(0.86f, 1.f, 64);
     at(MeshId::Circle) = geo::circle(1, 24);
     // the hen model in its rest pose (the renderer streams the posed vertices over these every frame)
-    const HenModel& hen = henModel();
-    if (hen.ok)
-        for (int r = 0; r < HenModel::kRegions; ++r) {
-            MeshData& m = at(MeshId(int(MeshId::HenBody) + r));
-            for (const HenModel::V& v : hen.verts[size_t(r)]) m.vertices.push_back({v.pos, v.normal, {0, 0}});
+    for (int id = 0; id <= kOutfitModelCount; ++id) {
+        const HenModel& hen = henModel(HenModelId(id));
+        if (!hen.ok) continue;
+        for (int r = 0; r < hen.regions; ++r) {
+            MeshData& m = at(MeshId(int(hen.firstMesh) + r));
+            for (const HenModel::V& v : hen.verts[size_t(r)]) m.vertices.push_back({v.pos, v.normal, v.uv});
             m.indices = hen.indices[size_t(r)];
         }
+    }
     return lib;
 }
 

@@ -3,7 +3,7 @@
 
 namespace cs {
 
-constexpr int kIconCols = 8, kIconRows = 15;
+constexpr int kIconCols = 8, kIconRows = 17;
 
 enum class Icon : int {
     Coin = 0,
@@ -45,7 +45,6 @@ enum class Icon : int {
     Pile1000 = 48,
     Pile1800 = 50,
     Pile4000 = 52,
-    Pile9000 = 54,
     FrameFree = 56,
     FrameNeon = 58,
     BtnBlue = 60,
@@ -64,6 +63,7 @@ enum class Icon : int {
     OutfitHolo = 106,
     OutfitSakura = 108,
     OutfitGlitch = 110,
+    Pile9000 = 120,
 };
 
 constexpr int kCoinFrames = 8;
@@ -76,7 +76,6 @@ constexpr int iconSpan(Icon i) {
     case Icon::Pile1000: return 2;
     case Icon::Pile1800: return 2;
     case Icon::Pile4000: return 2;
-    case Icon::Pile9000: return 2;
     case Icon::FrameFree: return 2;
     case Icon::FrameNeon: return 2;
     case Icon::BtnBlue: return 2;
@@ -95,6 +94,7 @@ constexpr int iconSpan(Icon i) {
     case Icon::OutfitHolo: return 2;
     case Icon::OutfitSakura: return 2;
     case Icon::OutfitGlitch: return 2;
+    case Icon::Pile9000: return 3;
     default: return 1;
     }
 }
@@ -114,6 +114,7 @@ constexpr int iconRowSpan(Icon i) {
     case Icon::OutfitHolo: return 2;
     case Icon::OutfitSakura: return 2;
     case Icon::OutfitGlitch: return 2;
+    case Icon::Pile9000: return 2;
     default: return 1;
     }
 }

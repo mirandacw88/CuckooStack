@@ -3,6 +3,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG // the textured hen model (HenModel, Renderer::uploadHeroTexture)
 #define STBI_NO_STDIO
 #if defined(__clang__)
 #pragma clang diagnostic push

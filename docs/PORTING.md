@@ -152,14 +152,14 @@ line: the 32-bar A/B/C/D arrangement, tempo following speed, build, drop and pow
 
 ### Surge mode (native-only feature)
 
-Collect `surge::NEED` (10) disco balls in a row to start a 5 s surge. The hen runs ×1.35 faster, is invulnerable,
+Collect `surge::NEED` (10) disco balls in a run (they don't have to be in a row) to start a 5 s surge. The hen runs ×1.35 faster, is invulnerable,
 smashes walls and barriers (+1 point per block), and the game switches to a party-music pattern and party visuals.
 Every tuning value is in `src/core/Surge.h`. The logic is in `src/core/GameSurge.cpp`, the party music in
 `Synth::schedulePartyStep`, and the party kick map in `BeatClock`.
 
 - **Tests**: `tests/surge_test.cpp` (ctest `surge`) drives the real `Game` and checks the acceptance rules:
-  invulnerability, smashing, ×1.35 speed, the 5 s timer plus 0.7 s grace, death afterwards, a missed ball resetting
-  the chain, and a clean reset on restart.
+  invulnerability, smashing, ×1.35 speed, the 5 s timer plus 0.7 s grace, death afterwards, missed balls keeping
+  the count, and a clean reset on restart.
 - **Debug trigger** (debug builds only), which starts a surge 4 m into every run:
   - desktop: `cuckoo_stack --surge`
   - iOS: `xcrun simctl launch <device> com.cuckoostack.aerospheregames --surge`

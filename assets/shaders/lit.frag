@@ -15,9 +15,11 @@ layout(location = 6) flat in vec4 vRim;
 layout(location = 7) flat in vec4 vParams;
 layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 1) uniform sampler2D tPuddle; // baked once at startup (BakedPatterns.cpp), tiles every 6 m
+layout(set = 0, binding = 2) uniform sampler2D tHero;   // the textured hen model's albedo (HenModel)
+layout(set = 0, binding = 3) uniform sampler2D tHeroN;  // its tangent-space normal map (sculpted detail)
 
 const float PI = 3.14159265;
-const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5;
+const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5, P_HERO = 6;
 
 vec3 lin(vec3 srgb) { return pow(srgb, vec3(2.2)); }
 float hash12(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -74,7 +76,21 @@ void main() {
         float metal = vParams.x, rough = vParams.y;
         int pattern = int(vParams.z + 0.5);
 
-        if (pattern == P_CONTAINER) {
+        if (pattern == P_HERO) {
+            // the textured hen: the normal map's detail on a per-pixel tangent frame rebuilt from the derivatives of
+            // position and uv (no vertex tangents needed), then albedo from its texture; hot texels glow
+            vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
+            vec2 duv1 = dFdx(vUv), duv2 = dFdy(vUv);
+            vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+            vec3 Tg = dp2perp * duv1.x + dp1perp * duv2.x, Bg = dp2perp * duv1.y + dp1perp * duv2.y;
+            float invmax = inversesqrt(max(max(dot(Tg, Tg), dot(Bg, Bg)), 1e-20));
+            vec3 nt = texture(tHeroN, vUv).xyz * 2.0 - 1.0;
+            N = normalize(mat3(Tg * invmax, Bg * invmax, N) * nt);
+            vec3 tx = lin(texture(tHero, vUv).rgb);
+            albedo *= tx;
+            float heat = smoothstep(0.18, 0.55, dot(tx, vec3(0.6, 0.35, 0.05)));
+            emissive = tx * heat * vEmissive.rgb;
+        } else if (pattern == P_CONTAINER) {
             // contMap / contEm: corrugated steel, dark frame, amber hazard trim
             vec2 px = vUv * 512.0;
             float e = edgeDist(px, 512.0);

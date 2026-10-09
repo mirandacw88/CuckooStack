@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn the artist's hen model (assets/models/newClassicHen.glb) into the game's runtime mesh,
+"""Turn the artist's hen model (assets/models/source/newClassicHen.glb) into the game's runtime mesh,
 assets/models/hen.mesh, embedded into the build and read by src/core/HenModel.cpp.
 
     python3 -m pip install numpy pillow
@@ -34,7 +34,7 @@ from PIL import Image
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-SRC = os.path.join(ROOT, "assets", "models", "newClassicHen.glb")
+SRC = os.path.join(ROOT, "assets", "models", "source", "newClassicHen.glb")
 DST = os.path.join(ROOT, "assets", "models", "hen.mesh")
 REGIONS = ["Body", "Accent", "Lens", "Shade", "Beak"]  # order = HenModel::Region
 SHARDS = 40

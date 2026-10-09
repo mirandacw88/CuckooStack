@@ -234,7 +234,11 @@ void Game::rollDay() {
 
 // ---------- flow ----------
 void Game::resize(float w, float h) {
-    viewW_ = std::max(1.f, w); viewH_ = std::max(1.f, h);
+    const float sh = std::max(1.f, h);
+    const float prev = uiScale_;
+    uiScale_ = std::clamp(sh / kUiDesignHeight, kUiMinScale, 1.f);
+    viewW_ = std::max(1.f, w) / uiScale_; viewH_ = sh / uiScale_;
+    safeTop_ *= prev / uiScale_; safeBottom_ *= prev / uiScale_; // insets were set in the previous scale
     camera_.setViewport(viewW_, viewH_);
 }
 
@@ -308,6 +312,7 @@ void Game::press() {
 }
 
 void Game::pressAt(float px, float py) {
+    px /= uiScale_; py /= uiScale_; // platform points -> the HUD's virtual points
     // mute button: 44x44 pt, top-right, 16 pt margin
     const float bx = viewW_ - 16 - 22, by = safeTop_ + 16 + 22;
     if (screen_ == Screen::None && std::abs(px - bx) < 26 && std::abs(py - by) < 26) { toggleMute(); return; }
@@ -684,30 +689,38 @@ void Game::emitTrail(float dt) {
     if (trail_ == Trail::None) return;
     const Hen::Node& root = hen_.nodes[hen_.root];
     const glm::vec3 at{root.pos.x - 0.32f, root.pos.y + 0.55f, 0.f};
-    trailAcc_ += dt * (trail_ == Trail::Rainbow ? 70.f : 50.f);
+    // showroom (not running): the trail is blown back at run speed so it streams off the tail as in a run, and it is
+    // denser, bigger and longer-lived so it can be judged at a glance
+    const bool show = state_ != State::Play;
+    const glm::vec3 wind = show ? glm::vec3(-6.f, 0.f, 0.f) : glm::vec3(0.f);
+    const float big = show ? 1.8f : 1.f, longer = show ? 1.6f : 1.f;
+    trailAcc_ += dt * (trail_ == Trail::Rainbow ? 70.f : 50.f) * (show ? 2.5f : 1.f);
+    auto emit = [&](glm::vec3 p, glm::vec3 v, float life, float s0, float s1, glm::vec3 col, float a, float drag, float grav) {
+        fxAdd_.emit(p, v + wind, life * longer, s0 * big, s1 * big, col, a, drag, grav);
+    };
     while (trailAcc_ >= 1.f) {
         trailAcc_ -= 1.f;
         const glm::vec3 j{rng_.range(-0.08f, 0.08f), rng_.range(-0.12f, 0.12f), rng_.range(-0.1f, 0.1f)};
         switch (trail_) {
         case Trail::Sparks:
-            fxAdd_.emit(at + j, {rng_.range(-2.4f, -1.f), rng_.range(-0.3f, 0.8f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.25f, 0.45f), 0.06f, 0,
+            emit(at + j, {rng_.range(-2.4f, -1.f), rng_.range(-0.3f, 0.8f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.25f, 0.45f), 0.06f, 0,
                         rng_.next01() < 0.5f ? C().cyan : C().pink, 1, 2, 3);
             break;
         case Trail::Rainbow:
-            fxAdd_.emit(at + j, {rng_.range(-1.6f, -0.8f), rng_.range(-0.1f, 0.2f), 0}, rng_.range(0.5f, 0.7f), 0.12f, 0.02f,
+            emit(at + j, {rng_.range(-1.6f, -0.8f), rng_.range(-0.1f, 0.2f), 0}, rng_.range(0.5f, 0.7f), 0.12f, 0.02f,
                         hueColor(time_ * 0.8f + j.y * 3.f) * 2.6f, 0.9f, 1, 0);
             break;
         case Trail::Fire:
-            fxAdd_.emit(at + j, {rng_.range(-1.8f, -0.6f), rng_.range(0.6f, 1.6f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.1f, 0.0f,
+            emit(at + j, {rng_.range(-1.8f, -0.6f), rng_.range(0.6f, 1.6f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.1f, 0.0f,
                         rng_.next01() < 0.6f ? C().ember : C().volt, 1, 2, -2);
             break;
         case Trail::Gold:
-            fxAdd_.emit(at + j, {rng_.range(-1.2f, -0.4f), rng_.range(-0.2f, 0.5f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.5f, 0.9f), 0.05f, 0.02f,
+            emit(at + j, {rng_.range(-1.2f, -0.4f), rng_.range(-0.2f, 0.5f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.5f, 0.9f), 0.05f, 0.02f,
                         glow("#ffd23a", 2.8f), 1, 1, 1);
             break;
         case Trail::Glitch: {
             const bool red = rng_.next01() < 0.5f;
-            fxAdd_.emit(at + j + glm::vec3(red ? -0.04f : 0.04f, 0, 0), {rng_.range(-2.f, -1.2f), 0, 0}, rng_.range(0.15f, 0.3f), 0.09f, 0,
+            emit(at + j + glm::vec3(red ? -0.04f : 0.04f, 0, 0), {rng_.range(-2.f, -1.2f), 0, 0}, rng_.range(0.15f, 0.3f), 0.09f, 0,
                         red ? C().red : C().cyan, 1, 0, 0);
             break;
         }
@@ -1036,9 +1049,15 @@ void Game::update(double rawDt) {
         e.ringRot = time_ * 1.5f + float(i);
         cursor += hgt;
     }
-    if (state_ != State::Dead) {
+    if (!showroom()) showPlaced_ = false;
+    if (state_ != State::Dead || showroom()) {
         hopV_ -= 38 * dt; hop_ = std::max(0.f, hop_ + hopV_ * dt); if (hop_ == 0 && hopV_ < 0) hopV_ = 0;
-        hen_.nodes[hen_.root].pos = {float(x_), cursor + hop_, 0};
+        if (state_ == State::Dead) { // try-on after a crash: stand on clear ground, not inside the wall she hit
+            if (!showPlaced_) { showSpot_ = showroomSpot(); showPlaced_ = true; }
+            hen_.nodes[hen_.root].pos = {showSpot_.x, showSpot_.y + hop_, 0};
+        } else {
+            hen_.nodes[hen_.root].pos = {float(x_), cursor + hop_, 0};
+        }
     }
     updateHen(dt);
     updateDebris(dt);
@@ -1290,7 +1309,7 @@ void Game::updatePlay(float dt, float rdt) {
             corns.erase(corns.begin() + static_cast<long>(i));
             bonus_ += 5; cornCount_++; meter_ = std::min(float(MAXE), meter_ + 1.5f);
             sfx(Sfx::Corn); buzz(10);
-            if (surging_) popup("+5", p + glm::vec3(0, 0.5f, 0), PopKind::Groove); // surging: no chain progress
+            if (surging_) popup("+5", p + glm::vec3(0, 0.5f, 0), PopKind::Groove); // surging: no progress toward the next surge
             else {
                 chain_++;
                 popup("+5 \u00b7 " + std::to_string(chain_) + "/" + std::to_string(surge::NEED), p + glm::vec3(0, 0.5f, 0), PopKind::Groove);
@@ -1308,11 +1327,7 @@ void Game::updatePlay(float dt, float rdt) {
         } else if (c.x < x_ - 14) {
             corns.erase(corns.begin() + static_cast<long>(i));
         } else if (!c.missed && c.x < x_ - surge::MISS_BEHIND) {
-            corns[i].missed = true; // counted once
-            if (!surging_ && chain_ > 0) {
-                chain_ = 0;
-                popup("CHAIN LOST", {float(x_) + 0.4f, float(topNow) + 1.4f, 0}, PopKind::ChainLost);
-            }
+            corns[i].missed = true; // counted once; a miss no longer breaks the count: any 10 balls in a run trigger a surge
         }
     }
     const int s = static_cast<int>(std::floor(x_)) + bonus_;
@@ -1320,9 +1335,21 @@ void Game::updatePlay(float dt, float rdt) {
     if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
 }
 
+// A flat stretch of ground (the same height 0.8 m either side) at least 1.5 m behind the crash, searching back
+glm::vec2 Game::showroomSpot() const {
+    for (float x = float(x_) - 1.5f; x > float(x_) - 30.f; x -= 0.25f) {
+        const int h = level_.heightAt(x);
+        if (level_.heightAt(x - 0.8f) == h && level_.heightAt(x + 0.8f) == h && level_.heightAt(x + 1.4f) <= h)
+            return {x, float(h) * Uf};
+    }
+    return {float(x_) - 1.5f, float(level_.heightAt(x_ - 1.5)) * Uf};
+}
+
 void Game::updateHen(float dt) {
     Hen::Node& root = hen_.nodes[hen_.root];
-    if (state_ != State::Dead) {
+    const bool show = showroom();
+    if (show && state_ == State::Dead && hen_.shattered()) { hen_.unshatter(); henV_ = henW_ = glm::vec3(0.f); } // reassemble for the try-on
+    if (state_ != State::Dead || show) {
         Hen::Node& body = hen_.nodes[hen_.body];
         Hen::Node& head = hen_.nodes[hen_.head];
         flap_ = std::max(0.f, flap_ - dt * 3.2f);
@@ -1330,14 +1357,16 @@ void Game::updateHen(float dt) {
         body.scale = {1 - squash_ * 0.5f, 1 + squash_, 1 - squash_ * 0.5f};
         const bool onSurface = state_ == State::Play && eggs_.empty() && vy_ == 0;
         const bool onEggs = state_ == State::Play && !eggs_.empty() && hop_ == 0; // running on the rolling eggs
-        const bool running = onSurface || onEggs;
+        const bool running = onSurface || onEggs || show; // the showroom hen jogs in place
         const bool falling = state_ == State::Play && vy_ < -1;
         const bool tall = eggs_.size() > 4;
         runPhase_ += dt * (running ? std::max(speed_, 2.f) * 4.5f : 0);
         body.pos.y = running ? std::abs(std::sin(runPhase_)) * 0.06f : std::sin(time_ * 3) * 0.012f;
         const float leanT = onSurface ? -0.14f : falling ? 0.2f : tall ? std::sin(time_ * 2.6f) * 0.05f - 0.04f : -0.05f;
         lean_ += (leanT - lean_) * std::min(1.f, dt * 8);
-        root.rot = {0, 0, lean_};
+        // showroom: a slow turn left and right so the outfit and the trail streaming off it are seen from both sides
+        const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
+        root.rot = {0, std::sin(time_ * 0.55f) * 0.75f * lk, lean_ * (1 - lk)};
         for (int k = 0; k < 2; ++k) {
             const float s = k == 0 ? -1.f : 1.f;
             float& rx = hen_.nodes[hen_.wings[k]].rot.x;
@@ -1359,7 +1388,16 @@ void Game::updateHen(float dt) {
         }
         hen_.nodes[hen_.tail].rot.z = std::sin(time_ * (onSurface ? 14.f : 4.f)) * (onSurface ? 0.12f : 0.05f);
         head.pos.y = 0.92f + beat_.pulse() * 0.045f;
-        if (state_ == State::Title) emitAura(dt); // title screen and Locker preview (the run calls it below)
+        if (hen_.canShatter()) {
+            // the 3D hen models are one round body: their "head" bone carries the whole upper half, so the procedural
+            // hen's pecks and head turns would shear it back and forth. Keep only a slight tilt and the beat bob.
+            head.pos.x = 0.3f;
+            head.rot.z *= 0.12f;
+            head.rot.y *= 0.15f;
+            head.pos.y = 0.92f + beat_.pulse() * 0.012f;
+        }
+        if (state_ == State::Title || (show && state_ != State::Play)) emitAura(dt); // title and showroom (runs call it below)
+        if (show && state_ != State::Play) emitTrail(dt);                            // try the trail on in place
         // jet trail from the battery pack
         if (state_ == State::Play) {
             const float px = root.pos.x - 0.26f, py = root.pos.y + 0.82f;
@@ -1444,9 +1482,15 @@ void Game::updateCamera(float rdt) {
     const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
     camera_.setFovBoost(surge::FOV_ADD * partyK_);
     const float dist = camera_.followDistance();
-    camera_.setPose({camX_ + sx + drift * 0.8f - camKick_ - ie * 3 - 1.45f * lk, camY_ + 1.9f + sy + drift * 0.3f + ie * 4.5f - 1.9f * lk,
-                     dist * (1 - 0.38f * dze) * (1 - 0.45f * lk) - std::abs(drift) * 0.8f + ie * 6},
-                    {camX_ + drift * 0.3f - camKick_ * 0.5f - 1.45f * lk, camY_ + 0.1f + ie * 1.2f + dze * 0.3f - 3.1f * lk, 0});
+    const glm::vec3 eye{camX_ + sx + drift * 0.8f - camKick_ - ie * 3, camY_ + 1.9f + sy + drift * 0.3f + ie * 4.5f,
+                        dist * (1 - 0.38f * dze) - std::abs(drift) * 0.8f + ie * 6};
+    const glm::vec3 look{camX_ + drift * 0.3f - camKick_ * 0.5f, camY_ + 0.1f + ie * 1.2f + dze * 0.3f, 0};
+    // showroom: a close 3/4 front view (the hen faces +x), aimed low so the hen sits in the screen's top part, above
+    // the Locker sheet; a gentle drift keeps it alive
+    const glm::vec3 hc = hp + glm::vec3(0.f, 0.8f, 0.f);
+    const glm::vec3 showEye = hc + glm::vec3(3.6f + std::sin(time_ * 0.3f) * 0.3f, 0.9f, 7.6f);
+    const glm::vec3 showLook = hc + glm::vec3(0.1f, -1.95f, 0.f);
+    camera_.setPose(glm::mix(eye, showEye, lk), glm::mix(look, showLook, lk));
 }
 
 void Game::updateAmbient(float dt) {
@@ -1653,6 +1697,7 @@ void Game::buildRenderList() {
     f.vignetteTint = glm::vec4(hueColor(partyTime_ * surge::HUE_SPEED * 1.6f + 0.5f), surge::VIGNETTE_TINT * partyK_);
     f.viewportW = viewW_; f.viewportH = viewH_;
     f.frostAmount = 0.f; // a glass panel turns it on while the HUD is built (hudFrost)
+    f.showcase = screen_ == Screen::Locker;
 
     buildHud();
 }

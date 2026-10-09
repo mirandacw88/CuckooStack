@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Math.h"
+#include "OutfitModels.h"
 
 #include <array>
 #include <cstddef>
@@ -34,12 +35,15 @@ enum class MeshId : uint8_t {
     Circle,      // r=1 disc in XY
     // the hen model (HenModel.h), one mesh per colour region; skinned on the CPU every frame (RenderList::heroVerts)
     HenBody, HenAccent, HenLens, HenShade, HenBeak,
-    Count
+    HenOutfit0,  // outfits with their own textured hen model follow: HenOutfit0 + i (OutfitModels.inc)
+    Count = int(HenOutfit0) + kOutfitModelCount
 };
 constexpr size_t kMeshCount = static_cast<size_t>(MeshId::Count);
+static_assert(kMeshCount <= 255, "MeshId is a uint8_t");
 
 // Procedural surface patterns, evaluated in the lit fragment shader instead of uploading canvas textures.
-enum class Pattern : uint8_t { None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5 };
+// HeroTexture: the textured hen model's albedo (frame set binding 2); warm bright texels glow by the emissive amount
+enum class Pattern : uint8_t { None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5, HeroTexture = 6 };
 
 // Shape masks for the unlit shader (replaces the small canvas gradient textures).
 enum class Shape : uint8_t {
@@ -85,6 +89,7 @@ struct FrameParams {
     glm::vec4 vignetteTint{0.f}; // rgb (display space) + strength: party-mode colour edge
     // frosted glass: the scene is blurred inside this rounded rect (HUD points: centre xy, size zw) before the HUD
     // draws its glass panel on top. frostAmount 0 = off.
+    bool showcase = false; // the hen is shown up close (Locker): draw the 3D scene at full resolution
     glm::vec4 frostRect{0.f};
     float frostRadius = 0.f, frostAmount = 0.f;
     // HUD space, in logical points
@@ -99,9 +104,12 @@ struct RenderList {
     std::array<std::array<std::vector<Instance>, kMeshCount>, kPassCount> buckets;
     std::vector<Particle> particlesAdd;   // additive sparks, dust, rain splashes
     std::vector<Particle> particlesSmoke; // normal-blended puffs
-    // posed vertices of the MeshId::HenBody..HenBeak meshes, in that order (the renderer streams them instead of the
-    // rest pose); empty = draw the rest pose
+    // posed vertices of the hen meshes heroFirst .. heroFirst + heroMeshes - 1, in that order (the renderer streams them
+    // over the rest pose); empty = draw the rest pose
     std::vector<Vertex> heroVerts;
+    MeshId heroFirst = MeshId::HenBody;
+    int heroMeshes = 0;
+    int heroModel = 0; // HenModelId worn: a textured model's texture is uploaded when it changes
     // HUD in paint order (like DOM stacking): Plane quads (unlit shapes), SDF glyphs and sprites, interleaved.
     // hudKind[i] says which pipeline draws hud[i] (HudKind); the renderer batches consecutive runs.
     std::vector<Instance> hud;
