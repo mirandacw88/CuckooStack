@@ -6,20 +6,21 @@
 
 namespace cs {
 
-bool VulkanSwapchain::create(VulkanContext& ctx, VkExtent2D fallbackExtent) {
+bool VulkanSwapchain::create(VulkanContext& ctx, VkExtent2D fallbackExtent, VkSurfaceKHR surface, VkImageUsageFlags extraUsage) {
     ctx_ = &ctx;
+    if (!surface) surface = ctx.surface;
     VkSwapchainKHR old = swapchain_;
     for (VkImageView v : views_) vkDestroyImageView(ctx.device, v, nullptr);
     for (VkSemaphore s : renderFinished_) vkDestroySemaphore(ctx.device, s, nullptr);
     views_.clear(); renderFinished_.clear(); images_.clear();
 
     VkSurfaceCapabilitiesKHR caps;
-    VK_TRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.gpu, ctx.surface, &caps));
+    VK_TRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.gpu, surface, &caps));
 
     uint32_t fc = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(ctx.gpu, ctx.surface, &fc, nullptr);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(ctx.gpu, surface, &fc, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(fc);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(ctx.gpu, ctx.surface, &fc, formats.data());
+    vkGetPhysicalDeviceSurfaceFormatsKHR(ctx.gpu, surface, &fc, formats.data());
     if (formats.empty()) { CS_LOGE("Surface reports no formats"); return false; }
     // UNORM + manual sRGB encode in the composite shader matches the web build's colour pipeline exactly;
     // fall back to whatever the surface offers (and skip the manual encode for *_SRGB formats).
@@ -61,7 +62,7 @@ bool VulkanSwapchain::create(VulkanContext& ctx, VkExtent2D fallbackExtent) {
         if (caps.supportedCompositeAlpha & a) { alpha = a; break; }
 
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
-    ci.surface = ctx.surface;
+    ci.surface = surface;
     ci.minImageCount = imageCount;
     ci.imageFormat = chosen.format;
     ci.imageColorSpace = chosen.colorSpace;
@@ -69,7 +70,8 @@ bool VulkanSwapchain::create(VulkanContext& ctx, VkExtent2D fallbackExtent) {
     ci.imageArrayLayers = 1;
     // TRANSFER_SRC (when offered) enables Renderer::captureNextFrame for screenshots / golden-image tests
     readback_ = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
-    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (readback_ ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+    if ((caps.supportedUsageFlags & extraUsage) != extraUsage) { CS_LOGW("Surface lacks the requested image usage 0x%x", unsigned(extraUsage)); return false; }
+    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (readback_ ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0) | extraUsage;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = transform;
     ci.compositeAlpha = alpha;
@@ -77,9 +79,9 @@ bool VulkanSwapchain::create(VulkanContext& ctx, VkExtent2D fallbackExtent) {
 #ifndef NDEBUG
     if (std::getenv("CS_UNCAPPED")) { // profiling only: let the GPU run flat out to measure its real cost
         uint32_t pc = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(ctx.gpu, ctx.surface, &pc, nullptr);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(ctx.gpu, surface, &pc, nullptr);
         std::vector<VkPresentModeKHR> modes(pc);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(ctx.gpu, ctx.surface, &pc, modes.data());
+        vkGetPhysicalDeviceSurfacePresentModesKHR(ctx.gpu, surface, &pc, modes.data());
         for (VkPresentModeKHR m : {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR})
             if (std::find(modes.begin(), modes.end(), m) != modes.end()) { ci.presentMode = m; break; }
     }
@@ -121,8 +123,8 @@ void VulkanSwapchain::destroy() {
     swapchain_ = VK_NULL_HANDLE;
 }
 
-VkResult VulkanSwapchain::acquire(VkSemaphore signal, uint32_t& imageIndex) {
-    return vkAcquireNextImageKHR(ctx_->device, swapchain_, UINT64_MAX, signal, VK_NULL_HANDLE, &imageIndex);
+VkResult VulkanSwapchain::acquire(VkSemaphore signal, uint32_t& imageIndex, uint64_t timeout) {
+    return vkAcquireNextImageKHR(ctx_->device, swapchain_, timeout, signal, VK_NULL_HANDLE, &imageIndex);
 }
 
 VkResult VulkanSwapchain::present(VkSemaphore wait, uint32_t imageIndex) {

@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "cuckoostack-staging",
+    "staging": "cuckoostack-staging",
+    "prod": "cuckoostack-prod"
+  }
+}

@@ -58,6 +58,8 @@ void Game::resetSurge() {
 
 void Game::startSurge() {
     surging_ = true; surgeT_ = TIME; graceT_ = 0; smashed_ = 0;
+    run_.surges++;
+    missionProgress(missions_.record(MissionKind::Surges));
     const glm::vec3 hp = hen_.nodes[hen_.root].pos;
     popup("SURGE!", hp + glm::vec3(0.6f, 1.9f, 0), PopKind::Surge);
     flashScreen(srgbColor("#ff2bd6"), 0.32f);

@@ -94,6 +94,11 @@ bool Renderer::init(PlatformSurface& platform, bool enableValidation, std::strin
     if (vkCreateSampler(ctx_.device, &si, nullptr, &linearClamp_) != VK_SUCCESS) { error = "vkCreateSampler failed"; return false; }
     si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     if (vkCreateSampler(ctx_.device, &si, nullptr, &linearRepeat_) != VK_SUCCESS) { error = "vkCreateSampler failed"; return false; }
+    // trilinear, for the mipmapped HUD icon atlas
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    si.maxLod = VK_LOD_CLAMP_NONE;
+    if (vkCreateSampler(ctx_.device, &si, nullptr, &linearMip_) != VK_SUCCESS) { error = "vkCreateSampler failed"; return false; }
     {   // constant procedural patterns: computed once here instead of per pixel every frame
         constexpr int kPuddle = 512;
         const std::vector<uint8_t> mask = bakePuddleMask(kPuddle);
@@ -244,6 +249,7 @@ bool Renderer::recreateSwapchain() {
 
 void Renderer::onSurfaceLost() {
     if (!ctx_.device) return;
+    stopRecording();
     vkDeviceWaitIdle(ctx_.device);
     destroyTargets();
     swapchain_.destroy();
@@ -277,22 +283,36 @@ bool Renderer::render(const RenderList& list) {
     if (r == VK_ERROR_SURFACE_LOST_KHR) { onSurfaceLost(); return true; }
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { CS_LOGE("vkAcquireNextImageKHR: %s", vkResultName(r)); return r != VK_ERROR_DEVICE_LOST; }
 
+    // recorder: every other frame (30 fps), if the encoder has a free buffer right now (never wait for it)
+    recIndex_ = UINT32_MAX;
+    if (recChain_.valid() && (++recTick_ & 1u) == 0) {
+        const VkResult rr = recChain_.acquire(recAcquired_[frameIndex_], recIndex_, 0);
+        if (rr != VK_SUCCESS && rr != VK_SUBOPTIMAL_KHR) recIndex_ = UINT32_MAX;
+    }
+
     vkResetFences(ctx_.device, 1, &f.inFlight);
     vkResetCommandPool(ctx_.device, f.pool, 0);
     record(f, imageIndex, list);
 
-    const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const bool rec = recIndex_ != UINT32_MAX;
+    const VkPipelineStageFlags waitStages[2] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
+    const VkSemaphore waits[2] = {f.imageAvailable, recAcquired_[frameIndex_]};
     const VkSemaphore done = swapchain_.renderFinished(imageIndex);
+    const VkSemaphore signals[2] = {done, rec ? recChain_.renderFinished(recIndex_) : VK_NULL_HANDLE};
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &f.imageAvailable;
-    si.pWaitDstStageMask = &waitStage;
+    si.waitSemaphoreCount = rec ? 2 : 1;
+    si.pWaitSemaphores = waits;
+    si.pWaitDstStageMask = waitStages;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &f.cmd;
-    si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &done;
+    si.signalSemaphoreCount = rec ? 2 : 1;
+    si.pSignalSemaphores = signals;
     r = vkQueueSubmit(ctx_.queue, 1, &si, f.inFlight);
     if (r != VK_SUCCESS) { CS_LOGE("vkQueueSubmit: %s", vkResultName(r)); return r != VK_ERROR_DEVICE_LOST; }
+    if (rec) {
+        const VkResult pr = recChain_.present(signals[1], recIndex_);
+        if (pr != VK_SUCCESS && pr != VK_SUBOPTIMAL_KHR) { CS_LOGW("Recorder present: %s; recording stopped", vkResultName(pr)); stopRecording(); }
+    }
 
     r = swapchain_.present(done, imageIndex);
     // SUBOPTIMAL on Android means the display rotated: rebuild with the new pre-transform
@@ -324,11 +344,14 @@ bool Renderer::uploadFontAtlas(const FontAtlas& atlas) {
 bool Renderer::uploadHudImage(const HudImage& image) {
     vkDeviceWaitIdle(ctx_.device);
     const VkExtent2D e{static_cast<uint32_t>(image.width()), static_cast<uint32_t>(image.height())};
+    const uint32_t mips = 1 + static_cast<uint32_t>(image.mips().size());
     if (!hudImage_.create(ctx_.device, ctx_.allocator, e, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                          VK_IMAGE_ASPECT_COLOR_BIT, false))
+                          VK_IMAGE_ASPECT_COLOR_BIT, false, mips))
         return false;
-    if (!hudImage_.upload(ctx_, image.pixels().data(), image.pixels().size())) return false;
-    VkDescriptorImageInfo info{linearClamp_, hudImage_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    std::vector<VulkanImage::Level> levels{{image.pixels().data(), image.pixels().size()}};
+    for (const auto& m : image.mips()) levels.push_back({m.data(), m.size()});
+    if (!hudImage_.uploadMips(ctx_, levels.data(), mips)) return false;
+    VkDescriptorImageInfo info{linearMip_, hudImage_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w.dstSet = imageSet_; w.dstBinding = 0; w.descriptorCount = 1;
     w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w.pImageInfo = &info;
@@ -499,8 +522,12 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
 
         const glm::mat2 rot = swapchain_.preRotation();
         const FrameParams& fp = list.frame;
+        // frosted-glass rect, HUD points -> uv (x in uv, distances in units of the screen height)
+        const float vw = std::max(fp.viewportW, 1.f), vh = std::max(fp.viewportH, 1.f);
         PostPush pp{{rot[0][0], rot[0][1], rot[1][0], rot[1][1]}, {fp.chromaAmount, fp.vignette, fp.bloomStrength, swapchain_.isSrgb() ? 0.f : 1.f},
-                    {fp.vignetteTint.r, fp.vignetteTint.g, fp.vignetteTint.b, fp.vignetteTint.a}};
+                    {fp.vignetteTint.r, fp.vignetteTint.g, fp.vignetteTint.b, fp.vignetteTint.a},
+                    {fp.frostRect.x / vw, fp.frostRect.y / vh, fp.frostRect.z / 2 / vh, fp.frostRect.w / 2 / vh},
+                    {fp.frostRadius / vh, vw / vh, fp.frostAmount, 18.f / vh}};
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes_.composite);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes_.compositeLayout, 0, 1, &compositeSet_, 0, nullptr);
         vkCmdPushConstants(cmd, pipes_.compositeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
@@ -553,6 +580,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
     }
     if (f.timed) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, f.timestamps, 3);
     if (!capturePath_.empty()) recordCapture(cmd, imageIndex);
+    if (recIndex_ != UINT32_MAX) recordBlit(cmd, imageIndex);
     vkEndCommandBuffer(cmd);
 }
 
@@ -584,6 +612,103 @@ void Renderer::recordCapture(VkCommandBuffer cmd, uint32_t imageIndex) {
     host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host, 0, nullptr, 0, nullptr);
     captureRecorded_ = true;
+}
+
+// ---------------------------------------------------------------- video recording
+
+bool Renderer::startRecording(PlatformSurface& encoderSurface, VkExtent2D size) {
+    stopRecording();
+    if (!swapchain_.valid() || !swapchain_.canReadback()) { CS_LOGW("Recorder: swapchain can't be read back"); return false; }
+    if (swapchain_.preRotation() != glm::mat2(1.f)) { CS_LOGW("Recorder: rotated display, not recording"); return false; }
+    VkFormatProperties fp{};
+    vkGetPhysicalDeviceFormatProperties(ctx_.gpu, swapchain_.format(), &fp);
+    if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT)) { CS_LOGW("Recorder: screen format can't be blitted"); return false; }
+    if (encoderSurface.createSurface(ctx_.instance, &recSurface_) != VK_SUCCESS) { recSurface_ = VK_NULL_HANDLE; return false; }
+    VkBool32 present = VK_FALSE;
+    vkGetPhysicalDeviceSurfaceSupportKHR(ctx_.gpu, ctx_.queueFamily, recSurface_, &present);
+    if (!present || !recChain_.create(ctx_, size, recSurface_, VK_IMAGE_USAGE_TRANSFER_DST_BIT)) { stopRecording(); return false; }
+    vkGetPhysicalDeviceFormatProperties(ctx_.gpu, recChain_.format(), &fp);
+    if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) { CS_LOGW("Recorder: encoder format can't be blitted"); stopRecording(); return false; }
+    VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    for (VkSemaphore& sem : recAcquired_)
+        if (vkCreateSemaphore(ctx_.device, &sci, nullptr, &sem) != VK_SUCCESS) { stopRecording(); return false; }
+    recTick_ = 0;
+    CS_LOGI("Recorder: %ux%u, format %d", recChain_.extent().width, recChain_.extent().height, int(recChain_.format()));
+    return true;
+}
+
+void Renderer::stopRecording() {
+    if (!recChain_.valid() && !recSurface_) return;
+    vkDeviceWaitIdle(ctx_.device);
+    recChain_.destroy();
+    for (VkSemaphore& sem : recAcquired_) { if (sem) vkDestroySemaphore(ctx_.device, sem, nullptr); sem = VK_NULL_HANDLE; }
+    if (recSurface_) vkDestroySurfaceKHR(ctx_.instance, recSurface_, nullptr);
+    recSurface_ = VK_NULL_HANDLE;
+    recIndex_ = UINT32_MAX;
+    recOverlay_.destroy();
+    recOverlayOn_ = false;
+}
+
+bool Renderer::setRecordOverlay(const uint8_t* rgba, uint32_t width, uint32_t height) {
+    vkDeviceWaitIdle(ctx_.device);
+    if (!recOverlay_.create(ctx_.device, ctx_.allocator, {width, height}, VK_FORMAT_R8G8B8A8_UNORM,
+                            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT, false) ||
+        !recOverlay_.upload(ctx_, rgba, size_t(width) * height * 4))
+        return false;
+    recOverlayOn_ = true;
+    return true;
+}
+
+void Renderer::recordBlit(VkCommandBuffer cmd, uint32_t imageIndex) {
+    if (recOverlayOn_) { // the end card instead of the screen
+        const VkImage src = recOverlay_.image(), dst = recChain_.image(recIndex_);
+        VkImageMemoryBarrier b[2]{};
+        for (VkImageMemoryBarrier& x : b) {
+            x.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            x.srcQueueFamilyIndex = x.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            x.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        }
+        b[0].image = src; b[0].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; b[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b[0].srcAccessMask = 0; b[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b[1].image = dst; b[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b[1].srcAccessMask = 0; b[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
+        const VkExtent2D se = recOverlay_.extent(), de = recChain_.extent();
+        VkImageBlit blit{};
+        blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.srcOffsets[1] = {int32_t(se.width), int32_t(se.height), 1};
+        blit.dstOffsets[1] = {int32_t(de.width), int32_t(de.height), 1};
+        vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        b[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; b[0].dstAccessMask = 0;
+        b[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        b[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b[1].dstAccessMask = 0;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
+        return;
+    }
+    const VkImage src = swapchain_.image(imageIndex), dst = recChain_.image(recIndex_);
+    VkImageMemoryBarrier b[2]{};
+    for (VkImageMemoryBarrier& x : b) {
+        x.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        x.srcQueueFamilyIndex = x.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        x.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    }
+    b[0].image = src; b[0].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; b[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; b[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b[1].image = dst; b[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b[1].srcAccessMask = 0; b[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
+    const VkExtent2D se = swapchain_.extent(), de = recChain_.extent();
+    VkImageBlit blit{};
+    blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {int32_t(se.width), int32_t(se.height), 1};
+    blit.dstOffsets[1] = {int32_t(de.width), int32_t(de.height), 1};
+    vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    b[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b[0].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; b[0].dstAccessMask = 0;
+    b[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b[1].dstAccessMask = 0;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
 }
 
 void Renderer::writeCapture() {
@@ -647,12 +772,14 @@ void Renderer::shutdown() {
         if (f.timestamps) vkDestroyQueryPool(ctx_.device, f.timestamps, nullptr);
         f = Frame{};
     }
+    stopRecording();
     vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;
     if (linearClamp_) vkDestroySampler(ctx_.device, linearClamp_, nullptr);
+    if (linearMip_) vkDestroySampler(ctx_.device, linearMip_, nullptr);
     if (pool_) vkDestroyDescriptorPool(ctx_.device, pool_, nullptr);
-    linearClamp_ = VK_NULL_HANDLE; pool_ = VK_NULL_HANDLE;
+    linearClamp_ = linearMip_ = VK_NULL_HANDLE; pool_ = VK_NULL_HANDLE;
     pipes_.destroy();
     swapchain_.destroy();
     ctx_.shutdown();

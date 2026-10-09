@@ -10,10 +10,22 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CS_PLATFORM ios)
   cmake_minimum_required(VERSION 3.28) # xcframework linking/embedding
   enable_language(OBJCXX)
+  enable_language(Swift) # StoreKit 2 + Firebase glue (src/platform/ios/IOSServices.swift)
 elseif(ANDROID)
   set(CS_PLATFORM android)
 else()
   set(CS_PLATFORM desktop)
+endif()
+
+# Environment (README "Environments"): staging and prod use separate Firebase projects and app IDs.
+# Android sets it per product flavour; iOS: generate_xcode.sh --env prod. Game rules never depend on it.
+set(CS_ENV "staging" CACHE STRING "staging | prod")
+set_property(CACHE CS_ENV PROPERTY STRINGS staging prod)
+if(NOT CS_ENV MATCHES "^(staging|prod)$")
+  message(FATAL_ERROR "CS_ENV must be staging or prod (got '${CS_ENV}')")
+endif()
+if(CS_ENV STREQUAL "prod")
+  add_compile_definitions(CS_ENV_PROD)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -67,11 +79,11 @@ foreach(pair "display:CuckooDisplay-Black" "body:ChakraPetch-Medium" "body_bold:
     VERBATIM)
   list(APPEND CS_FONT_SOURCES ${cpp})
 endforeach()
-# HUD sprite sheet (scripts/hud/make_lives_icon.py), embedded like the fonts
-set(_hud_png ${CMAKE_CURRENT_SOURCE_DIR}/assets/hud/lives_icons.png)
-set(_hud_cpp ${CMAKE_CURRENT_BINARY_DIR}/fonts/lives_icons.cpp)
+# HUD icon atlas (scripts/hud/make_hud_icons.py), embedded like the fonts
+set(_hud_png ${CMAKE_CURRENT_SOURCE_DIR}/assets/hud/hud_icons.png)
+set(_hud_cpp ${CMAKE_CURRENT_BINARY_DIR}/fonts/hud_icons.cpp)
 add_custom_command(OUTPUT ${_hud_cpp}
-  COMMAND ${CMAKE_COMMAND} -DINPUT=${_hud_png} -DOUTPUT=${_hud_cpp} -DSYMBOL=lives_icons -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${_hud_png} -DOUTPUT=${_hud_cpp} -DSYMBOL=hud_icons -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
   DEPENDS ${_hud_png} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
   COMMENT "Embedding HUD sprites"
   VERBATIM)
@@ -81,17 +93,25 @@ add_library(cs_fonts STATIC ${CS_FONT_SOURCES})
 # ---------------------------------------------------------------- core: game logic, OS-free
 add_library(cs_core STATIC
   src/core/Camera.cpp
+  src/core/Daily.cpp
   src/core/Difficulty.cpp
+  src/core/Economy.cpp
+  src/core/EndCard.cpp
   src/core/Effects.cpp
   src/core/FileStorage.cpp
   src/core/Font.cpp
   src/core/Game.cpp
   src/core/GameHud.cpp
   src/core/GameSurge.cpp
+  src/core/GameUi.cpp
   src/core/HudImage.cpp
   src/core/Geometry.cpp
   src/core/Hen.cpp
   src/core/Level.cpp
+  src/core/Meta.cpp
+  src/core/Monetization.cpp
+  src/core/Reminders.cpp
+  src/core/Tuning.cpp
   src/core/World.cpp
   src/core/audio/Synth.cpp)
 target_include_directories(cs_core PUBLIC src)
@@ -123,8 +143,9 @@ if(CS_PLATFORM STREQUAL "android")
   add_library(cuckoo_stack SHARED
     src/platform/android/AndroidAudio.cpp
     src/platform/android/AndroidMain.cpp
+    src/platform/android/AndroidReplay.cpp
     src/platform/android/AndroidWindow.cpp)
-  target_link_libraries(cuckoo_stack PRIVATE cs_graphics game-activity::game-activity_static oboe::oboe android log)
+  target_link_libraries(cuckoo_stack PRIVATE cs_graphics game-activity::game-activity_static oboe::oboe android log mediandk)
   target_compile_options(cuckoo_stack PRIVATE ${CS_WARNINGS} ${CS_OPT})
   target_link_options(cuckoo_stack PRIVATE
     # keep GameActivity's JNI entry points when linking it statically
@@ -141,7 +162,7 @@ elseif(CS_PLATFORM STREQUAL "ios")
   set(CS_LAUNCH ${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/LaunchScreen.storyboard)
   set(CS_ASSETS ${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/Assets.xcassets) # AppIcon (scripts/icon/make_icons.py)
 
-  # AdMob IDs from config/ads.env (shared with Android): *_TEST for Debug, *_PROD for Release.
+  # AdMob IDs from config/ads.env (shared with Android): *_TEST for staging and for Debug, *_PROD for prod Release.
   # Editing the file re-runs CMake automatically on the next Xcode build.
   set(CS_ADS_ENV ${CMAKE_CURRENT_SOURCE_DIR}/config/ads.env)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CS_ADS_ENV})
@@ -151,15 +172,74 @@ elseif(CS_PLATFORM STREQUAL "ios")
     string(STRIP "${CMAKE_MATCH_2}" _val)
     set(ADS_${CMAKE_MATCH_1} "${_val}")
   endforeach()
-  foreach(key ADMOB_IOS_APP_ID ADMOB_IOS_REWARDED)
+  set(CS_ADS_PROD_MISSING "")
+  foreach(key ADMOB_IOS_APP_ID ADMOB_IOS_REWARDED ADMOB_IOS_INTERSTITIAL)
     if(NOT ADS_${key}_TEST)
       message(FATAL_ERROR "config/ads.env: ${key}_TEST is missing")
     endif()
-    if(NOT ADS_${key}_PROD)
-      message(WARNING "config/ads.env: ${key}_PROD is empty, so Release builds will show TEST ads")
-      set(ADS_${key}_PROD "${ADS_${key}_TEST}")
+    if(CS_ENV STREQUAL "prod" AND NOT ADS_${key}_PROD)
+      list(APPEND CS_ADS_PROD_MISSING ${key}_PROD)
+      set(ADS_${key}_PROD "${ADS_${key}_TEST}") # Debug still works; Release is stopped by the check below
+    endif()
+    if(CS_ENV STREQUAL "prod")
+      set(CS_AD_${key} "$<IF:$<CONFIG:Debug>,${ADS_${key}_TEST},${ADS_${key}_PROD}>")
+    else()
+      set(CS_AD_${key} "${ADS_${key}_TEST}") # staging: test ads in every configuration
     endif()
   endforeach()
+
+  # Game Center leaderboard ids (config/store/leaderboards.env)
+  set(CS_BOARDS_ENV ${CMAKE_CURRENT_SOURCE_DIR}/config/store/leaderboards.env)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CS_BOARDS_ENV})
+  file(STRINGS ${CS_BOARDS_ENV} _board_lines REGEX "^[A-Z0-9_]+=")
+  foreach(line ${_board_lines})
+    string(REGEX MATCH "^([A-Z0-9_]+)=(.*)$" _ ${line})
+    string(STRIP "${CMAKE_MATCH_2}" _val)
+    set(BOARD_${CMAKE_MATCH_1} "${_val}")
+  endforeach()
+
+  # Environment: app ID, name, icon and Firebase project (config/firebase/<env>/GoogleService-Info.plist)
+  if(CS_ENV STREQUAL "prod")
+    set(CS_BUNDLE_ID "com.cuckoostack.aerospheregames")
+    set(CS_APP_NAME "Cuckoo Stack")
+    set(CS_APPICON "AppIcon")
+    set(CS_LINK_DOMAIN "cuckoostack-prod.web.app")
+    set(CS_URL_SCHEME "cuckoostack")
+  else()
+    set(CS_BUNDLE_ID "com.cuckoostack.aerospheregames.staging")
+    set(CS_APP_NAME "Cuckoo Stack β")
+    set(CS_APPICON "AppIconStaging")
+    set(CS_LINK_DOMAIN "cuckoostack-staging.web.app")
+    set(CS_URL_SCHEME "cuckoostack-staging")
+  endif()
+  # challenge-link domain (src/core/Links.h) + a URL scheme for local testing (xcrun simctl openurl)
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/CuckooStack.entitlements.in ${CMAKE_CURRENT_BINARY_DIR}/CuckooStack.entitlements @ONLY)
+  set(CS_FIREBASE_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/config/firebase/${CS_ENV}/GoogleService-Info.plist)
+  if(EXISTS ${CS_FIREBASE_PLIST})
+    set(CS_FIREBASE_RES ${CS_FIREBASE_PLIST})
+  else()
+    message(WARNING "No ${CS_FIREBASE_PLIST}: this ${CS_ENV} build runs with Firebase off (README: Environments)")
+    set(CS_FIREBASE_RES "")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/config/firebase)
+
+  # Firebase iOS SDK (scripts/bootstrap_deps.sh): static xcframeworks, linked like AdMob below
+  set(CS_FB ${TP}/Firebase)
+  if(NOT EXISTS ${CS_FB}/FirebaseCore.xcframework)
+    message(FATAL_ERROR "Missing third_party/Firebase. Run scripts/bootstrap_deps.sh.")
+  endif()
+  file(GLOB _fb_xcfs LIST_DIRECTORIES true ${CS_FB}/*.xcframework)
+  set(CS_FB_DEVICE "")
+  set(CS_FB_SIM "")
+  set(CS_FB_LINK "")
+  foreach(x ${_fb_xcfs})
+    get_filename_component(_n ${x} NAME_WE)
+    string(APPEND CS_FB_DEVICE " ${x}/ios-arm64")
+    string(APPEND CS_FB_SIM " ${x}/ios-arm64_x86_64-simulator")
+    string(APPEND CS_FB_LINK " -framework ${_n}")
+  endforeach()
+  # their privacy manifests must ship in the app bundle when they're linked statically
+  file(GLOB CS_FB_PRIVACY LIST_DIRECTORIES true ${CS_FB}/*.xcframework/ios-arm64/*.framework/*_Privacy.bundle)
   set(CS_GMA ${TP}/GoogleMobileAds)
   foreach(xcf GoogleMobileAds UserMessagingPlatform)
     if(NOT EXISTS ${CS_GMA}/${xcf}.xcframework)
@@ -178,14 +258,18 @@ elseif(CS_PLATFORM STREQUAL "ios")
     src/platform/ios/IOSAds.mm
     src/platform/ios/IOSApp.mm
     src/platform/ios/IOSAudio.mm
+    src/platform/ios/IOSServices.mm
+    src/platform/ios/IOSServices.swift
     src/platform/ios/IOSWindow.mm
     ${CS_LAUNCH}
     ${CS_ASSETS}
     ${CS_GMA_PRIVACY}
-    ${CS_UMP_PRIVACY})
+    ${CS_UMP_PRIVACY}
+    ${CS_FB_PRIVACY}
+    ${CS_FIREBASE_RES})
   set_source_files_properties(${CS_GMA_PRIVACY} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/GoogleMobileAdsPrivacy.bundle")
   set_source_files_properties(${CS_UMP_PRIVACY} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/UserMessagingPlatformPrivacy.bundle")
-  set_source_files_properties(${CS_LAUNCH} ${CS_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  set_source_files_properties(${CS_LAUNCH} ${CS_ASSETS} ${CS_FB_PRIVACY} ${CS_FIREBASE_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   target_link_libraries(CuckooStack PRIVATE cs_graphics ${CS_MOLTENVK_XCFRAMEWORK}
     "-framework UIKit" "-framework QuartzCore" "-framework Metal" "-framework IOSurface" "-framework Foundation"
     "-framework AVFoundation"
@@ -193,14 +277,27 @@ elseif(CS_PLATFORM STREQUAL "ios")
     "-framework WebKit" "-framework SystemConfiguration" "-framework CoreTelephony" "-framework MessageUI"
     "-framework SafariServices" "-ObjC")
   target_compile_definitions(CuckooStack PRIVATE
-    CS_ADMOB_IOS_REWARDED="$<IF:$<CONFIG:Debug>,${ADS_ADMOB_IOS_REWARDED_TEST},${ADS_ADMOB_IOS_REWARDED_PROD}>")
-  target_compile_options(CuckooStack PRIVATE ${CS_WARNINGS} ${CS_OPT} -fobjc-arc)
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:CS_ADMOB_IOS_REWARDED=\"${CS_AD_ADMOB_IOS_REWARDED}\">"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:CS_ADMOB_IOS_INTERSTITIAL=\"${CS_AD_ADMOB_IOS_INTERSTITIAL}\">"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:CS_GC_DAILY=\"${BOARD_GAMECENTER_DAILY}\">"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:CS_GC_ALLTIME=\"${BOARD_GAMECENTER_ALLTIME}\">")
+  target_compile_options(CuckooStack PRIVATE "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:${CS_WARNINGS};${CS_OPT};-fobjc-arc>")
+  if(CS_ADS_PROD_MISSING)
+    # a prod Release must never ship test ads: fail the build (Debug keeps working with test IDs)
+    string(REPLACE ";" ", " _missing "${CS_ADS_PROD_MISSING}")
+    add_custom_command(TARGET CuckooStack PRE_BUILD
+      COMMAND "$<$<CONFIG:Release>:/bin/sh;-c;echo 'error: config/ads.env: set ${_missing} before a prod Release build' && exit 1>"
+      COMMAND_EXPAND_LISTS VERBATIM)
+  endif()
   set_target_properties(CuckooStack PROPERTIES
     OUTPUT_NAME "CuckooStack"
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/Info.plist.in
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.cuckoostack.aerospheregames"
-    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.cuckoostack.aerospheregames"
-    MACOSX_BUNDLE_BUNDLE_NAME "Cuckoo Stack"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "${CS_BUNDLE_ID}"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${CS_BUNDLE_ID}"
+    MACOSX_BUNDLE_BUNDLE_NAME "${CS_APP_NAME}"
+    XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+    XCODE_ATTRIBUTE_SWIFT_OBJC_INTERFACE_HEADER_NAME "CuckooStack-Swift.h"
+    XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "CuckooStack"
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_BUNDLE_VERSION "1"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"
@@ -208,15 +305,15 @@ elseif(CS_PLATFORM STREQUAL "ios")
     XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
     XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES YES
     # AdMob app ID per configuration, expanded into Info.plist (GADApplicationIdentifier) by Xcode
-    "XCODE_ATTRIBUTE_CS_ADMOB_APP_ID" "${ADS_ADMOB_IOS_APP_ID_PROD}"
+    "XCODE_ATTRIBUTE_CS_ADMOB_APP_ID" "$<IF:$<STREQUAL:${CS_ENV},prod>,${ADS_ADMOB_IOS_APP_ID_PROD},${ADS_ADMOB_IOS_APP_ID_TEST}>"
     "XCODE_ATTRIBUTE_CS_ADMOB_APP_ID[variant=Debug]" "${ADS_ADMOB_IOS_APP_ID_TEST}"
-    # static AdMob/UMP xcframeworks: Xcode picks the device or simulator slice per SDK
-    "XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" "${CS_GMA}/GoogleMobileAds.xcframework/ios-arm64 ${CS_GMA}/UserMessagingPlatform.xcframework/ios-arm64"
-    "XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" "${CS_GMA}/GoogleMobileAds.xcframework/ios-arm64_x86_64-simulator ${CS_GMA}/UserMessagingPlatform.xcframework/ios-arm64_x86_64-simulator"
-    XCODE_ATTRIBUTE_OTHER_LDFLAGS "-framework GoogleMobileAds -framework UserMessagingPlatform"
-    # GoogleMobileAds contains Swift; this app has no Swift sources, so point the linker at the Swift runtime
+    # static AdMob/UMP/Firebase xcframeworks: Xcode picks the device or simulator slice per SDK
+    "XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" "${CS_GMA}/GoogleMobileAds.xcframework/ios-arm64 ${CS_GMA}/UserMessagingPlatform.xcframework/ios-arm64${CS_FB_DEVICE}"
+    "XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]" "${CS_GMA}/GoogleMobileAds.xcframework/ios-arm64_x86_64-simulator ${CS_GMA}/UserMessagingPlatform.xcframework/ios-arm64_x86_64-simulator${CS_FB_SIM}"
+    XCODE_ATTRIBUTE_OTHER_LDFLAGS "-framework GoogleMobileAds -framework UserMessagingPlatform${CS_FB_LINK}"
     XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS "$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(SDKROOT)/usr/lib/swift"
-    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+    XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "${CS_APPICON}"
+    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_CURRENT_BINARY_DIR}/CuckooStack.entitlements"
     XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
     XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${CS_IOS_TEAM_ID}"
     XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
@@ -249,9 +346,12 @@ if(CS_PLATFORM STREQUAL "desktop")
   enable_testing()
   add_executable(level_parity tests/level_parity.cpp)
   target_link_libraries(level_parity PRIVATE cs_core)
-  add_executable(lives_test tests/lives_test.cpp)
-  target_link_libraries(lives_test PRIVATE cs_core)
-  add_test(NAME lives COMMAND lives_test)
+  foreach(t monetization economy daily)
+    add_executable(${t}_test tests/${t}_test.cpp)
+    target_link_libraries(${t}_test PRIVATE cs_core)
+    target_compile_definitions(${t}_test PRIVATE CS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME ${t} COMMAND ${t}_test)
+  endforeach()
   add_executable(surge_test tests/surge_test.cpp)
   target_link_libraries(surge_test PRIVATE cs_core)
   add_test(NAME surge COMMAND surge_test)

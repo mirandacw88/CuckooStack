@@ -74,44 +74,53 @@ Needs NDK `28.2.13676358` and CMake `3.22.1` from the SDK Manager, and **JDK 17 
 the JDK 25 bundled with current Android Studio.
 
 ```bash
-cd platforms/android && JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew installDebug
+cd platforms/android && JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew installStagingDebug
 ```
 
 ```bash
-adb shell am start -n com.cuckoostack.aerospheregames/.CuckooActivity
+adb shell am start -n com.cuckoostack.aerospheregames.staging/com.cuckoostack.aerospheregames.CuckooActivity
 ```
 
 Gradle builds the root `CMakeLists.txt` through the NDK (r28). Shaders compile with the NDK's `glslc`.
 
-### Lives and ads (AdMob)
+### Environments: staging and prod
 
-Players start with 3 lives (`src/core/Lives.h`), and each finished run uses one. Lives are saved between launches,
-and quitting mid-run still costs that run's life. At 0 lives, an "Out of lives" offer opens over the game-over
-screen: watching a **rewarded** video grants 3 more lives. Ads only appear when the player chooses to watch one.
+Two Firebase projects and two app IDs, so test data never mixes with real players and both apps install side by side:
 
-If no ad can load within 8 seconds (offline, no fill, consent forbids ads), the offer turns into "Play anyway" so
-players are never locked out. Switch this off with `GRANT_WHEN_AD_UNAVAILABLE = false`.
+| | Staging | Prod |
+|---|---|---|
+| App ID | `com.cuckoostack.aerospheregames.staging` ("Cuckoo Stack β", ribbon icon) | `com.cuckoostack.aerospheregames` |
+| Android | `./gradlew installStagingDebug` | `./gradlew installProdDebug` / `bundleProdRelease` |
+| iOS | `platforms/ios/generate_xcode.sh` → `build-ios/` | `platforms/ios/generate_xcode.sh --env prod` → `build-ios-prod/` |
+| Ads | always Google's test IDs | real IDs in Release (the build fails if any `_PROD` ID is empty) |
+| Firebase | `cuckoostack-staging` | `cuckoostack-prod` |
 
-Ads run behind Google's UMP consent (EEA/UK/Switzerland and US state privacy laws) and, on iOS, the App Tracking
-Transparency prompt. A "Privacy settings" button appears on the title screen wherever UMP requires one.
+Firebase config files are git-ignored: put `google-services.json` in `platforms/android/app/src/<env>/` and
+`GoogleService-Info.plist` in `config/firebase/<env>/`. Without them the game runs with Firebase off.
 
-**Ad IDs live in [`config/ads.env`](config/ads.env)**, one file for both platforms, with a `_TEST` and a `_PROD`
-value for each ID:
-- **Debug builds** (Xcode Run, `./gradlew installDebug`) use the `_TEST` values, which are Google's test IDs.
-- **Release builds** (App Store, Google Play) use the `_PROD` values. Paste your IDs from the AdMob console.
+### Monetization and retention
 
-If a `_PROD` value is empty, release builds fall back to the test ID and the build prints a warning. Both Gradle
-and Xcode pick up edits on the next build.
+Unlimited plays. Money comes from AdMob (an interstitial at most every 3 runs and 90 s, never in a new player's
+first 5 runs, never during a run) plus optional rewarded ads, and from in-app purchases (coin packs, a starter pack,
+Remove Ads). Players come back for the daily course, a daily drop, three daily missions, a streak, levels and outfits,
+reminders (13+, opt-in), challenge links and daily leaderboards.
 
-You also need to:
-- Create the consent messages (GDPR and US states) in the AdMob console under **Privacy & messaging**.
-- Declare advertising and the device/advertising ID in Google Play's **Data safety** form and Apple's **App
-  Privacy** answers. The SDKs' privacy manifests are already bundled.
-
-The iOS SDKs (Google Mobile Ads 13.11.0, UMP 3.1.0) are fetched by `scripts/bootstrap_deps.sh` and verified by
-checksum.
+- **Every tunable** (prices, rewards, ad spacing, difficulty boost, reminder hours, live events) is in
+  [`src/core/Tuning.h`](src/core/Tuning.h) and can be changed from Firebase Remote Config without a release.
+- **Every ad rule** is in [`src/core/Monetization.h`](src/core/Monetization.h).
+- **Setup checklist** (AdMob, Firebase, store products, leaderboards, links, deploys, store forms):
+  [`docs/LIVE_OPS.md`](docs/LIVE_OPS.md).
+- **Audience:** the game asks for a birth year once. Under-13s get child-directed G-rated ads and no tracking
+  prompt, reminders, social features or loss-framed offers, and purchases go behind a parental gate.
 
 ### Tests
+
+```bash
+cd build && ctest
+```
+
+Headless checks of the meta-game: ad rules, economy and purchases, streak, missions, daily drop, reminders, age
+screen and challenge links (`tests/*_test.cpp`).
 
 ```bash
 tests/run_level_parity.sh

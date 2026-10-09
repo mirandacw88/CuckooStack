@@ -13,6 +13,7 @@ struct AndroidAudio::Impl : public oboe::AudioStreamDataCallback, public oboe::A
 
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream* stream, void* data, int32_t frames) override {
         synth.render(static_cast<float*>(data), frames, stream->getChannelCount());
+        if (tap) tap(tapCtx, static_cast<const float*>(data), frames, stream->getChannelCount());
         return oboe::DataCallbackResult::Continue;
     }
     void onErrorAfterClose(oboe::AudioStream*, oboe::Result error) override {
@@ -47,6 +48,8 @@ struct AndroidAudio::Impl : public oboe::AudioStreamDataCallback, public oboe::A
     std::shared_ptr<oboe::AudioStream> stream;
     std::mutex mutex;
     bool wanted = false;
+    Tap tap = nullptr;
+    void* tapCtx = nullptr;
 };
 
 AndroidAudio::AndroidAudio(audio::Synth& synth) : impl_(std::make_unique<Impl>(synth)) {}
@@ -56,6 +59,17 @@ void AndroidAudio::start() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->wanted = true;
     if (!impl_->stream) impl_->open();
+}
+
+void AndroidAudio::setTap(Tap tap, void* ctx) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->tapCtx = ctx;
+    impl_->tap = tap;
+}
+
+int AndroidAudio::sampleRate() const {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->stream ? impl_->stream->getSampleRate() : 48000;
 }
 
 void AndroidAudio::stop() {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- push for Firebase Cloud Messaging campaigns; Xcode switches it to production when archiving for the store -->
+    <key>aps-environment</key>
+    <string>development</string>
+    <!-- challenge links: https://@CS_LINK_DOMAIN@/c?... open the game (apple-app-site-association: firebase/hosting) -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:@CS_LINK_DOMAIN@</string>
+    </array>
+    <!-- daily leaderboards -->
+    <key>com.apple.developer.game-center</key>
+    <true/>
+</dict>
+</plist>

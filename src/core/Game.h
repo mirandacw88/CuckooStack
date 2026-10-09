@@ -2,21 +2,27 @@
 // Platform-free: input arrives as press()/pressAt(), output leaves as a RenderList.
 #pragma once
 
-#include "Lives.h"
 #include "BeatClock.h"
 #include "Camera.h"
+#include "Daily.h"
 #include "Difficulty.h"
+#include "Economy.h"
 #include "Effects.h"
 #include "Font.h"
+#include "HudIcons.h"
 #include "HudImage.h"
 #include "Hen.h"
 #include "Level.h"
+#include "Monetization.h"
 #include "RenderList.h"
 #include "Services.h"
 #include "Surge.h"
+#include "Tuning.h"
 #include "World.h"
 
 #include <array>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -46,13 +52,39 @@ public:
     int score() const { return score_; }
     bool muted() const { return muted_; }
 
+    // A store purchase finished (platform IStore -> here). Credits coins / unlocks; see kProducts in Economy.h.
+    void onPurchase(const PurchaseEvent& e);
+    // App lifecycle: the platform reports foreground/background so sessions and reminders stay correct.
+    void onForeground();
+    void onBackground();
+    // A link opened the app (challenge links: <site>/c?d=YYYY-MM-DD&m=412&n=Sam, or cuckoostack://c?...).
+    void openLink(const std::string& url);
+
     // testing hooks (desktop --surge flag, tests/surge_test.cpp)
     struct SurgeStatus { int chain; bool surging; float surgeT, graceT, partyK; int smashed; float speed; };
     SurgeStatus surgeStatus() const { return {chain_, surging_, surgeT_, graceT_, partyK_, smashed_, speed_}; }
     void debugStartSurge() { if (state_ == State::Play) { chain_ = 0; startSurge(); } }
     void debugSetChain(int chain, float grace = 0.f) { chain_ = chain; graceT_ = grace; }
     void setDebugAutoSurge(bool on) { autoSurge_ = on; } // debug builds: surge 4 m into every run
-    bool offerOpen() const { return offerOpen_; }
+    enum class Screen : uint8_t {
+        None, AgeGate, Continue, Shop, Locker, Missions, DailyDrop, Settings, LevelUp, StreakSave, ParentalGate,
+        NotifPrimer, ReplayPrimer, Starter
+    };
+    Screen screen() const { return screen_; }
+    const Wallet& wallet() const { return wallet_; }
+    const AdPolicy& adPolicy() const { return adPolicy_; }
+    const Profile& profile() const { return profile_; }
+    const Missions& missions() const { return missions_; }
+    const Streak& streak() const { return dayStreak_; }
+    const Progression& progression() const { return prog_; }
+    // desktop screenshots (src/main.cpp --screen / --coins)
+    void debugOpenScreen(const std::string& name);
+    void debugAddCoins(int n) { wallet_.earn(n, "debug"); coinShown_ = float(wallet_.coins()); }
+    // the Share Replay end card (EndCard.h), RGBA8
+    std::vector<uint8_t> endCard(int width, int height, const ReplayMeta& meta) const;
+    // tests: tap the first visible button whose label starts with `label` (returns false if none)
+    bool tapButton(const std::string& label);
+    int challengeMeters() const { return challenge_ ? challenge_->meters : 0; }
     int liveSmashDebris() const { int n = 0; for (const auto& b : smashPool_) n += b.life > 0; return n; }
 
 private:
@@ -71,6 +103,8 @@ private:
     void start();
     void lay();
     void knock(int k);
+    void finishRun();          // the run is over for good (no continue): records, coins, XP, missions, ads
+    void revive();             // Continue: back into the run where the hen fell
     void perfect(float top);
     void closeCall(float top);
     void die(bool ceiling);
@@ -109,6 +143,12 @@ private:
 
     // persistence
     void loadRecords();
+    void levelGained(int levels);
+    void queueSessionScreens();   // daily drop, streak save, starter offer: shown over the title one after another
+    void primerAccepted(bool notifications);
+    void primerDeclined(bool notifications);
+    void onNotificationsAccepted();
+    void rescheduleReminders();
     void saveDay();
     void rollDay();
     void placeGate();
@@ -121,12 +161,36 @@ private:
     void hudTitleOverlay();
     void hudOverOverlay();
     void hudPill(std::string_view label, float bottom, float alpha);
+    // the screens and panels of the meta-game (GameUi.cpp)
+    void hudTopBar();
+    void hudTitleMenu(float& bottom);
+    void hudTitleHeader();
+    void hudTitleNav(float rowY);
+    glm::vec3 iconTint(Icon icon) const;
+    void switchScreen(Screen s);
+    float titleNavY_ = 0;
+    void hudOverMenu(float bottom);
+    void hudOverRewards(float& bottom);
+    void hudScreen();
+    void hudAgeGate(); void hudContinue(); void hudShop(); void hudLocker(); void hudMissions(); void hudDailyDrop();
+    void hudSettings(); void hudLevelUp(); void hudStreakSave(); void hudParentalGate(); void hudPrimer(); void hudStarter();
+    void hudToasts();
+    void hudCoinFx();
+    struct Panel { glm::vec2 c, size; float k; float top; };  // k: entrance progress 0..1; top: content start y
+    Panel hudPanel(std::string_view tag, std::string_view title, float width, float contentH, glm::vec3 accent, bool closable);
+    glm::vec2 hudCoinAmount(int amount, glm::vec2 left, float size, float alpha, TextAlign align = TextAlign::Left, bool plus = false);
+    float coinAmountWidth(int amount, float size, bool plus = false) const;
+    void hudIconButton(Icon icon, glm::vec2 c, float size, float alpha, std::function<void()> fn, int badge = 0, bool pulse = false);
+    glm::vec2 hudTile(glm::vec2 c, glm::vec2 size, glm::vec3 accent, float alpha, bool selected, std::function<void()> fn);
+    glm::vec2 hudActionButton(std::string_view label, const Icon* icon, int coinCost, glm::vec2 c, glm::vec3 color, float alpha, bool glow,
+                              std::function<void()> fn, float scale = 1.f);
+    void hudTextButton(std::string_view label, glm::vec2 c, float alpha, std::function<void()> fn);
+    void hudCoinPill(bool interactive);
     void worldGateLabel();
+    void worldMarkerLabel(double x, float opacity, std::string_view top, std::string_view bottom, glm::vec3 topColor);
     std::string dayLabel() const;
 
-    GameServices svc_;
-    NullAudio nullAudio_;
-    NullAds nullAds_;
+    GameServices svc_;      // every pointer set (null services replaced by no-op ones)
     FastRandom rng_;
     Dda dda_;
     Level level_;
@@ -185,32 +249,111 @@ private:
     float titleT_ = 0;
     std::string overTag_, overNote_;
     float overButtonRowBottom_ = 0; // game-over: bottom edge (HUD points) of the free row below 'Tap to reboot'
+    float overCoinsY_ = 0;          // game-over: where the run's coins row sits (coins fly from here)
 
-    // lives + rewarded-ad offer (Lives.h)
-    int lives_ = lives::START;
-    bool offerOpen_ = false, offerPending_ = false;
-    float offerT_ = 0;                          // seconds the offer has been open
+    // ---- meta-game: coins, cosmetics, ads, level, streak, missions, daily drop (Economy/Monetization/Daily.h)
+    Tuning tune_;
+    Profile profile_;
+    Wallet wallet_;
+    AdPolicy adPolicy_;
+    Progression prog_;
+    Streak dayStreak_;
+    Missions missions_;
+    DailyDrop drop_;
+    void applyCosmetics();
+    void track(const char* event, AnalyticsParams params = {});
+
+    // run statistics (missions, coins, analytics)
+    struct RunStats { int perfects = 0, closeCalls = 0, eggs = 0, surges = 0, continues = 0; float seconds = 0; bool boosted = false; };
+    RunStats run_;
+    int runCoins_ = 0, runXp_ = 0;            // earned by the last finished run
+    bool coinsDoubled_ = false, newBestRun_ = false;
+    enum class Boost : uint8_t { None, Surge, Overclock };
+    Boost boost_ = Boost::None;               // armed for the next run (title screen)
+    Boost runBoost_ = Boost::None;            // the current run's boost
+    Trail trail_ = Trail::None;
+    CrashFx crash_ = CrashFx::Feathers;
+    float trailAcc_ = 0;
+    void emitTrail(float dt);
+    void crashFx(glm::vec3 p);
+    void missionProgress(int completedMask);
+
+    // ---- rewarded ads and the interstitial
+    struct PendingReward { Placement placement; std::function<void()> grant; };
+    std::optional<PendingReward> pendingReward_;
+    float pendingRewardT_ = 0;
+    bool pendingStart_ = false;               // the next run starts once the interstitial is dismissed
+    bool continuePending_ = false;            // the Continue panel opens once the crash has played
+    float deadRealT_ = 0;                     // real seconds since the crash (deadT_ runs in slow motion)
+    bool replaySaved_ = false;                // this crash's replay clip was requested
+    // a friend's challenge on today's course (challenge links): their distance shows as a pink marker
+    struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };
+    std::optional<Challenge> challenge_;
+    void saveChallenge();
+    std::string challengeLink(int meters) const;
+    // share flow: with nudges available the link waits (briefly) for a server challenge id
+    struct PendingShare { std::string caption; int meters; float wait; };
+    std::optional<PendingShare> pendingShare_;
+    std::string sharedChallengeId_;
+    bool beatenPending_ = false;
+    void doShare(const std::string& caption, int meters, const std::string& id);
+    void shareReplay();
+    bool requestReward(Placement p, std::function<void()> grant); // false: no ad ready (caller shows a message)
+    bool rewardReady(Placement p) const;
+    void pollAds();
+
+    // ---- screens (modal panels); hits are rebuilt every frame by the HUD, topmost last
+    Screen screen_ = Screen::None;
+    float screenT_ = 0;
+    std::vector<Screen> screenStack_;
+    std::deque<Screen> screenQueue_;          // shown one after another once the game-over / title overlay is up
+    void openScreen(Screen s);
+    void closeScreen();
+    void queueScreen(Screen s);
     struct HitRect { glm::vec2 c{0.f}, half{0.f}; bool hit(float x, float y) const { return std::abs(x - c.x) <= half.x && std::abs(y - c.y) <= half.y; } };
-    HitRect offerButton_, offerClose_;
-    void saveLives();
-    void openOffer();
-    void watchAd();
-    void grantLives();
-    bool offerPlayAnyway() const;
-    // lives badge: one heart sprite + the count, with the life-lost / lives-gained animations
-    enum class LivesFrame { Full = 0, LeftHalf = 1, RightHalf = 2, Crack = 3, Empty = 4, Close = 5 }; // sprite sheet frames
-    void hudSprite(LivesFrame frame, glm::vec2 center, float size, float rot, glm::vec3 tint, float alpha);
-    void hudLivesBadge(glm::vec2 left, float iconSize, float alpha); // `left`: icon's left edge, vertical centre
-    float livesBadgeWidth(float iconSize) const;
-    void updateLivesAnim(float rdt);
-    struct HudShard { glm::vec2 p{0.f}, v{0.f}; float rot = 0, spin = 0, life = 0, maxLife = 1, size = 4; glm::vec3 color{1.f}; bool heart = false; };
-    std::array<HudShard, 18> shards_{};
-    float lifeAnimT_ = -1.f, gainAnimT_ = -1.f; // seconds since a life was lost / lives were granted; <0 = idle
-    int lifeFrom_ = 0, lifeTo_ = 0;
-    bool lifeSplitDone_ = false;
-    glm::vec2 badgeIconCenter_{0.f};
-    void hudOffer();
-    glm::vec2 hudButton(std::string_view label, glm::vec2 center, glm::vec3 color, float alpha, bool glow);
+    struct UiHit { HitRect r; std::function<void()> fn; std::string label; };
+    std::vector<UiHit> hits_;
+    std::function<void()> primary_;           // keyboard / space while a screen is open
+    std::string nextHitLabel_;
+    void uiHit(glm::vec2 c, glm::vec2 size, std::function<void()> fn);
+    Slot lockerTab_ = Slot::Outfit;
+    std::string lockerPreview_;               // outfit shown on the hen while browsing
+    int gateA_ = 0, gateB_ = 0, gateAnswer_ = -1; std::array<int, 4> gateChoices_{}; std::function<void()> gateThen_;
+    int ageYear_ = 0;                         // age gate wheel (0 = nothing picked yet)
+    float continueT_ = 0;
+    bool continueOffered_ = false;
+    int levelUps_ = 0, chestCoins_ = 0, levelFrom_ = 1;
+    float xpFrom_ = 0, chestT_ = 0, dropT_ = 0, lockerK_ = 0;
+    bool chestOpened_ = false, chestDoubled_ = false;
+    int dropClaimed_ = -1, dropCoins_ = 0;
+    float rewardMsgT_ = 0; std::string rewardMsg_;   // "Ad not ready" etc.
+    void showMessage(std::string msg) { rewardMsg_ = std::move(msg); rewardMsgT_ = 2.2f; }
+    void startPurchase(const std::string& productId);
+    void parentalGate(std::function<void()> then);
+    std::vector<Product> products_;
+    float productsRefreshT_ = 0;
+
+    // ---- HUD feedback: flying coins, the count-up, toasts, sparks
+    float coinShown_ = 0;                      // animated coin counter
+    float coinPulse_ = 0;
+    glm::vec2 coinCounterPos_{0.f};
+    struct FlyCoin { glm::vec2 from, ctrl; float t, delay; int value; bool live; };
+    std::array<FlyCoin, 24> flyCoins_{};
+    void flyCoins(glm::vec2 from, int amount, int pieces);
+    struct Toast { std::string text; Icon icon; int coins; float t; };
+    std::deque<Toast> toasts_;
+    void toast(std::string text, Icon icon, int coins = 0);
+    struct HudSpark { glm::vec2 p{0.f}, v{0.f}; float rot = 0, spin = 0, life = 0, maxLife = 1, size = 4; glm::vec3 color{1.f}; bool coin = false; };
+    std::array<HudSpark, 64> sparks_{};
+    void hudBurst(glm::vec2 at, int n, std::initializer_list<glm::vec3> cols, float speed, bool coins = false);
+    void updateHudFx(float rdt);
+    void hudSprite(Icon icon, glm::vec2 center, float size, float rot = 0, glm::vec3 tint = glm::vec3(1.f), float alpha = 1, int frame = 0);
+    void hudCoin(glm::vec2 center, float size, float alpha, float spin = -1); // spin < 0: animated by time
+    void hudAtlasQuad(glm::vec4 uv, glm::vec2 center, glm::vec2 size, float rot, glm::vec3 tint, float alpha);
+    void hudFrost(glm::vec2 c, glm::vec2 size, float radius, float amount);
+    void hudNineSlice(Icon frame, glm::vec2 center, glm::vec2 size, float corner, glm::vec3 tint, float alpha, float slice = 0.25f);
+    // pill button; `fn` (if any) runs when it's tapped. Returns its size.
+    glm::vec2 hudButton(std::string_view label, glm::vec2 center, glm::vec3 color, float alpha, bool glow, std::function<void()> fn = {}, float scale = 1.f);
     bool privacyButton_ = false; // title-screen 'Privacy settings' (UMP), refreshed each frame on the title
 };
 

@@ -8,6 +8,8 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- reminders (13+ players who turn them on); asked from the game's own primer, never at launch -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -28,9 +30,47 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- challenge links: https://<linkHost>/c?d=...&m=... (verified through firebase/hosting assetlinks.json) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${linkHost}" android:pathPrefix="/c" />
+            </intent-filter>
+            <!-- and a scheme for local testing: adb shell am start -d "cuckoostack-staging://c?d=...&m=..." -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${linkScheme}" />
+            </intent-filter>
             <!-- GameActivity loads lib<value>.so (CMake target cuckoo_stack) -->
             <meta-data android:name="android.app.lib_name" android:value="cuckoo_stack" />
         </activity>
+
+        <!-- Play Games Services v2 (daily leaderboard); the ID comes from config/store/leaderboards.env per flavour -->
+        <meta-data android:name="com.google.android.gms.games.APP_ID" android:value="@string/game_services_project_id" />
+
+        <!-- Firebase Cloud Messaging: no token until a 13+ player turns reminders on (NotificationsManager) -->
+        <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_reminder" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_accent" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="reminders" />
+        <service android:name=".CuckooMessagingService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Share Replay: clips leave the app through FileProvider (res/xml/replay_paths.xml) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.replays"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/replay_paths" />
+        </provider>
+        <receiver android:name=".ShareTargetReceiver" android:exported="false" />
 
         <!-- AdMob app ID from config/ads.env (TEST in debug, PROD in release) -->
         <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="${admobAppId}" />

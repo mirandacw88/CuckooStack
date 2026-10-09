@@ -72,6 +72,10 @@ struct FrameParams {
     // final composite (chromaPass in the web build)
     float chromaAmount = 0.2f, vignette = 0.45f, bloomStrength = 0.85f;
     glm::vec4 vignetteTint{0.f}; // rgb (display space) + strength: party-mode colour edge
+    // frosted glass: the scene is blurred inside this rounded rect (HUD points: centre xy, size zw) before the HUD
+    // draws its glass panel on top. frostAmount 0 = off.
+    glm::vec4 frostRect{0.f};
+    float frostRadius = 0.f, frostAmount = 0.f;
     // HUD space, in logical points
     float viewportW = 1.f, viewportH = 1.f;
 };

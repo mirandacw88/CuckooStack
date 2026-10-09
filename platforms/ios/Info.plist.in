@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Cuckoo Stack</string>
+    <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
     <key>CFBundleExecutable</key>
     <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
     <key>CFBundleIdentifier</key>
@@ -20,6 +20,17 @@
     <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleVersion</key>
     <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>${CS_URL_SCHEME}</string>
+            </array>
+        </dict>
+    </array>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>LSApplicationCategoryType</key>
@@ -52,6 +63,13 @@
     </array>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+    <!-- Firebase Messaging: no push token until a 13+ player turns reminders on (CSNotifications.enablePush) -->
+    <key>FirebaseMessagingAutoInitEnabled</key>
+    <false/>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+    </array>
     <key>GADApplicationIdentifier</key>
     <string>$(CS_ADMOB_APP_ID)</string>
     <key>NSUserTrackingUsageDescription</key>

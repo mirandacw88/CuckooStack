@@ -66,17 +66,19 @@ Hen::Hen() {
     }
 }
 
+glm::vec3 Hen::accent() const { return skin.rainbow ? hueColor(time * 0.6f) : skin.accent; }
+
 LitMaterial Hen::material(Mat m) const {
     LitMaterial l;
     const bool rimmed = m == Mat::White || m == Mat::Plate || m == Mat::Chrome || m == Mat::Gold;
     if (rimmed) { l.rimColor = rimColor; l.rimStrength = 2.1f; l.rimPow = 2.4f; }
     switch (m) {
-    case Mat::White:   l.color = hexColor("#f4f7ff"); l.roughness = 0.62f; l.emissive = glm::vec3(0.07f); break;
-    case Mat::Plate:   l.color = hexColor("#2b3044"); l.metalness = 0.9f; l.roughness = 0.26f; break;
-    case Mat::Chrome:  l.color = hexColor("#dfe5f0"); l.metalness = 1.f; l.roughness = 0.22f; break;
-    case Mat::Gold:    l.color = hexColor("#ffb347"); l.metalness = 1.f; l.roughness = 0.24f; break;
-    case Mat::Pink:    l.color = hexColor("#ff2bd6"); l.emissive = l.color * 2.6f; l.roughness = 0.4f; break;
-    case Mat::PinkDim: l.color = hexColor("#ff2bd6"); l.emissive = l.color * 0.9f; l.roughness = 0.4f; break;
+    case Mat::White:   l.color = skin.body; l.metalness = skin.bodyMetal; l.roughness = skin.bodyRough; l.emissive = glm::vec3(skin.bodyGlow); break;
+    case Mat::Plate:   l.color = skin.plate; l.metalness = 0.9f; l.roughness = 0.26f; break;
+    case Mat::Chrome:  l.color = skin.chrome; l.metalness = 1.f; l.roughness = 0.22f; break;
+    case Mat::Gold:    l.color = skin.gold; l.metalness = 1.f; l.roughness = 0.24f; break;
+    case Mat::Pink:    l.color = accent(); l.emissive = l.color * 2.6f; l.roughness = 0.4f; break;
+    case Mat::PinkDim: l.color = accent(); l.emissive = l.color * 0.9f; l.roughness = 0.4f; break;
     case Mat::Cyan:    l.color = cyanColor; l.emissive = cyanColor * cyanIntensity; l.roughness = 0.2f; break;
     case Mat::TipRed:  l.color = glm::vec3(0.f); l.emissive = glow("#ff2b4a", 5.f); break;
     }

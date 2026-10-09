@@ -30,13 +30,15 @@ public:
     void record(float distance, float pbBefore);
 
     float assist() const { return assist_; }
+    // extra assist on top of the adaptive one (new players' first runs); not saved
+    void setBoost(float b) { boost_ = b; }
     float zoneCenter() const { return zoneC_; }
     float zoneStrength() const { return zoneS_; }
 
 private:
     void save() const;
     IStorage* storage_;
-    float skill_ = 0.f, assist_ = 0.12f, zoneC_ = 0.f, zoneS_ = 0.f;
+    float skill_ = 0.f, assist_ = 0.12f, zoneC_ = 0.f, zoneS_ = 0.f, boost_ = 0.f;
     int runs_ = 0;
     std::string day_;
     std::vector<int> deaths_;

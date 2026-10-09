@@ -13,7 +13,7 @@ class VulkanContext;
 
 // Push-constant blocks (must match the shaders)
 struct ScenePush { float viewProj[16]; float kind[4]; };           // unlit.vert / particle.frag (80 bytes)
-struct PostPush { float rot[4]; float params[4]; float extra[4]; }; // fullscreen.vert / composite / bloom (48 bytes)
+struct PostPush { float rot[4]; float params[4]; float extra[4]; float frost[4]; float frost2[4]; }; // fullscreen.vert / composite / bloom (80 bytes)
 
 class VulkanPipeline {
 public:

@@ -1,0 +1,299 @@
+{
+  "conditions": [],
+  "parameters": {
+    "ad_every_runs": {
+      "defaultValue": {
+        "value": "3"
+      },
+      "description": "interstitial at most every N runs ...",
+      "valueType": "NUMBER"
+    },
+    "ad_grace_runs": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "description": "no interstitials before this many lifetime runs",
+      "valueType": "NUMBER"
+    },
+    "ad_min_seconds": {
+      "defaultValue": {
+        "value": "90"
+      },
+      "description": "... and N seconds",
+      "valueType": "NUMBER"
+    },
+    "boost_ads": {
+      "defaultValue": {
+        "value": "3"
+      },
+      "description": "boostAdsPerDay",
+      "valueType": "NUMBER"
+    },
+    "boost_cost": {
+      "defaultValue": {
+        "value": "150"
+      },
+      "description": "Head Start / Overclock",
+      "valueType": "NUMBER"
+    },
+    "chest_coins": {
+      "defaultValue": {
+        "value": "100"
+      },
+      "description": "levelChestCoins",
+      "valueType": "NUMBER"
+    },
+    "coins_per_m": {
+      "defaultValue": {
+        "value": "25"
+      },
+      "description": "1 coin per this many metres in a run",
+      "valueType": "NUMBER"
+    },
+    "coins_surge": {
+      "defaultValue": {
+        "value": "2"
+      },
+      "description": "coinsPerSurge",
+      "valueType": "NUMBER"
+    },
+    "continue_cost": {
+      "defaultValue": {
+        "value": "100"
+      },
+      "description": "first continue in a run without the ad",
+      "valueType": "NUMBER"
+    },
+    "continue_cost2": {
+      "defaultValue": {
+        "value": "300"
+      },
+      "description": "second continue (coins only)",
+      "valueType": "NUMBER"
+    },
+    "continue_secs": {
+      "defaultValue": {
+        "value": "4."
+      },
+      "description": "Continue panel countdown",
+      "valueType": "NUMBER"
+    },
+    "dda_newbie": {
+      "defaultValue": {
+        "value": "0.25"
+      },
+      "description": "extra assist on a player's first runs, fading out",
+      "valueType": "NUMBER"
+    },
+    "dda_newbie_runs": {
+      "defaultValue": {
+        "value": "6"
+      },
+      "description": "newbieRuns",
+      "valueType": "NUMBER"
+    },
+    "double_min": {
+      "defaultValue": {
+        "value": "10"
+      },
+      "description": "\"x2 coins\" offered when a run earned at least this",
+      "valueType": "NUMBER"
+    },
+    "drop_1": {
+      "defaultValue": {
+        "value": "20"
+      },
+      "description": "7-day login ladder, then it repeats (day 1)",
+      "valueType": "NUMBER"
+    },
+    "drop_2": {
+      "defaultValue": {
+        "value": "30"
+      },
+      "description": "7-day login ladder, then it repeats (day 2)",
+      "valueType": "NUMBER"
+    },
+    "drop_3": {
+      "defaultValue": {
+        "value": "40"
+      },
+      "description": "7-day login ladder, then it repeats (day 3)",
+      "valueType": "NUMBER"
+    },
+    "drop_4": {
+      "defaultValue": {
+        "value": "60"
+      },
+      "description": "7-day login ladder, then it repeats (day 4)",
+      "valueType": "NUMBER"
+    },
+    "drop_5": {
+      "defaultValue": {
+        "value": "80"
+      },
+      "description": "7-day login ladder, then it repeats (day 5)",
+      "valueType": "NUMBER"
+    },
+    "drop_6": {
+      "defaultValue": {
+        "value": "100"
+      },
+      "description": "7-day login ladder, then it repeats (day 6)",
+      "valueType": "NUMBER"
+    },
+    "drop_7": {
+      "defaultValue": {
+        "value": "250"
+      },
+      "description": "7-day login ladder, then it repeats (day 7)",
+      "valueType": "NUMBER"
+    },
+    "event_coin_mult": {
+      "defaultValue": {
+        "value": "1."
+      },
+      "description": "coins from runs and missions x this (2 = a double-coins event)",
+      "valueType": "NUMBER"
+    },
+    "featured_ads": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "description": "ads to unlock the featured outfit of the week",
+      "valueType": "NUMBER"
+    },
+    "free_coin_ads": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "description": "freeCoinsPerDay",
+      "valueType": "NUMBER"
+    },
+    "free_coin_cd": {
+      "defaultValue": {
+        "value": "1800"
+      },
+      "description": "seconds",
+      "valueType": "NUMBER"
+    },
+    "free_coins": {
+      "defaultValue": {
+        "value": "50"
+      },
+      "description": "shop tile, rewarded ad",
+      "valueType": "NUMBER"
+    },
+    "lvl_base": {
+      "defaultValue": {
+        "value": "150"
+      },
+      "description": "level n -> n+1 needs base + step * (n - 1)",
+      "valueType": "NUMBER"
+    },
+    "lvl_step": {
+      "defaultValue": {
+        "value": "75"
+      },
+      "description": "levelStepXp",
+      "valueType": "NUMBER"
+    },
+    "mission_bonus": {
+      "defaultValue": {
+        "value": "150"
+      },
+      "description": "all three daily missions done",
+      "valueType": "NUMBER"
+    },
+    "mission_coins": {
+      "defaultValue": {
+        "value": "50"
+      },
+      "description": "missionReward",
+      "valueType": "NUMBER"
+    },
+    "noads_bonus": {
+      "defaultValue": {
+        "value": "500"
+      },
+      "description": "one-off with the Remove Ads purchase",
+      "valueType": "NUMBER"
+    },
+    "notif_quiet_end": {
+      "defaultValue": {
+        "value": "9"
+      },
+      "description": "notifQuietEnd",
+      "valueType": "NUMBER"
+    },
+    "notif_quiet_start": {
+      "defaultValue": {
+        "value": "21"
+      },
+      "description": "local hour",
+      "valueType": "NUMBER"
+    },
+    "notif_streak_hour": {
+      "defaultValue": {
+        "value": "19"
+      },
+      "description": "notifStreakHour",
+      "valueType": "NUMBER"
+    },
+    "reroll_ads": {
+      "defaultValue": {
+        "value": "1"
+      },
+      "description": "rerollAdsPerDay",
+      "valueType": "NUMBER"
+    },
+    "reroll_cost": {
+      "defaultValue": {
+        "value": "50"
+      },
+      "description": "rerollCost",
+      "valueType": "NUMBER"
+    },
+    "rewarded_cap": {
+      "defaultValue": {
+        "value": "30"
+      },
+      "description": "rewardedDailyCap",
+      "valueType": "NUMBER"
+    },
+    "starter_coins": {
+      "defaultValue": {
+        "value": "1500"
+      },
+      "description": "starterCoins",
+      "valueType": "NUMBER"
+    },
+    "streak_repair": {
+      "defaultValue": {
+        "value": "200"
+      },
+      "description": "streakRepairCost",
+      "valueType": "NUMBER"
+    },
+    "tryon_runs": {
+      "defaultValue": {
+        "value": "3"
+      },
+      "description": "tryOnRuns",
+      "valueType": "NUMBER"
+    },
+    "xp_m": {
+      "defaultValue": {
+        "value": "1"
+      },
+      "description": "xpPerMeter",
+      "valueType": "NUMBER"
+    },
+    "xp_mission": {
+      "defaultValue": {
+        "value": "50"
+      },
+      "description": "xpPerMission",
+      "valueType": "NUMBER"
+    }
+  }
+}

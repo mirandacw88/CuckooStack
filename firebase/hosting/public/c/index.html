@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cuckoo Stack challenge</title>
+  <meta name="description" content="A friend set a distance on today's Cuckoo Stack course. Can you beat it?">
+  <meta property="og:title" content="Beat my run on Cuckoo Stack">
+  <meta property="og:description" content="Same course for everyone today. Can you go further?">
+  <style>
+    :root { --ink:#07060f; --neon:#29e7ff; --hot:#ff2bd6; --volt:#f4ff5a; --text:#eafaff; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; background:radial-gradient(circle at 50% 35%, #3a0b4a, var(--ink) 70%);
+           color:var(--text); font:500 17px/1.5 system-ui, sans-serif; padding:24px 16px; text-align:center; }
+    .tag { color:var(--neon); letter-spacing:.26em; text-transform:uppercase; font-weight:700; font-size:14px; text-shadow:0 0 10px var(--neon); }
+    .m { font:900 clamp(64px, 22vw, 120px)/1 system-ui, sans-serif; margin:8px 0; text-shadow:-4px 0 var(--hot), 4px 0 var(--neon), 0 0 40px rgba(255,43,214,.5); }
+    h1 { font-size:24px; margin:0 0 24px; }
+    .stores { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:12px; }
+    a.btn { padding:14px 22px; border:2px solid var(--hot); border-radius:8px; color:var(--text); text-decoration:none; font-weight:700;
+            letter-spacing:.12em; text-transform:uppercase; box-shadow:0 0 18px rgba(255,43,214,.35); }
+    a.open { border-color:var(--volt); box-shadow:0 0 18px rgba(244,255,90,.35); }
+    .expired { opacity:.8; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="tag" id="who">A friend's run</div>
+    <div class="m" id="dist">? m</div>
+    <h1 id="line">on today's Cuckoo Stack course. Can you beat it?</h1>
+    <div class="stores">
+      <a class="btn open" id="open" href="#">Open in the game</a>
+      <!-- store URLs: replace with the listing links once the apps are live -->
+      <a class="btn" href="https://apps.apple.com/app/id0000000000">App Store</a>
+      <a class="btn" href="https://play.google.com/store/apps/details?id=com.cuckoostack.aerospheregames">Google Play</a>
+    </div>
+  </main>
+  <script>
+    // challenge links: /c?d=YYYY-MM-DD&m=412&n=Name. With the game installed, the OS opens it directly (app links);
+    // this page is for friends who don't have it yet.
+    const q = new URLSearchParams(location.search);
+    const m = parseInt(q.get("m") || "0", 10), n = (q.get("n") || "").slice(0, 16), d = q.get("d") || "";
+    if (m > 0) document.getElementById("dist").textContent = m + " m";
+    if (n) document.getElementById("who").textContent = n + "'s run";
+    const today = new Date(), iso = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+    if (d && d !== iso) { document.getElementById("line").textContent = "That course has expired, but today's is live. Your turn!"; document.body.classList.add("expired"); }
+    const scheme = location.hostname.startsWith("cuckoostack-staging") ? "cuckoostack-staging" : "cuckoostack";
+    document.getElementById("open").href = scheme + "://c" + location.search;
+  </script>
+</body>
+</html>
