@@ -37,7 +37,7 @@ public:
 
     // Viewport in logical points (HUD units); safe-area insets in points.
     void resize(float widthPts, float heightPts);
-    void setSafeInsets(float top, float bottom) { safeTop_ = top; safeBottom_ = bottom; }
+    void setSafeInsets(float top, float bottom) { safeTop_ = top / uiScale_; safeBottom_ = bottom / uiScale_; }
 
     // Tap / click / space. pressAt also hit-tests the mute button (HUD points).
     void press();
@@ -95,7 +95,7 @@ private:
     enum class DebrisKind { Egg, Shard, Spark, Feather };
     struct Debris { DebrisKind kind; glm::vec3 pos, rot, scale, v, w; float life, ph; int ring; };
     struct Splat { glm::vec3 pos; float sx, sy, scale, age, k; };
-    enum class PopKind { Groove, Sector, Perfect, Surge, Smashed, ChainLost };
+    enum class PopKind { Groove, Sector, Perfect, Surge, Smashed };
     struct Popup { glm::vec3 world; std::string text; PopKind kind; float age, dur; };
     struct DayRecord { std::string date; int best = 0; double bestDist = 0; int attempts = 0; };
 
@@ -172,6 +172,7 @@ private:
     float titleNavY_ = 0;
     void hudOverMenu(float bottom);
     void hudOverRewards(float& bottom);
+    void hudShareReplayButton(glm::vec2 c);
     void hudScreen();
     void hudAgeGate(); void hudContinue(); void hudShop(); void hudLocker(); void hudMissions(); void hudDailyDrop();
     void hudDev();     // developer menu (staging builds only, from Settings)
@@ -199,7 +200,7 @@ private:
     World world_;
     Hen hen_;
     BeatClock beat_;
-    ParticleSystem fxAdd_{3200}, fxSmoke_{700};
+    ParticleSystem fxAdd_{5600}, fxSmoke_{700}; // fxAdd: room for the outfit auras plus surge fireworks
     Shockwaves rings_;
     Camera camera_;
     RenderList list_;
@@ -236,6 +237,12 @@ private:
     bool surging_ = false;
     float surgeT_ = 0, graceT_ = 0, surgeSpeedMul_ = 1;
     float partyK_ = 0, partyTime_ = 0, confettiAcc_ = 0, raveTimer_ = 0;
+    // surge fireworks: rockets launched from around the hen that trail up and burst (updateFireworks)
+    struct Firework { glm::vec3 p, v; float fuse, hue; int kind; };
+    std::vector<Firework> fireworks_;
+    float fireworkAcc_ = 0, sparkleAcc_ = 0;
+    void launchFirework(float delay = 0.f);
+    void updateFireworks(float rdt);
     struct PendingHaptic { float delay; int ms; };
     std::array<PendingHaptic, 6> haptics_{};
 
@@ -243,6 +250,11 @@ private:
     glm::vec3 fog_, skyMid_, skyBot_, skyHaze_, pinkLight_;
 
     // HUD
+    // The HUD is laid out in points of a virtual screen at least kUiDesignHeight tall: on shorter phones (iPhone SE,
+    // 667 pt) everything is drawn smaller by uiScale_ (< 1) so the layouts keep their spacing instead of colliding.
+    // viewW_ / viewH_ / safe insets are in those virtual points; the platform's points are divided by uiScale_.
+    static constexpr float kUiDesignHeight = 780.f, kUiMinScale = 0.8f;
+    float uiScale_ = 1;
     float viewW_ = 1, viewH_ = 1, safeTop_ = 0, safeBottom_ = 0;
     glm::vec3 flashColor_{0.f}; float flashAlpha_ = 0, flashT_ = 1;
     float meterShake_ = 0, scoreBump_ = 0, overDelay_ = -1, overT_ = 0;
@@ -330,6 +342,13 @@ private:
     bool continueOffered_ = false;
     int levelUps_ = 0, chestCoins_ = 0, levelFrom_ = 1;
     float xpFrom_ = 0, chestT_ = 0, dropT_ = 0, lockerK_ = 0;
+    // Locker showroom: the camera swings to a close 3/4 view of the hen, which jogs in place and turns slowly wearing
+    // the previewed outfit (aura) and trail. Works from the title and from game over (the hen is reassembled).
+    bool showroom() const { return screen_ == Screen::Locker || lockerK_ > 0.02f; }
+    // after a crash the hen is stood on a clear, flat patch of ground behind the wall it hit (showroomSpot)
+    bool showPlaced_ = false;
+    glm::vec2 showSpot_{0.f};
+    glm::vec2 showroomSpot() const;
     bool chestOpened_ = false, chestDoubled_ = false;
     int dropClaimed_ = -1, dropCoins_ = 0;
     float rewardMsgT_ = 0; std::string rewardMsg_;   // "Ad not ready" etc.

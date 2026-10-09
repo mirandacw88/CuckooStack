@@ -228,7 +228,9 @@ void Game::hudOverOverlay() {
     const float W = viewW_, H = viewH_, t = overT_;
     hudRect({W / 2, H / 2}, {W, H}, kInk, 0.84f, Shape::BottomFade);
     overButtonRowBottom_ = H - safeBottom_ - 10;
-    float bottom = overButtonRowBottom_ - OVER_BUTTON_ROW;
+    // clear space between "Tap to reboot" and the menu row: 100 pt on tall phones, down to 30 on short ones (SE)
+    const float rowGap = std::clamp(30.f + (H - 780.f) * 0.4f, 30.f, 100.f);
+    float bottom = overButtonRowBottom_ - OVER_BUTTON_ROW - rowGap;
     const float maxW = W - 32;
     hudOverMenu(overButtonRowBottom_);
 
@@ -268,19 +270,24 @@ void Game::hudOverOverlay() {
         for (int r = 0; r < 2; ++r)
             for (int c = 0; c < 2; ++c)
                 colW[c] = std::max({colW[c], text_->measure(cells[r][c][0], r ? rb : b), text_->measure(toUpperAscii(cells[r][c][1]), span)});
-        const float total = colW[0] + 40 + colW[1];
+        // each stat sits in its own glass tile (dark tinted glass + the glass frame) so it reads on any background
+        constexpr float PADX = 16, PADY = 10, GAPX = 12, GAPY = 12;
+        const float tileW = std::min((W - 32 - GAPX) / 2, std::max(colW[0], colW[1]) + 2 * PADX);
         const float rowH[2] = {text_->lineBox(b) + 4 + text_->lineBox(span), text_->lineBox(rb) + 4 + text_->lineBox(span)};
-        const float gridH = rowH[0] + 14 + rowH[1];
+        const float tileH[2] = {rowH[0] + 2 * PADY, rowH[1] + 2 * PADY};
+        const float gridH = tileH[0] + GAPY + tileH[1];
         float y = bottom - gridH + a.dy;
         for (int r = 0; r < 2; ++r) {
-            float x = W / 2 - total / 2;
             for (int c = 0; c < 2; ++c) {
-                const float cx = x + colW[c] / 2;
-                hudText(cells[r][c][0], r ? rb : b, cx, y);
-                hudText(cells[r][c][1], r ? rspan : span, cx, y + text_->lineBox(r ? rb : b) + 4);
-                x += colW[c] + 40;
+                const glm::vec2 tc{W / 2 + (c ? 1.f : -1.f) * (tileW + GAPX) / 2, y + tileH[r] / 2};
+                const glm::vec2 ts{tileW, tileH[r]};
+                hudRect(tc, ts - glm::vec2(4.f), css("#0d0b20"), 0.62f * a.alpha, Shape::PillOutline, 1.f);
+                hudNineSlice(Icon::FrameGlass, tc, ts + glm::vec2(4.f), 16, glm::vec3(0.7f, 0.8f, 1.f), 0.85f * a.alpha);
+                hudRect({tc.x, tc.y - ts.y * 0.25f}, {ts.x * 0.9f, ts.y * 0.8f}, css("#8a7cff"), 0.08f * a.alpha, Shape::RadialGlow);
+                hudText(cells[r][c][0], r ? rb : b, tc.x, y + PADY);
+                hudText(cells[r][c][1], r ? rspan : span, tc.x, y + PADY + text_->lineBox(r ? rb : b) + 4);
             }
-            y += rowH[r] + 14;
+            y += tileH[r] + GAPY;
         }
         bottom -= gridH + 14;
     }
@@ -291,7 +298,9 @@ void Game::hudOverOverlay() {
         const Up a = up(t, 0.f);
         tag.opacity = a.alpha;
         hudText(overTag_, tag, W / 2, bottom - text_->lineBox(tag) + a.dy);
+        bottom -= text_->lineBox(tag) + 22;
     }
+    hudShareReplayButton({W / 2, bottom - 34}); // the big call to action, above the results
 }
 
 void Game::worldGateLabel() {
@@ -338,7 +347,6 @@ void Game::buildHud() {
             else if (p.kind == PopKind::Perfect) { s = style(FontId::Display, 24, kText); s.shadows = {hard(-2, kHot), hard(2, kNeon), blur(18, kHot, 0.9f)}; }
             else if (p.kind == PopKind::Surge) { s = style(FontId::Display, 56, kText); s.shadows = {hard(-3, kHot), hard(3, kNeon), blur(30, kHot, 0.95f)}; }
             else if (p.kind == PopKind::Smashed) { s = style(FontId::Display, 26, kVolt); s.shadows = {hard(-2, kHot), blur(16, kVolt, 0.8f)}; }
-            else if (p.kind == PopKind::ChainLost) { s = style(FontId::BodyBold, 15, css("#9aa3b8"), 0.16f); s.shadows = {blur(6, css("#000000"), 0.6f)}; }
             else { s = style(FontId::Display, 22, kVolt); s.shadows = {blur(12, kVolt, 0.8f), hard(-1, kHot)}; }
             const float box = text_->lineBox(s);
             const float k = p.age / p.dur;
@@ -355,8 +363,9 @@ void Game::buildHud() {
     // #flash
     if (flashT_ < 0.5f) hudRect({W / 2, H / 2}, {W, H}, flashColor_, flashAlpha_ * (1 - flashT_ / 0.5f));
 
-    // .hud: #score + #corn, visible from the first run until the next title (it stays up behind the game-over overlay)
-    if (state_ != State::Title && fonts_.built()) {
+    // .hud: #score + #corn during a run; hidden once the game-over results appear (they show the score themselves)
+    const bool resultsUp = state_ == State::Dead && overDelay_ <= 0;
+    if (state_ != State::Title && !resultsUp && fonts_.built()) {
         const float top = safeTop_ + 18;
         TextStyle score = style(FontId::Display, clampf(W * 0.14f, 46, 70), kText, 0.f, false, 1.f);
         score.shadows = {hard(-2, kHot), hard(2, kNeon), blur(26, kNeon, 0.55f)};
@@ -389,7 +398,7 @@ void Game::buildHud() {
                 hudRect({W / 2 - BW / 2 + i * BW / SLICES + w / 2, barY}, {w + 0.5f, BH}, c, 1.f);
             }
         } else {
-            hudText("Sector " + std::to_string(sector_) + " \u00b7 disco chain " + std::to_string(chain_) + "/" + std::to_string(surge::NEED),
+            hudText("Sector " + std::to_string(sector_) + " \u00b7 disco balls " + std::to_string(chain_) + "/" + std::to_string(surge::NEED),
                     corn, W / 2, top + box + 4);
         }
     }
@@ -418,7 +427,7 @@ void Game::buildHud() {
         // (it places the menu row the shop redraws) but its sprites and buttons are dropped
         const size_t hudMark = list_.hud.size(), hitMark = hits_.size();
         if (state_ == State::Title && screen_ != Screen::AgeGate && screen_ != Screen::Locker) hudTitleOverlay();
-        else if (state_ == State::Dead && overDelay_ <= 0) hudOverOverlay();
+        else if (state_ == State::Dead && overDelay_ <= 0 && screen_ != Screen::Locker) hudOverOverlay(); // not over the showroom
         if (screen_ == Screen::Shop) {
             list_.hud.erase(list_.hud.begin() + hudMark, list_.hud.end());
             list_.hudKind.erase(list_.hudKind.begin() + hudMark, list_.hudKind.end());

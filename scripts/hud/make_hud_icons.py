@@ -395,7 +395,7 @@ ICONS = [("Coin", [coin(a) for a in (0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5)])
          ("Pile1000", [png("pile_1000", 2, 10, glow=0.45)], {"span": 2, "raw": True}),
          ("Pile1800", [png("pile_1800", 2, 8, glow=0.45)], {"span": 2, "raw": True}),
          ("Pile4000", [png("pile_4000", 2, 6, glow=0.45)], {"span": 2, "raw": True}),
-         ("Pile9000", [png("pile_9000", 2, 6, glow=0.45)], {"span": 2, "raw": True}),
+         ("_Spare0", [""], {"span": 2, "raw": True, "paste": None}),  # was Pile9000 (now a 3 x 2 block below); kept so indices don't move
          # 3-slice / 9-slice sprites, 2:1 in two cells; drawn with hudNineSlice(slice 0.5, corner = height / 2)
          ("FrameFree", [png("frame_free", 2, 10, fill=True, glow=0.7)], {"span": 2, "raw": True}),
          ("FrameNeon", [png("frame_neon", 2, 10, fill=True, glow=0.7)], {"span": 2, "raw": True}),
@@ -408,11 +408,46 @@ ICONS = [("Coin", [coin(a) for a in (0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5)])
 # packed after everything else, four per double row. Enum names follow the cosmetic ids (hen_lava -> OutfitLava).
 OUTFIT_IDS = ["classic", "midnight", "vapor", "toxic", "ice", "lava", "gold", "chrome", "tiger", "holo", "sakura", "glitch"]
 TILES = [("Outfit" + o.capitalize(), "hen_" + o) for o in OUTFIT_IDS]
+# big artist sprites in their own blocks after the tiles: (enum name, file in assets/hud/shop, cols, rows, glow)
+BLOCKS = [("Pile9000", "pile_9000", 3, 2, 0.45)]  # the 9,000 hoard: 576 x 384 px = 3x at its ~170 pt shop size
+
+
+ENUM = []  # (name, index, frames, span), filled by main() for the paste steps
+
+
+def paste_raster(atlas, enum_index):
+    """ICONS entries with a "paste" option, (png name, padding, glow): drawn straight into their cells with Pillow
+    (Lanczos fit, centred, a soft halo of the sprite's own colours behind it) instead of through Chrome, so large
+    artist PNGs stay sharp and can be updated without Chrome."""
+    from PIL import Image, ImageFilter
+    for item in ICONS:
+        opts = item[2] if len(item) > 2 else {}
+        if "paste" not in opts:
+            continue
+        i, span = enum_index[item[0]]
+        x, y, w, h = (i % COLS) * F, (i // COLS) * F, F * span, F
+        atlas.paste(Image.new("RGBA", (w, h)), (x, y))  # clear the cell (the reused atlas still has the old art)
+        if not opts["paste"]:
+            continue  # a spare slot stays empty
+        name, pad, glow = opts["paste"]
+        t = Image.open(os.path.join(SHOP, name + ".png")).convert("RGBA")
+        s = min((w - 2 * pad) / t.width, (h - 2 * pad) / t.height)
+        t = t.resize((round(t.width * s), round(t.height * s)), Image.LANCZOS)
+        layer = Image.new("RGBA", (w, h))
+        layer.alpha_composite(t, ((w - t.width) // 2, (h - t.height) // 2))
+        if glow > 0:
+            halo = layer.filter(ImageFilter.GaussianBlur(7))
+            halo.putalpha(halo.getchannel("A").point(lambda v: int(v * glow)))
+            cell = Image.new("RGBA", (w, h))
+            cell.alpha_composite(halo)
+            cell.alpha_composite(layer)
+            layer = cell
+        atlas.alpha_composite(layer, (x, y))
 
 
 def paste_tiles(png_path, first_row):
     """Raster tiles go straight into the atlas with Pillow (Lanczos resize to the 2 x 2 block, centred)."""
-    from PIL import Image
+    from PIL import Image, ImageFilter
     atlas = Image.open(png_path).convert("RGBA")
     rows_needed = first_row + (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
     if atlas.height < rows_needed * F:
@@ -429,6 +464,30 @@ def paste_tiles(png_path, first_row):
         s = min(bw / t.width, bh / t.height)
         t = t.resize((round(t.width * s), round(t.height * s)), Image.LANCZOS)
         atlas.alpha_composite(t, (col * F + (2 * F - t.width) // 2, row * F + (2 * F - t.height) // 2))
+    paste_raster(atlas, {name: (i, span) for name, i, n, span in ENUM})
+    # 3 x 2 (etc.) blocks below the tiles
+    by = first_row + (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
+    need = by + max((b[3] for b in BLOCKS), default=0)
+    if atlas.height < need * F:
+        grown = Image.new("RGBA", (COLS * F, need * F))
+        grown.paste(atlas, (0, 0))
+        atlas = grown
+    bx = 0
+    for name, src, cols, rows, glow in BLOCKS:
+        w, h, pad = cols * F, rows * F, 6
+        atlas.paste(Image.new("RGBA", (w, h)), (bx * F, by * F))
+        t = Image.open(os.path.join(SHOP, src + ".png")).convert("RGBA")
+        s = min((w - 2 * pad) / t.width, (h - 2 * pad) / t.height)
+        t = t.resize((round(t.width * s), round(t.height * s)), Image.LANCZOS)
+        layer = Image.new("RGBA", (w, h))
+        layer.alpha_composite(t, ((w - t.width) // 2, (h - t.height) // 2))
+        halo = layer.filter(ImageFilter.GaussianBlur(9))
+        halo.putalpha(halo.getchannel("A").point(lambda v: int(v * glow)))
+        cell = Image.new("RGBA", (w, h))
+        cell.alpha_composite(halo)
+        cell.alpha_composite(layer)
+        atlas.alpha_composite(cell, (bx * F, by * F))
+        bx += cols
     atlas.save(png_path)
 
 
@@ -454,6 +513,9 @@ def main():
         if idx % COLS + span > COLS:  # wide sprites never wrap across rows
             idx += COLS - idx % COLS
         enum.append((name, idx, len(art), span))
+        if "paste" in opts:  # filled in by paste_raster
+            idx += span
+            continue
         for a in art:
             scale = 0.66 if name.startswith("Chest") else 0.9 if span > 1 else 0.74
             frames.append(place(idx, a, scale, span, opts.get("raw", False)))
@@ -463,8 +525,14 @@ def main():
     for k, (name, _) in enumerate(TILES):  # 2 x 2 blocks
         col, row = (k % (COLS // 2)) * 2, rows + (k // (COLS // 2)) * 2
         enum.append((name, row * COLS + col, 1, 2))
-        tall.append(name)
+        tall.append((name, 2))
     rows += (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
+    bx = 0
+    for name, _, cols, brows, _ in BLOCKS:
+        enum.append((name, rows * COLS + bx, 1, cols))
+        tall.append((name, brows))
+        bx += cols
+    rows += max((b[3] for b in BLOCKS), default=0)
     W, H = COLS * F, svg_rows * F
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">{DEFS}{"".join(frames)}</svg>'
     os.makedirs(os.path.dirname(OUT_PNG), exist_ok=True)
@@ -477,6 +545,7 @@ def main():
             subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
                             f"--window-size={W},{H}", "--default-background-color=00000000", f"--screenshot={OUT_PNG}",
                             "file://" + path], check=True, capture_output=True)
+    ENUM[:] = enum
     paste_tiles(OUT_PNG, svg_rows)
     W, H = COLS * F, rows * F
     lines = ["// Generated by scripts/hud/make_hud_icons.py; do not edit. Frame indices into assets/hud/hud_icons.png.",
@@ -484,18 +553,19 @@ def main():
              f"constexpr int kIconCols = {COLS}, kIconRows = {rows};", "",
              "enum class Icon : int {"]
     for name, i, n, span in enum:
-        lines.append(f"    {name} = {i},")
+        if not name.startswith("_"):
+            lines.append(f"    {name} = {i},")
     lines += ["};", ""]
     for name, i, n, span in enum:
         if n > 1:
             lines.append(f"constexpr int k{name}Frames = {n};")
     lines += ["", "// sprites wider than one cell (coin piles, shop buttons and frames)", "constexpr int iconSpan(Icon i) {", "    switch (i) {"]
     for name, i, n, span in enum:
-        if span > 1:
+        if span > 1 and not name.startswith("_"):
             lines.append(f"    case Icon::{name}: return {span};")
     lines += ["    default: return 1;", "    }", "}"]
     lines += ["", "// sprites taller than one cell (the Locker outfit tiles)", "constexpr int iconRowSpan(Icon i) {", "    switch (i) {"]
-    lines += [f"    case Icon::{name}: return 2;" for name in tall]
+    lines += [f"    case Icon::{name}: return {r};" for name, r in tall]
     lines += ["    default: return 1;", "    }", "}"]
     lines += ["", "} // namespace cs", ""]
     open(OUT_H, "w").write("\n".join(lines))

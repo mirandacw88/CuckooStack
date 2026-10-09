@@ -237,12 +237,14 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
 
     scenePass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, ctx.depthFormat);
     bloomPass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_FORMAT_UNDEFINED);
-    {   // binding 0: Frame UBO, binding 1: baked pattern textures (puddle mask)
-        const VkDescriptorSetLayoutBinding b[2] = {
+    {   // binding 0: Frame UBO, 1: baked pattern textures (puddle mask), 2 / 3: the textured hen's albedo / normal map
+        const VkDescriptorSetLayoutBinding b[4] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        ci.bindingCount = 2;
+        ci.bindingCount = 4;
         ci.pBindings = b;
         vkCreateDescriptorSetLayout(dev, &ci, nullptr, &frameSetLayout);
     }

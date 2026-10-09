@@ -2,6 +2,7 @@
 // Animated nodes (body, head, wings, legs, tail) are exposed so Game drives them exactly like the web build.
 #pragma once
 
+#include "HenModel.h"
 #include "Materials.h"
 
 #include <array>
@@ -23,6 +24,7 @@ struct HenSkin {
     glm::vec3 visor = hexColor("#29e7ff");  // visor + LEDs
     bool rainbow = false;                   // accent and rim light cycle through the hue wheel (Glitch Hen)
     Aura aura = Aura::None;                 // particle effect worn with the outfit
+    HenModelId model = kClassicHen;         // the 3D model worn (set from the outfit id: henModelFor)
 };
 
 class Hen {
@@ -52,7 +54,8 @@ public:
 
     // Glass Shatter (crash effect, model hen only): the hen as posed right now breaks into the model's pre-cut shards,
     // which fly away from `impact` with the hen's `velocity`, spin, bounce on `floorY`, then shrink away.
-    bool canShatter() const { return useModel; }
+    bool canShatter() const { return useModel && model().ok; }
+    const HenModel& model() const { return henModel(skin.model); }
     void shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed);
     void updateShatter(float dt);
     void unshatter() { shattered_ = false; }
@@ -73,6 +76,8 @@ private:
     std::vector<glm::mat4> worldTransforms() const;
     void poseModel(const std::vector<glm::mat4>& world, std::vector<Vertex>& out) const; // body-space posed vertices
     void emitShards(RenderList& out) const;
+    LitMaterial regionMaterial(int r) const;
+    HenModelId shatterModel_ = kClassicHen;
 
     struct Shard { glm::vec3 c0, c, v, axis; float angle, spin; };
     bool shattered_ = false;

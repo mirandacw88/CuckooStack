@@ -1,4 +1,4 @@
-// Surge mode: disco-chain trigger, wall smashing, pooled block debris and the party-mode visuals.
+// Surge mode: disco-ball trigger (any 10 in a run), wall smashing, pooled block debris and the party-mode visuals.
 // Tuning values: Surge.h. Called from Game::update / updatePlay / buildRenderList.
 #include "Game.h"
 #include "Materials.h"
@@ -50,6 +50,7 @@ float easeOutCubic(float t) { t = clampf(t, 0.f, 1.f); return 1.f - (1.f - t) * 
 void Game::resetSurge() {
     chain_ = 0; smashed_ = 0; surging_ = false; autoSurgeFired_ = false; surgeT_ = 0; graceT_ = 0; surgeSpeedMul_ = 1;
     partyK_ = 0; confettiAcc_ = 0; raveTimer_ = 0;
+    fireworks_.clear(); fireworkAcc_ = 0; sparkleAcc_ = 0;
     for (SmashBlock& b : smashPool_) b.life = 0;
     for (PendingHaptic& h : haptics_) h.delay = -1;
     beat_.setParty(false);
@@ -67,6 +68,7 @@ void Game::startSurge() {
     rings_.spawn(hp + glm::vec3(0, 0.6f, 0.3f), kCyan(), 2.2f, 0.5f, true);
     chromaKick_ = std::max(chromaKick_, 0.8f);
     sfx(Sfx::SurgeStart);
+    for (int i = 0; i < 6; ++i) launchFirework(i * 0.07f); // opening volley
     svc_.audio->musicSurge(true);
     beat_.setParty(!muted_); // the synth only switches to the party pattern while music is audible
     queueHaptic(0.f, 20); queueHaptic(0.09f, 20); queueHaptic(0.18f, 20); queueHaptic(0.32f, 45);
@@ -200,6 +202,7 @@ void Game::updateParty(float rdt) {
         h.delay -= rdt;
         if (h.delay <= 0) { buzz(h.ms); h.delay = -1; }
     }
+    updateFireworks(rdt); // shells already in the air finish even after the surge ends
     if (partyK_ <= 0.f) return;
 
     // rave disco floor: step every FLOOR_STEP instead of once per beat
@@ -224,6 +227,78 @@ void Game::updateParty(float rdt) {
             fxAdd_.emit({hp.x - 0.2f, y, rng_.range(-0.15f, 0.15f)}, {-speed_ * 0.6f, 0, 0}, 0.35f, 0.26f, 0.05f,
                         hue(partyTime_ * HUE_SPEED + y * 0.15f) * 1.4f, 0.35f * partyK_, 0, 0);
         }
+    }
+}
+
+// ---------------------------------------------------------------- surge: sparkles + fireworks around the hen
+
+// A rocket from just behind / around the hen, carried forward with the run so it stays on screen. `delay` holds it on
+// the launch pad briefly (a staggered volley).
+void Game::launchFirework(float delay) {
+    const glm::vec3 hp = hen_.nodes[hen_.root].pos;
+    const float fwd = state_ == State::Play ? speed_ * surgeSpeedMul_ : 0.f;
+    Firework f;
+    f.p = hp + glm::vec3(rng_.range(-0.6f, 1.6f), rng_.range(0.3f, 1.2f), rng_.range(-1.2f, 0.4f));
+    f.v = {fwd + rng_.range(-1.2f, 1.2f), rng_.range(7.f, 10.f), rng_.range(-0.8f, 0.6f)};
+    f.fuse = rng_.range(0.45f, 0.75f) + delay;
+    f.hue = rng_.next01();
+    f.kind = rng_.index(3); // 0 sphere, 1 ring, 2 crackle willow
+    fireworks_.push_back(f);
+}
+
+void Game::updateFireworks(float rdt) {
+    const bool on = surging_ && state_ == State::Play;
+    const glm::vec3 hp = hen_.nodes[hen_.root].pos;
+    if (on) {
+        // colourful sparkles swirling around the hen and her stack, cycling through the hue wheel
+        sparkleAcc_ += rdt * 260.f * partyK_;
+        const float stackH = hp.y - float(baseY_);
+        while (sparkleAcc_ >= 1.f) {
+            sparkleAcc_ -= 1.f;
+            const float a = rng_.range(0.f, 2 * kPi), r = rng_.range(0.8f, 1.5f);
+            const glm::vec3 at = hp + glm::vec3(std::cos(a) * r, rng_.range(-stackH, 1.6f), std::sin(a) * r * 0.7f);
+            const glm::vec3 swirl = glm::vec3(-std::sin(a), rng_.range(0.4f, 1.4f), std::cos(a) * 0.7f) * rng_.range(1.f, 2.2f);
+            fxAdd_.emit(at, swirl + glm::vec3(speed_ * surgeSpeedMul_ * 0.9f, 0, 0), rng_.range(0.35f, 0.7f), rng_.range(0.1f, 0.17f), 0.f,
+                        hueColor(partyTime_ * 0.7f + a / (2 * kPi)) * 4.2f, 1.f, 1.2f, 0.f);
+        }
+        // a rocket every ~0.22 s
+        fireworkAcc_ += rdt * 4.5f * partyK_;
+        while (fireworkAcc_ >= 1.f) { fireworkAcc_ -= 1.f; launchFirework(); }
+    }
+    for (size_t i = fireworks_.size(); i-- > 0;) {
+        Firework& f = fireworks_[i];
+        f.fuse -= rdt;
+        const glm::vec3 c = hueColor(f.hue) * 4.5f;
+        if (f.fuse > 0.f && f.fuse < 1.f) { // climbing (after any launch delay): gravity, a sparking trail
+            f.v.y -= 9.f * rdt;
+            f.p += f.v * rdt;
+            for (int k = 0; k < 2; ++k)
+                fxAdd_.emit(f.p, {rng_.range(-0.4f, 0.4f), rng_.range(-1.5f, -0.5f), rng_.range(-0.4f, 0.4f)}, rng_.range(0.25f, 0.45f), 0.07f, 0.02f,
+                            glm::mix(glow("#fff2b0", 3.f), c, 0.3f), 0.9f, 1.5f, 3.f);
+            continue;
+        }
+        if (f.fuse > 0.f) continue;
+        // burst
+        const glm::vec3 drift{f.v.x, 0.f, 0.f}; // keeps pace with the run, so bursts stay on screen
+        const glm::vec3 c2 = hueColor(f.hue + 0.5f) * 4.5f;
+        const int n = f.kind == 2 ? 70 : 110;
+        for (int k = 0; k < n; ++k) {
+            glm::vec3 d;
+            if (f.kind == 1) { const float a = k / float(n) * 2 * kPi; d = {std::cos(a), std::sin(a), rng_.range(-0.15f, 0.15f)}; }
+            else { d = glm::normalize(glm::vec3(rng_.range(-1, 1), rng_.range(-1, 1), rng_.range(-1, 1)) + glm::vec3(0.001f)); }
+            const float sp = f.kind == 1 ? 5.5f : rng_.range(3.f, 6.5f);
+            if (f.kind == 2) // willow: slower, heavy gravity, long gold-tinted fall
+                fxAdd_.emit(f.p, drift + d * sp * 0.7f, rng_.range(1.1f, 1.7f), 0.14f, 0.04f, glm::mix(c, glow("#ffd23a", 4.f), 0.5f), 1.f, 1.2f, 4.5f);
+            else
+                fxAdd_.emit(f.p, drift + d * sp, rng_.range(0.7f, 1.1f), 0.17f, 0.05f, k % 4 == 0 ? c2 : c, 1.f, 2.2f, 3.5f);
+        }
+        fxAdd_.emit(f.p, drift, 0.18f, 1.6f, 0.2f, glow("#ffffff", 4.f), 0.9f, 0.f, 0.f);   // the flash
+        if (f.kind == 2) // crackles: late pops scattered through the willow
+            for (int k = 0; k < 18; ++k)
+                fxAdd_.emit(f.p + glm::vec3(rng_.range(-1.2f, 1.2f), rng_.range(-1.5f, 0.5f), rng_.range(-0.8f, 0.8f)), drift, 0.12f, 0.16f, 0.f,
+                            glow("#ffffff", 5.f), 1.f, 0.f, 0.f);
+        rings_.spawn(f.p, c, 1.6f, 0.35f, true);
+        fireworks_.erase(fireworks_.begin() + long(i));
     }
 }
 

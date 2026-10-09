@@ -3,6 +3,10 @@
 
 namespace cs {
 
+namespace {
+constexpr Hen::Mat kRegionMat[HenModel::kRegions] = {Hen::Mat::White, Hen::Mat::PinkDim, Hen::Mat::Cyan, Hen::Mat::Plate, Hen::Mat::Gold};
+}
+
 int Hen::add(int parent, glm::vec3 pos, glm::vec3 rot, glm::vec3 scale) {
     nodes.push_back({parent, pos, rot, scale});
     return static_cast<int>(nodes.size()) - 1;
@@ -59,7 +63,9 @@ Hen::Hen() {
     for (int k = 0; k < 2; ++k) {
         const float s = k == 0 ? -1.f : 1.f;
         const int lp = add(root, {0.04f, 0.24f, s * 0.12f});
-        part(lp, MeshId::Cylinder, Mat::Chrome, {0, -0.11f, 0}, {}, {0.023f, 0.22f, 0.023f});
+        // the shin runs from the foot (-0.22) up into the body (+0.2), so the leg stays joined to it while the body
+        // bobs (up to 0.06) and the leg swings
+        part(lp, MeshId::Cylinder, Mat::Chrome, {0, -0.01f, 0}, {}, {0.023f, 0.42f, 0.023f});
         S(lp, 0.034f, Mat::Cyan, {});
         for (float a : {-0.45f, 0.f, 0.45f}) // toes
             part(lp, MeshId::Cylinder, Mat::Chrome, {0.05f * std::cos(a), -0.22f, -0.05f * std::sin(a)}, {0, a, -kPi / 2},
@@ -68,7 +74,7 @@ Hen::Hen() {
     }
 
     // the model's bones are the animated nodes; remember where each sits in body space at rest
-    useModel = henModel().ok;
+    useModel = henModel(kClassicHen).ok;
     std::vector<glm::mat4> world(nodes.size());
     for (size_t i = 0; i < nodes.size(); ++i) {
         const glm::mat4 local = compose(nodes[i].pos, nodes[i].rot, nodes[i].scale);
@@ -111,18 +117,18 @@ std::vector<glm::mat4> Hen::worldTransforms() const {
 void Hen::emit(RenderList& out) const {
     if (shattered_) { emitShards(out); return; }
     const std::vector<glm::mat4> world = worldTransforms();
-    for (size_t i = useModel ? firstLegPart_ : 0; i < parts_.size(); ++i) {
+    for (size_t i = useModel && model().ok ? firstLegPart_ : 0; i < parts_.size(); ++i) {
         const Part& p = parts_[i];
         if (p.node == tipNode_ && !tipVisible) continue;
         out.add(Pass::Lit, p.mesh) = makeLit(world[p.node] * p.local, material(p.mat));
     }
-    if (useModel) emitModel(out, world);
+    if (useModel && model().ok) emitModel(out, world);
 }
 
 // Linear-blend skinning on the CPU: each bone is one of the animated nodes, so everything that animates the
 // procedural hen (wing flaps, head bob, tail wag, squash) bends the model the same way.
 void Hen::poseModel(const std::vector<glm::mat4>& world, std::vector<Vertex>& out) const {
-    const HenModel& m = henModel();
+    const HenModel& m = model();
     const int bones[HenModel::kBones] = {body, head, wings[0], wings[1], tail};
     const glm::mat4 bodyInv = glm::inverse(world[size_t(body)]);
     glm::mat4 M[HenModel::kBones];
@@ -132,7 +138,7 @@ void Hen::poseModel(const std::vector<glm::mat4>& world, std::vector<Vertex>& ou
         R[k] = glm::mat3(M[k]);
     }
     out.reserve(out.size() + m.vertexCount);
-    for (int r = 0; r < HenModel::kRegions; ++r)
+    for (int r = 0; r < m.regions; ++r)
         for (const HenModel::V& v : m.verts[size_t(r)]) {
             glm::vec3 p{0.f}, n{0.f};
             for (int k = 0; k < HenModel::kBones; ++k) {
@@ -140,24 +146,42 @@ void Hen::poseModel(const std::vector<glm::mat4>& world, std::vector<Vertex>& ou
                 p += v.w[k] * glm::vec3(M[k] * glm::vec4(v.pos, 1.f));
                 n += v.w[k] * (R[k] * v.normal);
             }
-            out.push_back({p, glm::normalize(n), {0.f, 0.f}});
+            out.push_back({p, glm::normalize(n), v.uv});
         }
 }
 
-namespace {
-constexpr Hen::Mat kRegionMat[HenModel::kRegions] = {Hen::Mat::White, Hen::Mat::PinkDim, Hen::Mat::Cyan, Hen::Mat::Plate, Hen::Mat::Gold};
+
+// Material of region r: Classic's colour regions take the outfit's materials; a textured model samples its texture,
+// its hot cracks glowing and slowly pulsing.
+LitMaterial Hen::regionMaterial(int r) const {
+    if (!model().textured()) return material(kRegionMat[r]);
+    LitMaterial l;
+    l.color = glm::vec3(1.f);
+    const HenModel& m = model();
+    l.roughness = m.rough;
+    l.metalness = m.metal;
+    l.pattern = Pattern::HeroTexture;
+    l.emissive = glm::vec3((2.6f + 0.8f * std::sin(time * 2.4f)) * m.glow); // the hot texels' glow, pulsing slowly
+    // rim light in the outfit's warm trim colour (Magma: orange, Gold Rush: pale gold)
+    l.rimColor = skin.gold * 1.4f; l.rimStrength = 1.6f; l.rimPow = 2.6f;
+    return l;
 }
 
 void Hen::emitModel(RenderList& out, const std::vector<glm::mat4>& world) const {
+    const HenModel& m = model();
     poseModel(world, out.heroVerts);
+    out.heroFirst = m.firstMesh;
+    out.heroMeshes = m.regions;
+    out.heroModel = skin.model;
     const glm::mat4& bodyWorld = world[size_t(body)];
-    for (int r = 0; r < HenModel::kRegions; ++r)
-        out.add(Pass::Lit, MeshId(int(MeshId::HenBody) + r)) = makeLit(bodyWorld, material(kRegionMat[r]));
+    for (int r = 0; r < m.regions; ++r)
+        out.add(Pass::Lit, MeshId(int(m.firstMesh) + r)) = makeLit(bodyWorld, regionMaterial(r));
 }
 
 void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed) {
-    if (!useModel) return;
-    const HenModel& m = henModel();
+    if (!canShatter()) return;
+    const HenModel& m = model();
+    shatterModel_ = skin.model;
     const std::vector<glm::mat4> world = worldTransforms();
     std::vector<Vertex> posed;
     poseModel(world, posed);
@@ -167,10 +191,10 @@ void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t s
     std::vector<glm::vec3> sum(size_t(m.shardCount), glm::vec3(0.f));
     std::vector<int> cnt(size_t(m.shardCount), 0);
     size_t k = 0;
-    for (int r = 0; r < HenModel::kRegions; ++r)
+    for (int r = 0; r < m.regions; ++r)
         for (const HenModel::V& v : m.verts[size_t(r)]) {
             const glm::vec3 p = glm::vec3(bodyWorld * glm::vec4(posed[k].pos, 1.f));
-            shatterRest_[k] = {p, glm::normalize(bodyRot * posed[k].normal), {0.f, 0.f}};
+            shatterRest_[k] = {p, glm::normalize(bodyRot * posed[k].normal), v.uv};
             sum[size_t(v.shard)] += p;
             ++cnt[size_t(v.shard)];
             ++k;
@@ -215,28 +239,31 @@ void Hen::updateShatter(float dt) {
 
 // The shards, each a rigid piece: rotated about its own centre, carried along its path, shrinking away at the end.
 void Hen::emitShards(RenderList& out) const {
-    const HenModel& m = henModel();
+    const HenModel& m = henModel(shatterModel_); // the model that broke, even if the outfit changes meanwhile
     const float fade = 1.f - glm::smoothstep(kShatterLife * 0.6f, kShatterLife, shatterT_);
     if (fade <= 0.f) return;
     std::vector<glm::mat3> rot(shards_.size());
     for (size_t i = 0; i < shards_.size(); ++i) rot[i] = glm::mat3(glm::rotate(glm::mat4(1.f), shards_[i].angle, shards_[i].axis));
     out.heroVerts.reserve(m.vertexCount);
     size_t k = 0;
-    for (int r = 0; r < HenModel::kRegions; ++r)
+    for (int r = 0; r < m.regions; ++r)
         for (const HenModel::V& v : m.verts[size_t(r)]) {
             const size_t si = size_t(v.shard);
             const Shard& s = shards_[si];
             const Vertex& rest = shatterRest_[k++];
-            out.heroVerts.push_back({s.c + rot[si] * ((rest.pos - s.c0) * fade), rot[si] * rest.normal, {0.f, 0.f}});
+            out.heroVerts.push_back({s.c + rot[si] * ((rest.pos - s.c0) * fade), rot[si] * rest.normal, rest.uv});
         }
     // glassy: a bright, cool fresnel edge on every shard
-    for (int r = 0; r < HenModel::kRegions; ++r) {
-        LitMaterial l = material(kRegionMat[r]);
+    out.heroFirst = m.firstMesh;
+    out.heroMeshes = m.regions;
+    out.heroModel = shatterModel_;
+    for (int r = 0; r < m.regions; ++r) {
+        LitMaterial l = m.textured() ? regionMaterial(r) : material(kRegionMat[r]);
         l.rimColor = glm::vec3(0.75f, 0.95f, 1.f);
         l.rimStrength = 3.2f;
         l.rimPow = 2.f;
         l.roughness = std::min(l.roughness, 0.18f);
-        out.add(Pass::LitTwoSided, MeshId(int(MeshId::HenBody) + r)) = makeLit(glm::mat4(1.f), l);
+        out.add(Pass::LitTwoSided, MeshId(int(m.firstMesh) + r)) = makeLit(glm::mat4(1.f), l);
     }
 }
 
