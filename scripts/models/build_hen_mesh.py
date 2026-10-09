@@ -14,7 +14,6 @@ What it does:
   - auto-rigs it: weights for the game's own animated nodes (body, head, the two wings, tail), with soft falloffs
     so the mesh bends instead of cracking. The source rig's 5 bones are ignored (one bone carried 86% of the mesh and
     the others only drive the tail).
-(The first model, model-rigged.glb, needed clean_hen_glb.py to strip a background panel; this one is clean.)
 
   - pre-cuts it into glass shards for the Glass Shatter crash effect: ~SHARDS chunky pieces (surface Voronoi cells
     around farthest-point seeds); vertices on a cut are duplicated so every triangle belongs to exactly one shard.
@@ -25,21 +24,45 @@ count, u32 index count, vertices (pos xyz, normal xyz, weights body/head/wing0/w
 u16 indices.
 """
 import colorsys
+import io
+import json
 import os
 import struct
-import sys
 
 import numpy as np
 from PIL import Image
 
-sys.path.insert(0, os.path.dirname(__file__))
-import clean_hen_glb as glb  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC = os.path.join(ROOT, "assets", "models", "newClassicHen.glb")
 DST = os.path.join(ROOT, "assets", "models", "hen.mesh")
 REGIONS = ["Body", "Accent", "Lens", "Shade", "Beak"]  # order = HenModel::Region
 SHARDS = 40
+
+
+CT = {5121: np.uint8, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
+NC = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+
+def load(path):
+    """A .glb's JSON and binary chunk."""
+    b = open(path, "rb").read()
+    jl = struct.unpack("<I", b[12:16])[0]
+    j = json.loads(b[20:20 + jl])
+    bl = struct.unpack("<I", b[20 + jl:24 + jl])[0]
+    return j, b[28 + jl:28 + jl + bl]
+
+
+def accessor(j, bin_, i):
+    """A glTF accessor as an (count, components) array, honouring byte strides."""
+    a = j["accessors"][i]
+    bv = j["bufferViews"][a["bufferView"]]
+    dt = np.dtype(CT[a["componentType"]])
+    n = NC[a["type"]]
+    off = bv.get("byteOffset", 0) + a.get("byteOffset", 0)
+    stride = bv.get("byteStride", n * dt.itemsize)
+    raw = np.frombuffer(bin_, np.uint8, a["count"] * stride, off).reshape(a["count"], stride)[:, :n * dt.itemsize]
+    return np.ascontiguousarray(raw).view(dt).reshape(a["count"], n)
 
 
 def smooth(e0, e1, x):
@@ -60,15 +83,14 @@ def classify(rgb):
 
 
 def main():
-    j, bin_ = glb.load(SRC)
+    j, bin_ = load(SRC)
     prim = j["meshes"][0]["primitives"][0]
     att = prim["attributes"]
-    P = glb.accessor(j, bin_, att["POSITION"]).astype(np.float64)
-    N = glb.accessor(j, bin_, att["NORMAL"]).astype(np.float64)
-    UV = glb.accessor(j, bin_, att["TEXCOORD_0"]).astype(np.float64)
-    T = glb.accessor(j, bin_, prim["indices"]).reshape(-1, 3).astype(np.int64)
+    P = accessor(j, bin_, att["POSITION"]).astype(np.float64)
+    N = accessor(j, bin_, att["NORMAL"]).astype(np.float64)
+    UV = accessor(j, bin_, att["TEXCOORD_0"]).astype(np.float64)
+    T = accessor(j, bin_, prim["indices"]).reshape(-1, 3).astype(np.int64)
     bv = j["bufferViews"][j["images"][j["textures"][j["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"]]["source"]]["bufferView"]]
-    import io
     tex = np.asarray(Image.open(io.BytesIO(bin_[bv.get("byteOffset", 0):bv.get("byteOffset", 0) + bv["byteLength"]])).convert("RGB")) / 255.0
     th, tw = tex.shape[:2]
 
