@@ -118,7 +118,8 @@ in stereo under the synth's sound effects). Midnight City Sprint plays on the ti
 eases it up to 1.15× speed (about two semitones higher, like a fast-forwarded tape) and back down afterwards; a crash
 winds the tape down. The synthesized songs below remain as the fallback when no tracks are built in, and every sound effect is
 still synthesized except the finish-line applause (`assets/sfx/applause_cheer.mp3`, `Sfx::Cheer`, played by
-`MusicPlayer::cheer` on its own voice so the music fading out doesn't cut it off). Visuals pulse on the track's beat grid (`MusicTracks.inc`), scaled by the playback speed. To change the music,
+`MusicPlayer::cheer` on its own voice so the music fading out doesn't cut it off). Each finish-line firework
+burst plays a synthesized boom (`Sfx::Firework`; willow shells crackle as they fall). Visuals pulse on the track's beat grid (`MusicTracks.inc`), scaled by the playback speed. To change the music,
 replace the file and run `python3 scripts/audio/analyze_music.py` (tempo, first beat and loudest section).
 
 Apart from the soundtrack, there are no audio assets: like the web build, every sound is synthesized live. `src/core/audio/` ports the Web

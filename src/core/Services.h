@@ -12,7 +12,8 @@
 namespace cs {
 
 enum class Sfx { Lay, Crack, Perfect, Corn, Land, Squawk, Empty, Smash, SurgeStart, SurgeEnd, LifeLost,
-                 Cheer }; // Cheer: recorded applause (assets/sfx), crossing the finish line
+                 Cheer,     // recorded applause (assets/sfx), crossing the finish line
+                 Firework }; // a shell bursting (variant: 0 sphere, 1 ring, 2 crackling willow)
 
 // Web Audio replacement. The web build synthesizes every sound live (see docs/PORTING.md, "Audio");
 // a native backend (AAudio/Oboe, AVAudioEngine) implements this with the same synth graph.

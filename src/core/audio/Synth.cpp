@@ -165,13 +165,13 @@ void Synth::tone(float f0, float f1, float dur, Wave type, float vol, float dela
     v.gain.exponentialRampToValueAtTime(0.0001f, t + dur);
 }
 
-void Synth::noise(float dur, float vol, float freq) {
-    const double t = now_;
+void Synth::noise(float dur, float vol, float freq, float delay, Biquad::Type type) {
+    const double t = now_ + delay;
     const size_t n = size_t(sr_ * dur);
     Voice& v = newVoice(t, t + dur, Bus::Master);
     v.ownBuffer.resize(n);
     for (size_t i = 0; i < n; ++i) v.ownBuffer[i] = (random01() * 2.f - 1.f) * std::pow(1.f - float(i) / float(n), 2.5f);
-    v.filtered = true; v.filterType = Biquad::Type::Bandpass; v.q = 0.9f; v.filterFreq.setValue(freq);
+    v.filtered = true; v.filterType = type; v.q = 0.9f; v.filterFreq.setValue(freq);
     v.gain.setValue(vol);
 }
 
@@ -216,6 +216,16 @@ void Synth::sfx(Sfx s, int k) {
         tone(90, 900, 0.65f, Wave::Square, 0.04f);
         const float notes[] = {880, 1046.5f, 1318.5f, 1760, 2093};
         for (int i = 0; i < 5; ++i) tone(notes[i], notes[i], 0.12f, Wave::Square, 0.05f, 0.08f + i * 0.055f);
+        break;
+    }
+    case Sfx::Firework: { // a deep boom under a dark noise blast; willows crackle as they fall
+        const float p = 0.85f + 0.3f * random01(), v = 0.75f + 0.25f * random01(); // no two bursts alike
+        tone(95 * p, 32, 0.55f, Wave::Sine, 0.5f * v);
+        noise(0.45f, 0.5f * v, 700 * p, 0.f, Biquad::Type::Lowpass);
+        noise(0.12f, 0.22f * v, 2400 * p);
+        if (k == 1) tone(1800 * p, 600 * p, 0.25f, Wave::Sine, 0.03f * v); // ring: a faint whistle
+        if (k == 2)
+            for (int i = 0; i < 9; ++i) noise(0.025f, 0.25f * v, 3500 + 3000 * random01(), 0.3f + 0.7f * random01());
         break;
     }
     case Sfx::Cheer: music_.cheer(); break; // recorded (assets/sfx/applause_cheer.mp3)

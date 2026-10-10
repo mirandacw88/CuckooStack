@@ -62,7 +62,7 @@ private:
     // ---- web build ports (audio thread)
     void sfx(Sfx s, int variant);
     void tone(float f0, float f1, float dur, Wave type = Wave::Sine, float vol = 0.15f, float delay = 0);
-    void noise(float dur, float vol, float freq);
+    void noise(float dur, float vol, float freq, float delay = 0.f, Biquad::Type type = Biquad::Type::Bandpass);
     void schedule();
     void schedulePartyStep(double t, double sixteenth);
     void woop(double t, float dur);

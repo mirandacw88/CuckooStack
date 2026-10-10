@@ -1,5 +1,5 @@
 // The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop; beat grid for the visuals;
-// the finish-line applause.
+// the finish-line applause and firework bursts.
 #include "TestUtil.h"
 #include "../src/core/audio/Synth.h"
 
@@ -82,5 +82,18 @@ int main() {
     out.clear();
     play(c, 1, &out);
     check(rms(out) < 1e-4, "it plays once (about 8 s), then stops");
+
+    // the finish-line fireworks: a synthesized burst per shell, loud but under clipping even in a dense barrage
+    audio::Synth f(48000);
+    out.clear();
+    std::vector<float> b(512 * 2);
+    for (int i = 0; i < 48000 * 2 / 512; ++i) {
+        if (i % 9 == 0) f.play(Sfx::Firework, i % 3);
+        f.render(b.data(), 512, 2);
+        out.insert(out.end(), b.begin(), b.end());
+    }
+    float peak = 0;
+    for (float x : out) peak = std::max(peak, std::abs(x));
+    check(rms(out) > 0.05 && peak < 1.f, "firework bursts are audible and don't clip");
     return test::finish("music");
 }

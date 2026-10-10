@@ -298,6 +298,7 @@ void Game::updateFireworks(float rdt) {
                 fxAdd_.emit(f.p + glm::vec3(rng_.range(-1.2f, 1.2f), rng_.range(-1.5f, 0.5f), rng_.range(-0.8f, 0.8f)), drift, 0.12f, 0.16f, 0.f,
                             glow("#ffffff", 5.f), 1.f, 0.f, 0.f);
         rings_.spawn(f.p, c, 1.6f, 0.35f, true);
+        if (clearT_ >= 0) sfx(Sfx::Firework, f.kind); // the finish-line celebration (surges keep their music)
         fireworks_.erase(fireworks_.begin() + long(i));
     }
 }
