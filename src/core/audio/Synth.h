@@ -8,6 +8,7 @@
 
 #include "../Services.h"
 #include "AudioParam.h"
+#include "Music.h"
 
 #include <array>
 #include <atomic>
@@ -27,6 +28,7 @@ public:
     void musicTempo(float bpm) override;
     void musicSurge(bool on) override;
     void setMuted(bool muted) override;
+    bool musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const override;
 
     // Audio thread. Interleaved float output; `channels` copies of the mono mix.
     void render(float* out, int frames, int channels);
@@ -109,6 +111,7 @@ private:
     std::atomic<size_t> head_{0}, tail_{0};
     void push(const Command& c);
 
+    MusicPlayer music_; // the recorded soundtrack (when built in): replaces the synthesized songs, keeps the SFX
     std::vector<float> mono_, busPump_, busDrums_, busDelay_, busMaster_;
 };
 

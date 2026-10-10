@@ -689,7 +689,7 @@ void Game::completeLevel() {
     graceT_ = 0; clearT_ = -1;
     state_ = State::Dead; deadT_ = 1.f; // no crash: the hen stands on the runway while the results show
     henV_ = henW_ = glm::vec3(0.f);
-    beat_.stop(); svc_.audio->musicStop(true);
+    beat_.stop(); svc_.audio->musicStop(false); // a win: fade out (a crash winds the tape down)
     finishRun(true); // (the replay clip is saved once the run has ended, as after a crash)
 }
 
@@ -1066,6 +1066,15 @@ void Game::update(double rawDt) {
     const float raw = static_cast<float>(rawDt), rdt = std::min(0.033f, raw);
     rdt_ = rdt;
     beat_.advance(std::min(0.25f, raw));
+    { // visuals in time with the recorded soundtrack, when one is playing
+        double bpm = 0, first = 0, pos = 0, rate = 1;
+        if (svc_.audio->musicBeat(bpm, first, pos, rate)) beat_.syncToTrack(bpm, first, pos, rate); else beat_.untrack();
+    }
+    // the soundtrack starts on the title screen (once the age screen has been answered)
+    if (state_ == State::Title && !titleMusic_ && profile_.audience() != Audience::Unknown) {
+        titleMusic_ = true;
+        beat_.start(); svc_.audio->musicStart();
+    }
     if (freeze_ > 0) freeze_ -= rdt;
     timeScale_ += (1 - timeScale_) * std::min(1.f, rdt * (state_ == State::Dead ? 1.2f : 4.f));
     const float dt = rdt * (freeze_ > 0 ? 0.04f : timeScale_);

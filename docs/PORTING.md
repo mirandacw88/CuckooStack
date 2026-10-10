@@ -112,7 +112,15 @@ src/platform  PlatformSurface implementations + entry points (Android, iOS, desk
 
 ### Audio
 
-There are no audio assets: like the web build, every sound is synthesized live. `src/core/audio/` ports the Web
+**Soundtrack (recorded).** The background music is now a recorded track in `assets/music/`, embedded in the build
+and streamed by `src/core/audio/Music.{h,cpp}` (miniaudio's MP3 decoder, cubic resampling to the device rate, mixed
+in stereo under the synth's sound effects). Midnight City Sprint plays on the title screen and during runs; a surge
+eases it up to 1.15× speed (about two semitones higher, like a fast-forwarded tape) and back down afterwards; a crash
+winds the tape down. The synthesized songs below remain as the fallback when no tracks are built in, and every sound effect is
+still synthesized. Visuals pulse on the track's beat grid (`MusicTracks.inc`), scaled by the playback speed. To change the music,
+replace the file and run `python3 scripts/audio/analyze_music.py` (tempo, first beat and loudest section).
+
+Apart from the soundtrack, there are no audio assets: like the web build, every sound is synthesized live. `src/core/audio/` ports the Web
 Audio graph the game uses onto a small engine. It has `AudioParam` automation (set, linear and exponential ramps,
 set-target, cancel), PolyBLEP band-limited oscillators, `BiquadFilterNode` with the spec's coefficient formulas
 (Q in dB for lowpass/highpass), the feedback delay, sidechain pump, master filter, and the
@@ -153,7 +161,8 @@ line: the 32-bar A/B/C/D arrangement, tempo following speed, build, drop and pow
 ### Surge mode (native-only feature)
 
 Collect `surge::NEED` (10) disco balls in a run (they don't have to be in a row) to start a 5 s surge. The hen runs ×1.35 faster, is invulnerable,
-smashes walls and barriers (+1 point per block), and the game switches to a party-music pattern and party visuals.
+smashes walls and barriers (+1 point per block), and the game switches to party visuals while the music speeds up (the synth's party-music pattern when no recorded
+track is built in).
 Every tuning value is in `src/core/Surge.h`. The logic is in `src/core/GameSurge.cpp`, the party music in
 `Synth::schedulePartyStep`, and the party kick map in `BeatClock`.
 
