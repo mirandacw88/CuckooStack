@@ -33,6 +33,8 @@ bool Level::generateUntil(double xmax) {
     while (genX_ < xmax) {
         changed = true;
         if (segN_ == 0) { pushSeg(16, 0, WallKind::Crate); genSector_ = 0; continue; }
+        // past the finish line: flat runway for the celebration (no walls, barriers or corn)
+        if (finish_ > 0 && genX_ >= finish_ - 2 * U) { pushSeg(10, 0, WallKind::Crate); continue; }
         // sector breather: a flat stretch with a rising line of corn
         const int sec = static_cast<int>(std::floor(genX_ / SECTOR));
         if (sec > genSector_) {
@@ -42,7 +44,7 @@ bool Level::generateUntil(double xmax) {
             for (int k = 0; k < 3; ++k) spawnCorn(x0 + (2.5 + k * 3) * U, (2 + k) * U + 0.25);
             continue;
         }
-        const Curve c = curve(genX_);
+        const Curve c = curveAt(genX_);
         const int lastCeil = segs.empty() ? 0 : segs.back().ceil;
         const bool afterDrop = segs.size() >= 2 && segs[segs.size() - 2].h > lastH_;
         int h;

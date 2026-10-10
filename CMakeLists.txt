@@ -116,6 +116,7 @@ add_library(cs_fonts STATIC ${CS_FONT_SOURCES})
 # ---------------------------------------------------------------- core: game logic, OS-free
 add_library(cs_core STATIC
   src/core/Camera.cpp
+  src/core/Campaign.cpp
   src/core/Daily.cpp
   src/core/Difficulty.cpp
   src/core/Economy.cpp
@@ -380,6 +381,9 @@ if(CS_PLATFORM STREQUAL "desktop")
   add_executable(surge_test tests/surge_test.cpp)
   target_link_libraries(surge_test PRIVATE cs_core)
   add_test(NAME surge COMMAND surge_test)
+  add_executable(campaign_test tests/campaign_test.cpp)
+  target_link_libraries(campaign_test PRIVATE cs_core)
+  add_test(NAME campaign COMMAND campaign_test)
   add_executable(render_audio tests/render_audio.cpp)
   target_link_libraries(render_audio PRIVATE cs_core)
   find_program(NODE node)

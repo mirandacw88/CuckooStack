@@ -49,7 +49,7 @@ private:
 };
 
 // ---------------------------------------------------------------- daily missions
-enum class MissionKind : uint8_t { Distance, Runs, Perfects, Surges, CloseCalls, Eggs, BeatBest, Count };
+enum class MissionKind : uint8_t { Distance, Runs, Perfects, Surges, CloseCalls, Eggs, BeatBest, LevelsCleared, Count };
 
 struct Mission {
     MissionKind kind = MissionKind::Runs;

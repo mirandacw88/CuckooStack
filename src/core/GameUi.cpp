@@ -411,7 +411,7 @@ void Game::hudOverRewards(float& bottom) {
         const int shownLevel = levelFrom_ != prog_.level() && fill < 0.5f ? levelFrom_ : prog_.level();
         TextStyle lv = style(FontId::BodyBold, 12, kVolt, 0.16f, true);
         lv.opacity = a.alpha;
-        hudText("Lv " + std::to_string(shownLevel), lv, W / 2 - bw / 2 - 10, y - text_->lineBox(lv) / 2, TextAlign::Right);
+        hudText("Rank " + std::to_string(shownLevel), lv, W / 2 - bw / 2 - 10, y - text_->lineBox(lv) / 2, TextAlign::Right);
         hudRect({W / 2, y}, {bw + 6, 12}, kDeep, 0.9f * a.alpha, Shape::PillOutline, 1.f);
         hudRect({W / 2, y}, {bw + 6, 12}, kVolt, 0.4f * a.alpha, Shape::PillOutline, 1.f / 12);
         if (f > 0.005f) {
@@ -986,7 +986,7 @@ void Game::hudLocker() {
     case Unlock::Level: {
         TextStyle t = style(FontId::BodyBold, 14, kVolt, 0.14f, true);
         hudSprite(Icon::Star, {ac.x - 80, ac.y}, 36);
-        hudText("Reach level " + std::to_string(cur->level), t, ac.x - 58, ac.y - text_->lineBox(t) / 2, TextAlign::Left);
+        hudText("Reach rank " + std::to_string(cur->level), t, ac.x - 58, ac.y - text_->lineBox(t) / 2, TextAlign::Left);
         break;
     }
     case Unlock::Starter:
@@ -1222,9 +1222,15 @@ void Game::hudDev() {
     case 2: cosmetics(Slot::Trail); break;
     case 3: cosmetics(Slot::Crash); break;
     default: {
-        bs.push_back({"Level +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
-        bs.push_back({"Level 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
-        bs.push_back({"Level 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
+        bs.push_back({"Rank +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
+        bs.push_back({"Rank 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
+        bs.push_back({"Rank 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
+        bs.push_back({"Course level -1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() - 1); }});
+        bs.push_back({"Course level +1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() + 1); }});
+        bs.push_back({"Jump to level 10", St::Plain, [this] { campaign_.debugSetLevel(10); }});
+        bs.push_back({"Reset levels", St::Plain, [this] { campaign_.debugReset(); }});
+        bs.push_back({debugNearFinish_ ? "Near finish: armed" : "Next run: near finish", debugNearFinish_ ? St::On : St::Plain,
+                      [this] { debugNearFinish_ = !debugNearFinish_; }});
         bs.push_back({"Streak 7 days", St::Plain, [this] { dayStreak_.debugSet(7, 0); }});
         bs.push_back({"Streak missed 1 day", St::Plain, [this] { dayStreak_.debugSet(5, 2); }});
         bs.push_back({"Streak reset", St::Plain, [this] { dayStreak_.debugSet(0, 0); }});
@@ -1246,18 +1252,18 @@ void Game::hudDev() {
             profile_.setAudience(child ? Audience::Child : Audience::Teen);
             svc_.ads->setAudience(child);
         }});
-        const std::pair<const char*, Screen> screens[] = {{"Show level-up", Screen::LevelUp}, {"Show starter offer", Screen::Starter},
+        const std::pair<const char*, Screen> screens[] = {{"Show rank-up", Screen::LevelUp}, {"Show starter offer", Screen::Starter},
                                                           {"Show streak save", Screen::StreakSave}, {"Show daily drop", Screen::DailyDrop},
                                                           {"Show parental gate", Screen::ParentalGate}, {"Show age gate", Screen::AgeGate}};
         for (const auto& [label, s] : screens) bs.push_back({label, St::Plain, [this, s = s] { switchScreen(s); }});
-        note = "Level " + std::to_string(prog_.level()) + " · streak " + std::to_string(dayStreak_.count()) + " · drop day " +
+        note = "Course level " + std::to_string(campaign_.level()) + " · rank " + std::to_string(prog_.level()) + " · streak " + std::to_string(dayStreak_.count()) + " · drop day " +
                std::to_string(drop_.dayIndex() + 1) + " · runs " + std::to_string(adPolicy_.lifetimeRuns());
         break;
     }
     }
     // ---- layout
     constexpr float tabH = 34, rowH = 40, gap = 8;
-    constexpr int kRows = 11; // the Game tab's; every tab gets the same height so the tabs never move under a finger
+    constexpr int kRows = 14; // the Game tab's; every tab gets the same height so the tabs never move under a finger
     const float contentH = tabH + 14 + 22 + kRows * (rowH + gap);
     const Panel p = hudPanel("Staging only", "Developer", pw, contentH, kVolt, true);
     float y = p.top;
@@ -1298,7 +1304,7 @@ void Game::hudLevelUp() {
     const float W = viewW_;
     const float pw = std::min(W - 32, 340.f);
     const float contentH = 190 + 70;
-    const Panel p = hudPanel("Level up!", "Level " + std::to_string(prog_.level()), pw, contentH, kVolt, chestOpened_);
+    const Panel p = hudPanel("Rank up!", "Rank " + std::to_string(prog_.level()), pw, contentH, kVolt, chestOpened_);
     const float y = p.top;
     const glm::vec2 c{p.c.x, y + 90};
     // rays behind
@@ -1416,7 +1422,7 @@ void Game::hudPrimer() {
     const float pw = std::min(W - 32, 340.f);
     const bool notif = screen_ == Screen::NotifPrimer;
     TextStyle body = style(FontId::Body, 15, kText, 0.f, false, 1.4f);
-    const auto lines = text_->wrap(notif ? "Get a heads-up when a new course drops and when your streak needs you. One a day, never at night."
+    const auto lines = text_->wrap(notif ? "Get a heads-up when your daily drop is ready and when your streak needs you. One a day, never at night."
                                          : "Record your runs so you can share your best crashes with friends.",
                                    body, pw - 2 * kPad);
     const float contentH = 110 + text_->lineBox(body) * lines.size() + 14 + 62 + 36;
@@ -1625,13 +1631,15 @@ void Game::primerAccepted(bool notif) {
 void Game::shareReplay() {
     if (profile_.child()) return;
     const ReplayState rs = svc_.replay->state();
-    // the link is a challenge: friends who open it race this distance on the same course today
-    const std::string caption = challenge_ && challenge_->beaten
+    // the link is a challenge: friends who open it race this distance on the same level
+    const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level();
+    const std::string caption = runCleared_ ? "I cleared level " + std::to_string(lvl) + " of Cuckoo Stack. Can you?"
+        : challenge_ && challenge_->beaten
         ? "Beat your " + std::to_string(challenge_->meters) + " m with " + std::to_string(finalDist_) + " m on Cuckoo Stack. Your move:"
-        : "I hit " + std::to_string(finalDist_) + " m on today\u2019s Cuckoo Stack course. Can you beat it?";
+        : "I hit " + std::to_string(finalDist_) + " m on level " + std::to_string(lvl) + " of Cuckoo Stack. Can you beat it?";
     track("replay_share_tap", {{"distance", std::to_string(finalDist_)}, {"video", rs == ReplayState::Ready ? "1" : "0"}});
     if (svc_.backend->nudgesAvailable()) {
-        svc_.backend->createChallenge(svc_.clock->today(), finalDist_);
+        svc_.backend->createChallenge("level:" + std::to_string(lvl), finalDist_);
         pendingShare_ = PendingShare{caption, finalDist_, 1.5f};
     } else {
         doShare(caption, finalDist_, "");

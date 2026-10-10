@@ -13,7 +13,7 @@ void Tuning::load(IRemoteConfig* rc) {
     in("coins_per_m", metersPerCoin); in("coins_surge", coinsPerSurge); in("mission_coins", missionReward);
     in("mission_bonus", missionAllBonus);
     for (int i = 0; i < 7; ++i) in(("drop_" + std::to_string(i + 1)).c_str(), dailyDrop[i]);
-    in("chest_coins", levelChestCoins); in("free_coins", freeCoins); in("noads_bonus", removeAdsBonus);
+    in("chest_coins", levelChestCoins); in("clear_coins", clearCoins); in("clear_coins_step", clearCoinsStep); in("clear_xp", clearXp); in("free_coins", freeCoins); in("noads_bonus", removeAdsBonus);
     in("starter_coins", starterCoins);
     in("continue_cost", continueCost); in("continue_cost2", continueCost2); in("boost_cost", boostCost);
     in("streak_repair", streakRepairCost); in("reroll_cost", rerollCost);

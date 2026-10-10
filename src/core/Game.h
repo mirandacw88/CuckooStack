@@ -4,6 +4,7 @@
 
 #include "BeatClock.h"
 #include "Camera.h"
+#include "Campaign.h"
 #include "Daily.h"
 #include "Difficulty.h"
 #include "Economy.h"
@@ -86,6 +87,12 @@ public:
     // tests: tap the first visible button whose label starts with `label` (returns false if none)
     bool tapButton(const std::string& label);
     int challengeMeters() const { return challenge_ ? challenge_->meters : 0; }
+    // levels (tests, developer menu)
+    int courseLevel() const { return campaign_.level(); }
+    int levelAttempts() const { return campaign_.attempts(); }
+    bool lastRunCleared() const { return runCleared_; }
+    int coins() const { return wallet_.coins(); }
+    void debugNearFinish() { debugNearFinish_ = true; }
     int liveSmashDebris() const { int n = 0; for (const auto& b : smashPool_) n += b.life > 0; return n; }
 
 private:
@@ -104,7 +111,8 @@ private:
     void start();
     void lay();
     void knock(int k);
-    void finishRun();          // the run is over for good (no continue): records, coins, XP, missions, ads
+    void finishRun(bool cleared = false); // the run is over for good (no continue / or the level was cleared)
+    void completeLevel();                 // the finish-line celebration is over: the run ends as a clear
     void revive();             // Continue: back into the run where the hen fell
     void perfect(float top);
     void closeCall(float top);
@@ -274,6 +282,11 @@ private:
     Streak dayStreak_;
     Missions missions_;
     DailyDrop drop_;
+    Campaign campaign_;
+    float clearT_ = -1;                   // seconds since crossing the finish line (-1: not crossed this run)
+    bool runCleared_ = false;
+    bool debugNearFinish_ = false;        // developer menu: the next run starts 30 m before the finish line             // the last run ended at the finish line (Level Cleared screen)
+    int clearCoins_ = 0;                  // coins for that clear
     void applyCosmetics();
     void track(const char* event, AnalyticsParams params = {});
 
