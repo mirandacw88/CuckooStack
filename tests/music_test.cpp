@@ -1,4 +1,5 @@
-// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop; beat grid for the visuals.
+// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop; beat grid for the visuals;
+// the finish-line applause.
 #include "TestUtil.h"
 #include "../src/core/audio/Synth.h"
 
@@ -60,5 +61,26 @@ int main() {
     out.clear();
     play(s, 1, &out);
     check(rms(out) < 1e-4, "muted: no music");
+    s.play(Sfx::Cheer);
+    out.clear();
+    play(s, 1, &out);
+    check(rms(out) < 1e-4, "muted: no applause");
+
+    // the applause: heard on its own, played once, not cut off when the music fades out (a level clear)
+    audio::Synth c(48000);
+    c.play(Sfx::Cheer);
+    out.clear();
+    play(c, 2, &out);
+    check(rms(out) > 0.02, "the applause is audible without music");
+    c.musicStart();
+    play(c, 1);
+    c.musicStop(false);
+    out.clear();
+    play(c, 4, &out);
+    check(rms(std::vector<float>(out.end() - 48000, out.end())) > 0.01, "the music fading out doesn't cut it off");
+    play(c, 2);
+    out.clear();
+    play(c, 1, &out);
+    check(rms(out) < 1e-4, "it plays once (about 8 s), then stops");
     return test::finish("music");
 }

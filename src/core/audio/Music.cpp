@@ -9,6 +9,8 @@ namespace cs::assets {
 #define CS_MUSIC_TRACK(sym, bpm, first, loud, len) extern const unsigned char sym[]; extern const size_t sym##_size;
 #include "MusicTracks.inc"
 #undef CS_MUSIC_TRACK
+extern const unsigned char applause_cheer_mp3[];
+extern const size_t applause_cheer_mp3_size;
 } // namespace cs::assets
 
 namespace cs::audio {
@@ -26,6 +28,7 @@ constexpr float kFade = 0.35f;        // crossfade / start fade, seconds
 constexpr float kTapeStop = 0.8f;     // a crash: the tape winds down over this long
 constexpr float kSurgeRate = 1.15f;   // a surge plays the track 15% faster (about two semitones higher)
 constexpr float kSurgeEase = 0.4f;    // seconds to speed up / slow back down
+constexpr float kCheerLevel = 0.7f;   // the finish-line applause, over the music
 constexpr int kChunk = 1152 * 2;      // frames decoded at a time
 } // namespace
 
@@ -81,6 +84,17 @@ struct MusicPlayer::Track {
 };
 
 MusicPlayer::MusicPlayer() {
+    auto cheer = std::make_unique<Track>();
+    if (mp3Open(cheer->dec, assets::applause_cheer_mp3, assets::applause_cheer_mp3_size) && cheer->dec.frames > 0 &&
+        cheer->dec.channels >= 1 && cheer->dec.channels <= 2) {
+        cheer->ok = true;
+        cheer->srcRate = cheer->dec.sampleRate;
+        cheer->frames = cheer->dec.frames;
+        cheer->buf.resize(size_t(kChunk + 3) * 2);
+        cheer_ = std::move(cheer);
+    } else {
+        CS_LOGW("Music: the applause could not be decoded");
+    }
     for (int i = 0; i < kTrackCount; ++i) {
         auto t = std::make_unique<Track>();
         t->info = kTracks[i].info;
@@ -121,13 +135,33 @@ void MusicPlayer::surge(bool on) {
     if (ok_) surging_ = on; // render() eases the playback rate toward kSurgeRate / 1
 }
 
+void MusicPlayer::cheer() {
+    if (!cheer_) return;
+    cheer_->seekTo(0);
+    cheering_ = true;
+}
+
 void MusicPlayer::beat(int& track, double& seconds, double& rate) const {
     track = beatTrack_.load(std::memory_order_relaxed);
     seconds = beatPos_.load(std::memory_order_relaxed);
     rate = beatRate_.load(std::memory_order_relaxed);
 }
 
+void MusicPlayer::renderCheer(float* out, int frames, int channels, float outRate) {
+    Track& t = *cheer_;
+    const float ratio = float(t.srcRate) / outRate, g = kCheerLevel * (muted_ ? 0.f : 1.f);
+    for (int i = 0; i < frames; ++i) {
+        float l, r;
+        const double before = t.pos;
+        advance(t, ratio, l, r);
+        if (channels >= 2) { out[i * channels] += l * g; out[i * channels + 1] += r * g; }
+        else out[i] += 0.5f * (l + r) * g;
+        if (t.pos < before) { cheering_ = false; return; } // played once (advance() wrapped to the start)
+    }
+}
+
 void MusicPlayer::render(float* out, int frames, int channels, float outRate) {
+    if (cheering_) renderCheer(out, frames, channels, outRate);
     if (!ok_ || (!playing_ && master_ <= 0.f)) { beatTrack_.store(-1, std::memory_order_relaxed); return; }
     const float dt = 1.f / std::max(1.f, outRate);
     const float fadeStep = dt / kFade;

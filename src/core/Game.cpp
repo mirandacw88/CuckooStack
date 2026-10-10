@@ -1289,7 +1289,7 @@ void Game::updatePlay(float dt, float rdt) {
         graceT_ = 99.f;
         const float top = float(baseY_) + eggs_.size() * Uf;
         popup("FINISH!", {float(x_) + 1.5f, top + 2.4f, 0}, PopKind::Surge);
-        sfx(Sfx::SurgeStart); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
+        sfx(Sfx::SurgeStart); sfx(Sfx::Cheer); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
         rings_.spawn({float(x_), top + 0.6f, 0.4f}, C().volt, 4.f, 0.8f, true);
         for (int i = 0; i < 8; ++i) launchFirework(i * 0.08f);
     }

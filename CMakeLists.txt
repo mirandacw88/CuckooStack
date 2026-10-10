@@ -109,6 +109,18 @@ foreach(_m midnight_city_sprint.mp3)
     VERBATIM)
   list(APPEND CS_FONT_SOURCES ${_out})
 endforeach()
+# recorded sound effects (assets/sfx; played by src/core/audio/Music.cpp)
+foreach(_m applause_cheer.mp3)
+  string(REPLACE "." "_" _sym ${_m})
+  set(_in ${CMAKE_CURRENT_SOURCE_DIR}/assets/sfx/${_m})
+  set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)
+  add_custom_command(OUTPUT ${_out}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${_in} -DOUTPUT=${_out} -DSYMBOL=${_sym} -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_in} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding sound effect ${_m}"
+    VERBATIM)
+  list(APPEND CS_FONT_SOURCES ${_out})
+endforeach()
 # outfits with their own hen model (scripts/models/add_outfit_model.py): every assets/models/outfits/<id>.mesh + .jpg
 file(GLOB _outfit_assets CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.mesh
      ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.jpg)

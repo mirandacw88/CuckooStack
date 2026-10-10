@@ -218,6 +218,7 @@ void Synth::sfx(Sfx s, int k) {
         for (int i = 0; i < 5; ++i) tone(notes[i], notes[i], 0.12f, Wave::Square, 0.05f, 0.08f + i * 0.055f);
         break;
     }
+    case Sfx::Cheer: music_.cheer(); break; // recorded (assets/sfx/applause_cheer.mp3)
     case Sfx::LifeLost: // glassy crack + a two-step falling chime
         noise(0.1f, 0.35f, 3200);
         tone(988, 740, 0.12f, Wave::Triangle, 0.10f);
