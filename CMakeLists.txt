@@ -98,7 +98,7 @@ add_custom_command(OUTPUT ${_hen_cpp}
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hen_cpp})
 # the soundtrack (assets/music, beat grids in src/core/audio/MusicTracks.inc via scripts/audio/analyze_music.py)
-foreach(_m midnight_city_sprint.mp3 turbo_button_rush.mp3)
+foreach(_m midnight_city_sprint.mp3)
   string(REPLACE "." "_" _sym ${_m})
   set(_in ${CMAKE_CURRENT_SOURCE_DIR}/assets/music/${_m})
   set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)

@@ -1,4 +1,4 @@
-// The recorded soundtrack (audio/Music.h): run track, surge crossfade, resume, tape stop; beat grid for the visuals.
+// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop; beat grid for the visuals.
 #include "TestUtil.h"
 #include "../src/core/audio/Synth.h"
 
@@ -21,32 +21,41 @@ double rms(const std::vector<float>& v) { double e = 0; for (float x : v) e += d
 
 int main() {
     const audio::TrackInfo* run = audio::musicTrackInfo(0);
-    const audio::TrackInfo* hype = audio::musicTrackInfo(1);
-    check(run && hype, "two tracks are built in");
-    if (!run || !hype) return test::finish("music");
-    check(std::abs(run->bpm - 155) < 0.5 && std::abs(hype->bpm - 168) < 0.5, "beat grids: 155 BPM run track, 168 BPM surge track");
+    check(run && !audio::musicTrackInfo(1), "one track is built in");
+    if (!run) return test::finish("music");
+    check(std::abs(run->bpm - 155) < 0.5, "beat grid: 155 BPM");
 
     audio::Synth s(48000);
-    double bpm = 0, first = 0, pos = 0;
-    check(!s.musicBeat(bpm, first, pos), "silent until the music starts");
+    double bpm = 0, first = 0, pos = 0, rate = 0;
+    check(!s.musicBeat(bpm, first, pos, rate), "silent until the music starts");
     s.musicStart();
     std::vector<float> out;
     play(s, 3, &out);
-    check(rms(out) > 0.02, "the run track is audible");
-    check(s.musicBeat(bpm, first, pos) && std::abs(bpm - run->bpm) < 0.01 && std::abs(pos - 3) < 0.05, "it plays from the start at its own tempo");
+    check(rms(out) > 0.02, "the track is audible");
+    check(s.musicBeat(bpm, first, pos, rate) && std::abs(bpm - run->bpm) < 0.01 && std::abs(pos - 3) < 0.05 &&
+          std::abs(rate - 1) < 1e-6, "it plays from the start at normal speed");
     s.musicSurge(true);
+    play(s, 0.5);
+    const double before = pos;
+    s.musicBeat(bpm, first, pos, rate);
+    const double p0 = pos;
     play(s, 2);
-    check(s.musicBeat(bpm, first, pos) && std::abs(bpm - hype->bpm) < 0.01, "a surge crossfades to the surge track");
-    check(pos > hype->loudest && pos < hype->loudest + 3, "straight into its loudest section");
+    s.musicBeat(bpm, first, pos, rate);
+    check(std::abs(rate - 1.15) < 1e-3, "a surge speeds the same track up to 1.15x");
+    check(p0 > before && std::abs((pos - p0) - 2 * 1.15) < 0.05, "...so it advances 1.15 s of music per second");
     s.musicSurge(false);
-    play(s, 2);
-    check(s.musicBeat(bpm, first, pos) && std::abs(bpm - run->bpm) < 0.01 && pos > 3 && pos < 6, "after the surge the run track resumes where it paused");
+    play(s, 1);
+    s.musicBeat(bpm, first, pos, rate);
+    const double p1 = pos;
+    play(s, 1);
+    s.musicBeat(bpm, first, pos, rate);
+    check(std::abs(rate - 1) < 1e-6 && std::abs((pos - p1) - 1) < 0.02, "after the surge it eases back to normal speed");
     s.musicStop(true);
     play(s, 1.5);
-    check(!s.musicBeat(bpm, first, pos), "a crash winds the tape down to silence");
+    check(!s.musicBeat(bpm, first, pos, rate), "a crash winds the tape down to silence");
     s.musicStart();
     play(s, 1);
-    check(s.musicBeat(bpm, first, pos) && pos > 5, "the next run carries on from there");
+    check(s.musicBeat(bpm, first, pos, rate) && pos > 8, "the next run carries on from there");
     s.setMuted(true);
     out.clear();
     play(s, 1, &out);

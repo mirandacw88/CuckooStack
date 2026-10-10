@@ -106,13 +106,13 @@ void Synth::musicTempo(float bpm) { push({Command::Tempo, 0, bpm}); }
 void Synth::musicSurge(bool on) { push({Command::Surge, on ? 1 : 0, 0}); }
 void Synth::setMuted(bool m) { push({Command::Mute, m ? 1 : 0, 0}); }
 
-bool Synth::musicBeat(double& bpm, double& firstBeat, double& position) const {
+bool Synth::musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const {
     int track = -1;
-    double pos = 0;
-    music_.beat(track, pos);
+    double pos = 0, r = 1;
+    music_.beat(track, pos, r);
     const TrackInfo* info = musicTrackInfo(track);
     if (!info) return false;
-    bpm = info->bpm; firstBeat = info->firstBeat; position = pos;
+    bpm = info->bpm; firstBeat = info->firstBeat; position = pos; rate = r;
     return true;
 }
 
@@ -126,7 +126,7 @@ void Synth::processCommands() {
         case Command::MusicStop: if (music_.ok()) music_.stop(c.a != 0); else stopMusic(c.a != 0); break;
         case Command::Tempo: bpm_ = c.f; break; // (recorded tracks keep their own tempo)
         case Command::Surge:
-            if (music_.ok()) { music_.surge(c.a != 0); break; }
+            if (music_.ok()) { music_.surge(c.a != 0); break; } // the soundtrack speeds up
             if (c.a && playing_ && !muted_ && !party_) { // party music only while the music is audible
                 party_ = true; partyStep_ = 0;
                 filtFreq_.cancelScheduledValues(now_);   // open any intro / build filter fully

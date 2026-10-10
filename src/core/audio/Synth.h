@@ -28,7 +28,7 @@ public:
     void musicTempo(float bpm) override;
     void musicSurge(bool on) override;
     void setMuted(bool muted) override;
-    bool musicBeat(double& bpm, double& firstBeat, double& position) const override;
+    bool musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const override;
 
     // Audio thread. Interleaved float output; `channels` copies of the mono mix.
     void render(float* out, int frames, int channels);

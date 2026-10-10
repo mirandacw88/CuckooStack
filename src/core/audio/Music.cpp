@@ -24,6 +24,8 @@ constexpr int kTrackCount = int(sizeof kTracks / sizeof kTracks[0]);
 constexpr float kLevel = 0.5f;        // music under the synth's sound effects
 constexpr float kFade = 0.35f;        // crossfade / start fade, seconds
 constexpr float kTapeStop = 0.8f;     // a crash: the tape winds down over this long
+constexpr float kSurgeRate = 1.15f;   // a surge plays the track 15% faster (about two semitones higher)
+constexpr float kSurgeEase = 0.4f;    // seconds to speed up / slow back down
 constexpr int kChunk = 1152 * 2;      // frames decoded at a time
 } // namespace
 
@@ -95,8 +97,8 @@ MusicPlayer::MusicPlayer() {
         }
         tracks_.push_back(std::move(t));
     }
-    ok_ = tracks_.size() >= 2;
-    if (ok_) CS_LOGI("Music: %d tracks, %.0f / %.0f BPM", int(tracks_.size()), tracks_[0]->info.bpm, tracks_[1]->info.bpm);
+    ok_ = !tracks_.empty();
+    if (ok_) CS_LOGI("Music: %.0f BPM soundtrack, x%.2f in a surge", tracks_[0]->info.bpm, kSurgeRate);
 }
 
 MusicPlayer::~MusicPlayer() = default;
@@ -105,34 +107,24 @@ void MusicPlayer::start() {
     if (!ok_) return;
     playing_ = true; tapeStopping_ = false; rate_ = 1.f;
     masterTarget_ = 1.f;
-    Track& run = *tracks_[0];
-    if (!surging_) { run.target = 1.f; tracks_[1]->target = 0.f; }
+    tracks_[0]->target = 1.f;
 }
 
 void MusicPlayer::stop(bool tapeStop) {
     if (!ok_ || !playing_) return;
     surging_ = false;
-    tracks_[1]->target = 0.f;
     if (tapeStop) tapeStopping_ = true; // render() winds the rate down, then stops
     else masterTarget_ = 0.f;
 }
 
 void MusicPlayer::surge(bool on) {
-    if (!ok_ || on == surging_) return;
-    surging_ = on;
-    Track& run = *tracks_[0];
-    Track& hype = *tracks_[1];
-    if (on) {
-        hype.seekTo(uint64_t(hype.info.loudest * hype.srcRate)); // straight into its loudest section
-        hype.target = 1.f; run.target = 0.f;
-    } else {
-        hype.target = 0.f; run.target = 1.f;                    // the run track resumes where it paused
-    }
+    if (ok_) surging_ = on; // render() eases the playback rate toward kSurgeRate / 1
 }
 
-void MusicPlayer::beat(int& track, double& seconds) const {
+void MusicPlayer::beat(int& track, double& seconds, double& rate) const {
     track = beatTrack_.load(std::memory_order_relaxed);
     seconds = beatPos_.load(std::memory_order_relaxed);
+    rate = beatRate_.load(std::memory_order_relaxed);
 }
 
 void MusicPlayer::render(float* out, int frames, int channels, float outRate) {
@@ -146,6 +138,8 @@ void MusicPlayer::render(float* out, int frames, int channels, float outRate) {
             if (rate_ <= 0.f) { tapeStopping_ = false; playing_ = false; master_ = masterTarget_ = 0.f; rate_ = 1.f; break; }
         }
         master_ += std::clamp(masterTarget_ - master_, -fadeStep, fadeStep);
+        const float surgeTarget = surging_ ? kSurgeRate : 1.f, surgeStep = (kSurgeRate - 1.f) * dt / kSurgeEase;
+        surgeRate_ += std::clamp(surgeTarget - surgeRate_, -surgeStep, surgeStep);
         if (master_ <= 0.f && masterTarget_ <= 0.f) { playing_ = false; break; }
         float L = 0, R = 0;
         for (auto& tp : tracks_) {
@@ -153,19 +147,18 @@ void MusicPlayer::render(float* out, int frames, int channels, float outRate) {
             t.gain += std::clamp(t.target - t.gain, -fadeStep, fadeStep);
             if (t.gain <= 0.f) continue;                // silent tracks hold their place
             float l, r;
-            advance(t, rate_ * float(t.srcRate) / outRate, l, r);
+            advance(t, rate_ * surgeRate_ * float(t.srcRate) / outRate, l, r);
             L += l * t.gain; R += r * t.gain;
         }
         const float g = master_ * kLevel * (muted_ ? 0.f : 1.f) * (tapeStopping_ ? std::sqrt(rate_) : 1.f);
         if (channels >= 2) { out[i * channels] += L * g; out[i * channels + 1] += R * g; }
         else out[i] += 0.5f * (L + R) * g;
     }
-    // the dominant track's position, for the beat-synced visuals
-    const Track& a = *tracks_[0];
-    const Track& b = *tracks_[1];
-    const Track& lead = b.gain > a.gain ? b : a;
-    beatTrack_.store(&lead == &a ? 0 : 1, std::memory_order_relaxed);
-    beatPos_.store(lead.pos / lead.srcRate, std::memory_order_relaxed);
+    // the track's position and speed, for the beat-synced visuals
+    const Track& t = *tracks_[0];
+    beatTrack_.store(0, std::memory_order_relaxed);
+    beatPos_.store(t.pos / t.srcRate, std::memory_order_relaxed);
+    beatRate_.store(double(rate_ * surgeRate_), std::memory_order_relaxed);
 }
 
 // one output sample of a track: 4-point cubic (Catmull-Rom) interpolation between source frames, advancing by

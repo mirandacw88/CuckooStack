@@ -19,11 +19,12 @@ public:
 
     // A recorded soundtrack is playing: lock the pulses to its beat grid (every beat is a pulse). Call each frame;
     // untrack() falls back to the synthetic clock (the synth soundtrack, or no audio at all).
-    void syncToTrack(double bpm, double firstBeat, double position) {
+    // `rate`: playback speed (a surge plays the track faster, so its beats come sooner in real time)
+    void syncToTrack(double bpm, double firstBeat, double position, double rate = 1.0) {
         tracked_ = true;
-        bpm_ = bpm;
+        bpm_ = bpm * rate;
         const double period = 60.0 / bpm, since = position - firstBeat;
-        if (since >= 0) lastKick_ = now_ - std::fmod(since, period);
+        if (since >= 0) lastKick_ = now_ - std::fmod(since, period) / std::max(0.05, rate);
     }
     void untrack() { tracked_ = false; }
 

@@ -1067,8 +1067,8 @@ void Game::update(double rawDt) {
     rdt_ = rdt;
     beat_.advance(std::min(0.25f, raw));
     { // visuals in time with the recorded soundtrack, when one is playing
-        double bpm = 0, first = 0, pos = 0;
-        if (svc_.audio->musicBeat(bpm, first, pos)) beat_.syncToTrack(bpm, first, pos); else beat_.untrack();
+        double bpm = 0, first = 0, pos = 0, rate = 1;
+        if (svc_.audio->musicBeat(bpm, first, pos, rate)) beat_.syncToTrack(bpm, first, pos, rate); else beat_.untrack();
     }
     // the soundtrack starts on the title screen (once the age screen has been answered)
     if (state_ == State::Title && !titleMusic_ && profile_.audience() != Audience::Unknown) {

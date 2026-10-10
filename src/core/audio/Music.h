@@ -1,11 +1,11 @@
-// The recorded soundtrack (assets/music, embedded): track 0 plays on the title and during runs, track 1 during a
-// surge. The MP3s are decoded while they play (no full-length PCM in memory), resampled to the device rate and
-// mixed in stereo under the synth's sound effects (Synth::render).
+// The recorded soundtrack (assets/music, embedded): one track on the title screen and during runs. The MP3 is
+// decoded while it plays (no full-length PCM in memory), resampled to the device rate and mixed in stereo under the
+// synth's sound effects (Synth::render).
 //
-// Behaviour: start() fades the run track in where it last stopped; a surge crossfades to the surge track's loudest
-// section, then back to the run track exactly where it left off; stop(tapeStop) winds the music down like a tape
-// stopping (a crash) or just fades it. Beat grids (MusicTracks.inc, from scripts/audio/analyze_music.py) let the
-// game's visuals pulse in time (beat()).
+// Behaviour: start() fades the track in where it last stopped; a surge speeds it up (and, like a fast-forwarded
+// tape, raises its pitch) and eases it back afterwards; stop(tapeStop) winds the music down like a tape stopping
+// (a crash) or just fades it. The beat grid (MusicTracks.inc, from scripts/audio/analyze_music.py) lets the game's
+// visuals pulse in time (beat()).
 //
 // Threading: the control methods and render() run on the audio thread (Synth forwards its commands); beat() may be
 // read from any thread.
@@ -34,18 +34,19 @@ public:
     void setMuted(bool muted) { muted_ = muted; }
     void render(float* out, int frames, int channels, float outRate); // adds into interleaved `out`
 
-    // any thread: the track you hear (-1: none) and the position in it, seconds
-    void beat(int& track, double& seconds) const;
+    // any thread: the track you hear (-1: none), the position in it (seconds) and its playback rate
+    void beat(int& track, double& seconds, double& rate) const;
 
 private:
     struct Track;
     float advance(Track& t, float ratio, float& l, float& r);
     std::vector<std::unique_ptr<Track>> tracks_;
     bool ok_ = false, playing_ = false, muted_ = false, surging_ = false;
-    float master_ = 0.f, masterTarget_ = 0.f, rate_ = 1.f;   // master fade; playback rate (tape stop)
+    float master_ = 0.f, masterTarget_ = 0.f, rate_ = 1.f;   // master fade; tape-stop rate
+    float surgeRate_ = 1.f;                                  // playback speed: eases up to kSurgeRate in a surge
     bool tapeStopping_ = false;
     std::atomic<int> beatTrack_{-1};
-    std::atomic<double> beatPos_{0.0};
+    std::atomic<double> beatPos_{0.0}, beatRate_{1.0};
 };
 
 } // namespace cs::audio

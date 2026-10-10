@@ -5,7 +5,8 @@ its loudest section, written to src/core/audio/MusicTracks.inc so the game's vis
     python3 -m pip install numpy
     python3 scripts/audio/analyze_music.py        (macOS: decodes with afconvert)
 
-Tracks, in the order the game uses them: 0 = run / title track, 1 = surge track. Re-run after replacing a file.
+The soundtrack is one track, played on the title screen and during runs (a surge speeds it up). Re-run after
+replacing the file.
 """
 import os
 import struct
@@ -19,7 +20,7 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MUSIC = os.path.join(ROOT, "assets", "music")
 OUT = os.path.join(ROOT, "src", "core", "audio", "MusicTracks.inc")
-TRACKS = ["midnight_city_sprint.mp3", "turbo_button_rush.mp3"]  # 0: run + title, 1: surge
+TRACKS = ["midnight_city_sprint.mp3"]  # the soundtrack (title + runs; a surge plays it faster)
 SR = 22050
 
 
