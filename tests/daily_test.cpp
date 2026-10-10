@@ -134,19 +134,26 @@ int main() {
         GameServices s;
         s.storage = &st; s.clock = &clock;
         Game g(s);
+        // challenges are a distance on a course level (l=); old daily-course links (d=, no level) are expired
         g.openLink("https://cuckoostack-staging.web.app/c?d=2026-10-07&m=300&n=Sam");
-        check(g.challengeMeters() == 0, "yesterday's challenge link: expired, no marker");
-        g.openLink("https://cuckoostack-staging.web.app/c?d=2026-10-08&m=412&n=Sam%20K");
-        check(g.challengeMeters() == 412, "today's challenge link: marker at 412 m");
+        check(g.challengeMeters() == 0, "an old daily-course link (no level): expired, no marker");
+        g.openLink("https://cuckoostack-staging.web.app/c?l=1&m=412&n=Sam%20K");
+        check(g.challengeMeters() == 412, "a level-1 challenge link: marker at 412 m");
         Game g2(s);
-        check(g2.challengeMeters() == 412, "the challenge survives a relaunch the same day");
+        check(g2.challengeMeters() == 412, "the challenge survives a relaunch");
         clock.nextDay();
         Game g3(s);
-        check(g3.challengeMeters() == 0, "and is gone the next day");
+        check(g3.challengeMeters() == 412, "and the next day (it lasts until that level is cleared)");
+        st.kv["cluckstack-campaign"] = "level=2;";
+        Game g5(s);
+        g5.press(); // a run on level 2 drops the level-1 challenge
+        check(g5.challengeMeters() == 0, "once level 1 is behind you, its challenge is gone");
+        g5.openLink("https://cuckoostack-staging.web.app/c?l=1&m=90");
+        check(g5.challengeMeters() == 0, "a link to an already-cleared level is ignored");
         FakeStorage kid; kid.kv["cluckstack-profile"] = "aud=1;";
         s.storage = &kid;
         Game g4(s);
-        g4.openLink("cuckoostack://c?d=2026-10-09&m=50");
+        g4.openLink("cuckoostack://c?l=1&m=50");
         check(g4.challengeMeters() == 0, "children: challenge links are ignored");
     }
     return finish("daily");

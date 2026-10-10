@@ -2,6 +2,7 @@
 // generateUntil() consumes the daily mulberry32 stream in exactly the same order as the web build.
 #pragma once
 
+#include "Difficulty.h"
 #include "Math.h"
 
 #include <vector>
@@ -38,6 +39,12 @@ public:
 
     void reset(uint32_t seed);
     bool generateUntil(double xmax);
+    // Levels (Campaign.h): difficulty is read at offset + x * scale along the curve, and past `finish` (0 = endless)
+    // only flat, wall-free runway is laid. The defaults reproduce the endless daily course (web parity).
+    void setDifficulty(double offset, double scale) { diffOffset_ = offset; diffScale_ = scale; }
+    void setFinish(double x) { finish_ = x; }
+    double finish() const { return finish_; }
+    Curve curveAt(double x) const { return curve(diffOffset_ + std::max(0.0, x) * diffScale_); }
     void dropBehind(double x) { while (!segs.empty() && segs.front().x1 < x - 14) segs.erase(segs.begin()); }
     void rebuildBlocks();
     int heightAt(double x) const;
@@ -56,7 +63,7 @@ private:
     void pushSeg(int len, int h, WallKind kind);
     void spawnCorn(double x, double y);
     Mulberry32 rng_;
-    double genX_ = 0;
+    double genX_ = 0, diffOffset_ = 0, diffScale_ = 1, finish_ = 0;
     int lastH_ = 0, segN_ = 0, genSector_ = 0;
 };
 

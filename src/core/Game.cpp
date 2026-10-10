@@ -69,7 +69,8 @@ const glm::vec3 kCapOk = glow("#ffbe3a", 1.5f), kCapDanger = glow("#ff2a3a", 2.2
 Game::Game(const GameServices& services)
     : svc_(withDefaults(services)), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1), dda_(svc_.storage), world_(rng_),
       profile_(svc_.storage, svc_.clock), wallet_(svc_.storage, svc_.analytics), adPolicy_(svc_.storage, svc_.clock, tune_),
-      prog_(svc_.storage, tune_), dayStreak_(svc_.storage, svc_.clock), missions_(svc_.storage, svc_.clock), drop_(svc_.storage, svc_.clock) {
+      prog_(svc_.storage, tune_), dayStreak_(svc_.storage, svc_.clock), missions_(svc_.storage, svc_.clock), drop_(svc_.storage, svc_.clock),
+      campaign_(svc_.storage) {
     tune_.load(svc_.remoteConfig);
     const Grade& g = grade(0);
     fog_ = g.fog; skyMid_ = g.mid; skyBot_ = g.bot; skyHaze_ = g.haze; pinkLight_ = g.light;
@@ -85,7 +86,9 @@ Game::Game(const GameServices& services)
     svc_.replay->setEndCardRenderer([this](int w, int h, const ReplayMeta& m) { return endCard(w, h, m); });
     {   // a challenge accepted earlier today is still on
         Record r(svc_.storage, "cluckstack-challenge");
-        if (r.s("day") == svc_.clock->today() && r.i("m") > 0)
+        // a saved challenge is for a course level ("level:N"); it stays until that level is cleared
+        const std::string lv = r.s("day");
+        if (lv.rfind("level:", 0) == 0 && std::atoi(lv.c_str() + 6) >= campaign_.level() && r.i("m") > 0)
             challenge_ = Challenge{r.s("day"), r.s("n"), r.s("c"), r.i("m"), r.i("beaten") != 0, 1.f};
     }
     onForeground();
@@ -169,19 +172,21 @@ std::string queryParam(const std::string& url, const std::string& key) {
 void Game::openLink(const std::string& url) {
     if (url.find("/c") == std::string::npos) return;   // only challenge links for now
     if (profile_.child()) return;                       // social features are 13+
-    const std::string day = queryParam(url, "d");
+    // a challenge is a distance on one course level (l=); old daily-course links (d=) have no level and are expired
+    const int lvl = std::atoi(queryParam(url, "l").c_str());
+    const std::string day = "level:" + std::to_string(lvl);
     const int meters = std::atoi(queryParam(url, "m").c_str());
     std::string name = queryParam(url, "n").substr(0, 16);
     for (char& c : name) if (static_cast<unsigned char>(c) < 32) c = ' ';
-    const bool expired = day != svc_.clock->today();
-    track("challenge_open", {{"expired", expired ? "1" : "0"}, {"meters", std::to_string(meters)}});
+    const bool expired = lvl <= 0 || lvl < campaign_.level(); // a level you've already cleared
+    track("challenge_open", {{"expired", expired ? "1" : "0"}, {"meters", std::to_string(meters)}, {"level", std::to_string(lvl)}});
     if (meters <= 0 || meters > 100000) return;
-    if (expired) { toast("That course expired. Today\u2019s is live!", Icon::Missions); return; }
+    if (expired) { toast(lvl > 0 ? "You've already cleared level " + std::to_string(lvl) + "!" : std::string("That challenge has expired"), Icon::Missions); return; }
     std::string id = queryParam(url, "c").substr(0, 40);
     for (char c : id) if (!std::isalnum(static_cast<unsigned char>(c))) { id.clear(); break; }
     challenge_ = Challenge{day, name, id, meters, false, 1.f};
     saveChallenge();
-    toast("Beat " + (name.empty() ? std::string("your friend") : name) + ": " + std::to_string(meters) + " m", Icon::Trophy);
+    toast("Beat " + (name.empty() ? std::string("your friend") : name) + ": " + std::to_string(meters) + " m on level " + std::to_string(lvl), Icon::Trophy);
     if (state_ == State::Play) return;                 // the marker shows from the next run
 }
 
@@ -196,7 +201,8 @@ void Game::saveChallenge() {
 }
 
 std::string Game::challengeLink(int meters) const {
-    std::string url = std::string(links::kSite) + "/c?d=" + svc_.clock->today() + "&m=" + std::to_string(meters);
+    const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // the level that was just played
+    std::string url = std::string(links::kSite) + "/c?l=" + std::to_string(lvl) + "&m=" + std::to_string(meters);
     if (!sharedChallengeId_.empty()) url += "&c=" + sharedChallengeId_;
     return url + "&utm_source=share&utm_medium=challenge";
 }
@@ -245,11 +251,13 @@ void Game::resize(float w, float h) {
 void Game::reset() {
     eggs_.clear(); debris_.clear(); splats_.clear(); popups_.clear();
     fxAdd_.clear(); fxSmoke_.clear();
-    rollDay(); dda_.newDay(day_.date);
-    level_.reset(seedFor("cluckstack:" + day_.date));
+    rollDay();
+    dda_.newDay("level:" + std::to_string(campaign_.level())); // death zones belong to one course
+    campaign_.applyTo(level_);                                 // the current level: seed, difficulty, finish line
     level_.generateUntil(60); level_.rebuildBlocks();
+    clearT_ = -1; runCleared_ = false;
     x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
-    timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = 0; camKick_ = 0;
+    timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = 0 /* one background for levels 1-10 */; camKick_ = 0;
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
     hen_.nodes[hen_.root].pos = glm::vec3(0.f);
@@ -275,7 +283,13 @@ void Game::start() {
     reset();
     state_ = State::Play;
     beat_.start(); svc_.audio->musicStart();
-    day_.attempts++; saveDay(); placeGate();
+    day_.attempts++; saveDay(); campaign_.attempt(); placeGate();
+    if (debugNearFinish_) { // developer menu: test the finish quickly
+        debugNearFinish_ = false;
+        x_ = std::max(0.0, level_.finish() - 30.0);
+        level_.generateUntil(x_ + 45); level_.dropBehind(x_); level_.rebuildBlocks();
+        baseY_ = level_.heightAt(x_) * U;
+    }
     overDelay_ = -1;
     for (float& p : popT_) p = 0;
     intro_ = 1;
@@ -292,14 +306,18 @@ void Game::start() {
     burst({0, 0.1f, 0}, 30, {C().cyan, C().pink}, 2, 5, 0.6f, 0.1f, 0.3f, 0, true);
     svc_.replay->runStarted();
     replaySaved_ = false;
-    if (challenge_ && challenge_->day != svc_.clock->today()) { challenge_.reset(); saveChallenge(); }
-    if (challenge_) challenge_->opacity = 1.f;
-    track("run_start", {{"attempt", std::to_string(day_.attempts)}, {"boost", runBoost_ == Boost::Surge ? "surge" : runBoost_ == Boost::Overclock ? "overclock" : "none"},
+    // a friend's challenge: its marker shows on its level; it's dropped once that level is behind you
+    const std::string thisLevel = "level:" + std::to_string(campaign_.level());
+    if (challenge_ && (challenge_->day.rfind("level:", 0) != 0 || std::atoi(challenge_->day.c_str() + 6) < campaign_.level())) {
+        challenge_.reset(); saveChallenge();
+    }
+    if (challenge_) challenge_->opacity = challenge_->day == thisLevel ? 1.f : 0.f;
+    track("run_start", {{"level", std::to_string(campaign_.level())}, {"attempt", std::to_string(campaign_.attempts())}, {"boost", runBoost_ == Boost::Surge ? "surge" : runBoost_ == Boost::Overclock ? "overclock" : "none"},
                         {"outfit", wallet_.active(Slot::Outfit).id}});
 }
 
 void Game::placeGate() {
-    gatePassed_ = false; gateX_ = day_.bestDist; gateOpacity_ = 1;
+    gatePassed_ = false; gateX_ = campaign_.best(); gateOpacity_ = 1;
     gateVisible_ = gateX_ > 15;
 }
 
@@ -594,50 +612,65 @@ void Game::revive() {
     sfx(Sfx::SurgeStart); buzz(40);
 }
 
-void Game::finishRun() {
+void Game::finishRun(bool cleared) {
     continuePending_ = false;
     const bool isBest = score_ > best_, isDayBest = score_ > day_.best;
     if (isDayBest) day_.best = score_;
-    const double pbBefore = day_.bestDist;
+    const double pbBefore = campaign_.best();          // best distance on this level before the run
+    const int levelPlayed = campaign_.level(), attempts = campaign_.attempts();
     dda_.record(float(x_), float(pbBefore));
     if (x_ > day_.bestDist) day_.bestDist = x_;
     saveDay();
+    const bool levelBest = campaign_.recordRun(cleared ? campaign_.length() : x_);
+    runCleared_ = cleared;
     if (isBest) { best_ = score_; if (svc_.storage) svc_.storage->set("cluckstack-best", std::to_string(best_)); }
     finalScore_ = score_; finalDist_ = static_cast<int>(std::floor(x_));
-    newBestRun_ = (isBest || isDayBest) && score_ > 0;
+    newBestRun_ = (isBest || levelBest) && score_ > 0;
     {
-        const double gap = std::ceil(pbBefore - x_);
+        const int toGo = int(std::ceil(campaign_.lengthOf(levelPlayed) - x_));
         std::string hook;
-        if (pbBefore <= 0) hook = "First run of today\u2019s course";
-        else if (x_ > pbBefore) hook = x_ - pbBefore < 1 ? std::string("New furthest today \u00b7 by a hair")
-                                                         : "New furthest today \u00b7 +" + std::to_string(static_cast<int>(std::floor(x_ - pbBefore))) + "m";
-        else if (gap <= 25) hook = "So close \u00b7 " + std::to_string(static_cast<int>(gap)) + "m short of your best";
-        else hook = std::to_string(static_cast<int>(std::floor(day_.bestDist))) + "m furthest today";
-        overNote_ = "Attempt " + std::to_string(day_.attempts) + " \u00b7 " + hook;
+        if (cleared) hook = attempts <= 1 ? std::string("First try!") : "Cleared on attempt " + std::to_string(attempts);
+        else if (pbBefore <= 0) hook = "First run of level " + std::to_string(levelPlayed);
+        else if (x_ > pbBefore) hook = "New best here \u00b7 " + std::to_string(std::max(1, toGo)) + "m to the finish";
+        else if (toGo <= 40) hook = "So close \u00b7 " + std::to_string(std::max(1, toGo)) + "m short of the finish";
+        else hook = std::to_string(static_cast<int>(std::floor(pbBefore))) + "m is your best here";
+        overNote_ = cleared ? hook : "Attempt " + std::to_string(attempts) + " \u00b7 " + hook;
         static const char* kLines[] = {"Flatlined", "Signal lost", "Scrambled", "Fried circuits"};
-        overTag_ = isBest && score_ > 0 ? "New all-time best" : isDayBest && score_ > 0 ? "New daily best" : kLines[rng_.index(4)];
+        overTag_ = cleared ? "Level " + std::to_string(levelPlayed) + " cleared"
+                 : isBest && score_ > 0 ? "New all-time best" : levelBest && score_ > 0 ? "New best on this level" : kLines[rng_.index(4)];
     }
     // rewards: coins and XP for the distance, mission progress
     runCoins_ = std::max(1, finalDist_ / tune_.metersPerCoin + run_.surges * tune_.coinsPerSurge); // every run pays something
     runCoins_ = int(std::lround(runCoins_ * tune_.eventCoinMult));                                   // live event
     coinsDoubled_ = false;
     if (runCoins_ > 0) wallet_.earn(runCoins_, "run");
-    runXp_ = finalDist_ * tune_.xpPerMeter;
+    clearCoins_ = 0;
+    if (cleared) { // the clear bonus, paid on top (the x2 offer doubles the whole amount)
+        clearCoins_ = int(std::lround((tune_.clearCoins + tune_.clearCoinsStep * levelPlayed) * tune_.eventCoinMult));
+        wallet_.earn(clearCoins_, "level_clear");
+        runCoins_ += clearCoins_;
+    }
+    runXp_ = finalDist_ * tune_.xpPerMeter + (cleared ? tune_.clearXp : 0);
     levelFrom_ = prog_.level();
     xpFrom_ = prog_.fraction();
     missionProgress(missions_.record(MissionKind::Runs));
     missionProgress(missions_.recordDistance(finalDist_));
+    if (cleared) {
+        missionProgress(missions_.record(MissionKind::LevelsCleared));
+        campaign_.clear();
+        track("level_clear", {{"level", std::to_string(levelPlayed)}, {"attempts", std::to_string(attempts)}});
+    }
     levelGained(prog_.add(runXp_));
-    if (!profile_.child() && finalDist_ > 0) svc_.leaderboards->submit(finalDist_);
+    if (!profile_.child() && cleared) svc_.leaderboards->submit(campaign_.cleared()); // leaderboard: levels cleared
     if (beatenPending_ && challenge_ && !challenge_->id.empty()) svc_.backend->challengeBeaten(challenge_->id, finalDist_);
     beatenPending_ = false;
     adPolicy_.runFinished();
     adPolicy_.newGameOver();
     wallet_.runFinished();
-    track("run_end", {{"distance", std::to_string(finalDist_)}, {"score", std::to_string(score_)}, {"seconds", std::to_string(int(run_.seconds))},
-                      {"attempt", std::to_string(day_.attempts)}, {"new_best", newBestRun_ ? "1" : "0"}, {"surges", std::to_string(run_.surges)},
+    track("run_end", {{"level", std::to_string(levelPlayed)}, {"cleared", cleared ? "1" : "0"}, {"distance", std::to_string(finalDist_)}, {"score", std::to_string(score_)}, {"seconds", std::to_string(int(run_.seconds))},
+                      {"attempt", std::to_string(attempts)}, {"new_best", newBestRun_ ? "1" : "0"}, {"surges", std::to_string(run_.surges)},
                       {"continues", std::to_string(run_.continues)}, {"coins", std::to_string(runCoins_)}, {"boosted", run_.boosted ? "1" : "0"}});
-    overDelay_ = continueOffered_ ? 0.2f : 0.9f; overT_ = 0;
+    overDelay_ = cleared ? 0.3f : continueOffered_ ? 0.2f : 0.9f; overT_ = 0;
     continueOffered_ = false;
     if (newBestRun_ && !profile_.child() && !profile_.flag("replay_asked") && svc_.replay->state() != ReplayState::Unavailable) {
         profile_.setFlag("replay_asked", true);
@@ -650,6 +683,14 @@ void Game::finishRun() {
         track("notif_primer_shown", {});
     }
     rescheduleReminders();
+}
+
+void Game::completeLevel() {
+    graceT_ = 0; clearT_ = -1;
+    state_ = State::Dead; deadT_ = 1.f; // no crash: the hen stands on the runway while the results show
+    henV_ = henW_ = glm::vec3(0.f);
+    beat_.stop(); svc_.audio->musicStop(true);
+    finishRun(true); // (the replay clip is saved once the run has ended, as after a crash)
 }
 
 void Game::levelGained(int levels) {
@@ -1050,9 +1091,9 @@ void Game::update(double rawDt) {
         cursor += hgt;
     }
     if (!showroom()) showPlaced_ = false;
-    if (state_ != State::Dead || showroom()) {
+    if (state_ != State::Dead || showroom() || runCleared_) {
         hopV_ -= 38 * dt; hop_ = std::max(0.f, hop_ + hopV_ * dt); if (hop_ == 0 && hopV_ < 0) hopV_ = 0;
-        if (state_ == State::Dead) { // try-on after a crash: stand on clear ground, not inside the wall she hit
+        if (state_ == State::Dead && !runCleared_) { // try-on after a crash: stand on clear ground, not inside the wall she hit
             if (!showPlaced_) { showSpot_ = showroomSpot(); showPlaced_ = true; }
             hen_.nodes[hen_.root].pos = {showSpot_.x, showSpot_.y + hop_, 0};
         } else {
@@ -1098,7 +1139,7 @@ void Game::update(double rawDt) {
     if (gateVisible_ && state_ == State::Play && !gatePassed_ && x_ > gateX_) {
         gatePassed_ = true;
         const float top = float(baseY_) + eggs_.size() * Uf;
-        popup("NEW DAILY BEST", {float(x_) + 1, top + 2, 0}, PopKind::Sector);
+        popup("NEW BEST", {float(x_) + 1, top + 2, 0}, PopKind::Sector);
         missionProgress(missions_.record(MissionKind::BeatBest));
         sfx(Sfx::Perfect); flashScreen(srgbColor("#eafaff"), 0.22f); chromaKick_ = std::max(chromaKick_, 0.6f);
         rings_.spawn({float(gateX_), top + 0.6f, 0.4f}, C().white, 3.2f, 0.7f, true);
@@ -1208,7 +1249,7 @@ void Game::update(double rawDt) {
 }
 
 void Game::updatePlay(float dt, float rdt) {
-    const Curve cv = curve(x_);
+    const Curve cv = level_.curveAt(x_); // the level's difficulty band
     // surge: x1.35 on top of difficulty + adaptive speed, easing back after
     surgeSpeedMul_ += ((surging_ ? surge::SPEED_MUL : 1.f) - surgeSpeedMul_) * std::min(1.f, dt * 6.f);
     speed_ = float(cv.speed) * dda_.speedMul(float(x_)) * surgeSpeedMul_;
@@ -1225,13 +1266,31 @@ void Game::updatePlay(float dt, float rdt) {
 
     const int sectorNow = static_cast<int>(std::floor(x_ / SECTOR)) + 1;
     if (sectorNow > sector_) {
-        sector_ = sectorNow; gradeIdx_ = (sector_ - 1) % 4;
+        sector_ = sectorNow; // levels 1-10 keep one background (gradeIdx_ stays 0)
         const float top = float(baseY_) + eggs_.size() * Uf;
-        popup("SECTOR " + std::to_string(sector_), {float(x_) + 2, top + 2.2f, 0}, PopKind::Sector);
+        popup(sector_ == 2 ? "HALFWAY" : "KEEP GOING", {float(x_) + 2, top + 2.2f, 0}, PopKind::Sector);
         sfx(Sfx::Perfect); flashScreen(srgbColor("#29e7ff"), 0.18f); chromaKick_ = std::max(chromaKick_, 0.5f);
         rings_.spawn({float(x_), top + 0.5f, 0.5f}, C().cyan, 3, 0.7f, true);
     }
     if (level_.generateUntil(x_ + 45)) { level_.dropBehind(x_); level_.rebuildBlocks(); }
+    // the finish line: the hen runs on (invulnerable) through a burst of fireworks, then the level is cleared
+    if (level_.finish() > 0 && clearT_ < 0 && x_ >= level_.finish()) {
+        clearT_ = 0;
+        if (surging_) endSurge();
+        graceT_ = 99.f;
+        const float top = float(baseY_) + eggs_.size() * Uf;
+        popup("FINISH!", {float(x_) + 1.5f, top + 2.4f, 0}, PopKind::Surge);
+        sfx(Sfx::SurgeStart); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
+        rings_.spawn({float(x_), top + 0.6f, 0.4f}, C().volt, 4.f, 0.8f, true);
+        for (int i = 0; i < 8; ++i) launchFirework(i * 0.08f);
+    }
+    if (clearT_ >= 0) {
+        clearT_ += rdt;
+        graceT_ = 99.f;
+        fireworkAcc_ += rdt * 5.f;
+        while (fireworkAcc_ >= 1.f) { fireworkAcc_ -= 1.f; launchFirework(); }
+        if (clearT_ > 2.2f) { completeLevel(); return; }
+    }
 
     if ((autoSurge_ || runBoost_ == Boost::Surge) && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
     if (smashing()) smashAhead();
@@ -1349,7 +1408,7 @@ void Game::updateHen(float dt) {
     Hen::Node& root = hen_.nodes[hen_.root];
     const bool show = showroom();
     if (show && state_ == State::Dead && hen_.shattered()) { hen_.unshatter(); henV_ = henW_ = glm::vec3(0.f); } // reassemble for the try-on
-    if (state_ != State::Dead || show) {
+    if (state_ != State::Dead || show || runCleared_) { // after a clear the hen stands on the runway
         Hen::Node& body = hen_.nodes[hen_.body];
         Hen::Node& head = hen_.nodes[hen_.head];
         flap_ = std::max(0.f, flap_ - dt * 3.2f);
@@ -1649,6 +1708,25 @@ void Game::buildRenderList() {
             makeUnlit(compose({state_ == State::Dead ? x : hp.x, float(baseY_) + 0.02f, 0}, {-kPi / 2, 0, 0}, {2.2f, 1.6f, 1}), glow("#29e7ff", 1.6f), o, Shape::RadialGlow);
     }
     // today's-best gate
+    // the finish line: two neon posts, a checkered banner across the top and a glowing line on the ground
+    if (level_.finish() > 0 && std::abs(level_.finish() - camX_) < 40) {
+        const float fx = float(level_.finish()), groundY = level_.heightAt(fx - 0.1) * Uf;
+        const float topY = groundY + 5.2f, zEdge = DEPTH * 0.5f + 0.35f;
+        const glm::vec3 post = glow("#f4ff5a", 2.4f), pink = glow("#ff2bd6", 2.6f);
+        const float pulse = 0.75f + 0.25f * std::sin(time_ * 6.f);
+        for (float z : {-zEdge, zEdge})
+            out.add(Pass::UnlitAdd, MeshId::Box) = makeUnlit(compose({fx, groundY + 2.6f, z}, {0.12f, 5.2f, 0.12f}), post * pulse, 1.f);
+        constexpr int kChecks = 12;
+        for (int i = 0; i < kChecks; ++i)
+            for (int r = 0; r < 2; ++r) {
+                const float z = -zEdge + (i + 0.5f) * (2 * zEdge / kChecks);
+                const bool light = (i + r) % 2 == 0;
+                out.add(Pass::UnlitAdd, MeshId::Box) = makeUnlit(compose({fx, topY - 0.18f - r * 0.32f, z}, {0.06f, 0.3f, 2 * zEdge / kChecks}),
+                                                                 light ? glow("#ffffff", 2.2f) : pink * 0.6f, 1.f);
+            }
+        out.add(Pass::UnlitAdd, MeshId::Box) = makeUnlit(compose({fx, groundY + 0.03f, 0}, {0.18f, 0.03f, 2 * zEdge}), post * (0.9f + 0.4f * pulse), 1.f);
+        out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose({fx, groundY + 8, -0.9f}, {1.4f, 16, 1}), post, 0.5f * pulse, Shape::HBeam);
+    }
     if (gateVisible_ && gateOpacity_ > 0) {
         const float gx = float(gateX_);
         out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose({gx, 8, -0.85f}, {0.9f, 16, 1}), glow("#eafaff", 0.9f), gateOpacity_, Shape::HBeam);
@@ -1665,6 +1743,8 @@ void Game::buildRenderList() {
     emitParty(out, pz);
     world_.emit(out, camX_, camY_, time_, pz, grade(gradeIdx_).light, text_.get(), surge::WINDOW_FLASH * pz * partyK_);
     worldGateLabel();
+    if (level_.finish() > 0 && !runCleared_ && std::abs(level_.finish() - camX_) < 40)
+        worldMarkerLabel(level_.finish(), 1.f, "FINISH", "LEVEL " + std::to_string(campaign_.level()), hexColor("#f4ff5a"));
     if (challenge_ && challenge_->opacity > 0 && challenge_->meters > 5)
         worldMarkerLabel(challenge_->meters, challenge_->opacity, challenge_->name.empty() ? "FRIEND'S RUN" : toUpperAscii(challenge_->name) + "'S RUN",
                          std::to_string(challenge_->meters) + " m", hexColor("#ff2bd6"));

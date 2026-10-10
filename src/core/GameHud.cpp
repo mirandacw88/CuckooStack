@@ -156,10 +156,11 @@ void Game::hudTitleOverlay() {
     if (H < 720) return hudTitleHeader();
     TextStyle daily = style(FontId::BodyBold, 13, kNeon, 0.12f, true);
     daily.opacity = 0.95f;
-    const std::string note = day_.attempts
-        ? "Today's best " + std::to_string(day_.best) + " · " + std::to_string(day_.attempts) + (day_.attempts == 1 ? " attempt" : " attempts") +
-              " · new course at midnight"
-        : "Same course every attempt today. A new one drops at midnight.";
+    const int lvAttempts = campaign_.attempts();
+    const std::string tries = std::to_string(lvAttempts) + (lvAttempts == 1 ? " attempt" : " attempts");
+    const std::string note = lvAttempts && campaign_.best() >= 1
+        ? "Your best here " + std::to_string(int(campaign_.best())) + " m of " + std::to_string(int(campaign_.length())) + " · " + tries
+        : "Reach the finish line " + std::to_string(int(campaign_.length())) + " m away to clear the level" + (lvAttempts ? " · " + tries : "");
     {
         const auto lines = text_->wrap(toUpperAscii(note), daily, std::min(maxW, 34 * text_->ch(daily)));
         const Up a = up(t, 0.24f);
@@ -176,13 +177,13 @@ void Game::hudTitleHeader() {
     const float W = viewW_, t = titleT_;
     const float maxW = W - 32;
     float top = safeTop_ + 16 + 44 + 28;
-    // .tag (1st child, no delay): "Daily Run · Tue, Oct 6"
+    // .tag (1st child, no delay): the level
     {
         TextStyle tag = style(FontId::BodyBold, 13, kNeon, 0.26f, true);
         tag.shadows = {blur(10, kNeon, 0.7f)};
         const Up a = up(t, 0.f);
         tag.opacity = a.alpha;
-        hudText("Daily Run · " + dayLabel(), tag, W / 2, top + a.dy);
+        hudText("Level " + std::to_string(campaign_.level()), tag, W / 2, top + a.dy);
         top += text_->lineBox(tag) + 10;
     }
     // h1 (2nd child): glitchIn .7s steps(1) .08s, then glitch every 5s from 1.2s
@@ -234,7 +235,7 @@ void Game::hudOverOverlay() {
     const float maxW = W - 32;
     hudOverMenu(overButtonRowBottom_);
 
-    hudPill("Tap to reboot", bottom, std::min(1.f, overT_ / 0.4f));
+    hudPill(runCleared_ ? "Tap for level " + std::to_string(campaign_.level()) : std::string("Tap to reboot"), bottom, std::min(1.f, overT_ / 0.4f));
     bottom -= text_->lineBox(style(FontId::BodyBold, 15, kText)) + 28 + 8 + 16;
     hudOverRewards(bottom); // coins from the run (+ x2 offer), level bar (GameUi.cpp)
 
@@ -262,10 +263,13 @@ void Game::hudOverOverlay() {
         rspan.opacity = 0.75f;
         for (TextStyle* s : {&b, &rb, &span}) s->opacity *= a.alpha;
         rspan.opacity *= a.alpha;
+        const int shownLevel = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
+        const int shownBest = runCleared_ ? int(Campaign::lengthOf(shownLevel)) : int(campaign_.best());
         const std::string cells[2][2][2] = {
             {{std::to_string(static_cast<int>(std::round(finalScore_ * e))), "Score"},
              {std::to_string(static_cast<int>(std::round(finalDist_ * e))) + " m", "Distance"}},
-            {{std::to_string(day_.best), "Today's best"}, {std::to_string(best_), "All-time best"}}};
+            {{std::to_string(shownBest) + " m", runCleared_ ? "Level length" : "Best here"},
+             {std::to_string(shownLevel), "Level"}}};
         float colW[2] = {0, 0};
         for (int r = 0; r < 2; ++r)
             for (int c = 0; c < 2; ++c)
@@ -295,6 +299,12 @@ void Game::hudOverOverlay() {
     {
         TextStyle tag = style(FontId::BodyBold, 13, kNeon, 0.26f, true);
         tag.shadows = {blur(10, kNeon, 0.7f)};
+        if (runCleared_) { // the level-cleared headline: big, gold, popping in
+            tag = style(FontId::Display, clampf(W * 0.09f, 30, 44), kVolt, 0.02f, true);
+            tag.shadows = {hard(-2, kHot), hard(2, kNeon), blur(24, kVolt, 0.7f)};
+            const float tw = text_->measure(toUpperAscii(overTag_), tag), room = W - 40.f; // shrink to fit the width
+            if (tw > room) tag.size *= room / tw;
+        }
         const Up a = up(t, 0.f);
         tag.opacity = a.alpha;
         hudText(overTag_, tag, W / 2, bottom - text_->lineBox(tag) + a.dy);
@@ -312,7 +322,7 @@ void Game::worldGateLabel() {
     const glm::mat4 plane = compose({float(gateX_), labelY, -0.8f}, glm::vec3(k, k, 1.f)); // local units = canvas px, Y up
     TextStyle a = style(FontId::BodyBold, 40, hexColor("#29e7ff") * 1.05f);
     a.opacity = gateOpacity_;
-    text_->drawBaseline(list_.worldText, "TODAY'S BEST", a, 0.f, 80.f - 62.f, TextAlign::Center, false, plane);
+    text_->drawBaseline(list_.worldText, "YOUR BEST", a, 0.f, 80.f - 62.f, TextAlign::Center, false, plane);
     TextStyle b = style(FontId::Display, 56, glm::vec3(1.05f));
     b.opacity = gateOpacity_;
     text_->drawBaseline(list_.worldText, std::to_string(static_cast<int>(std::floor(gateX_))) + " m", b, 0.f, 80.f - 128.f, TextAlign::Center, false, plane);
@@ -398,8 +408,24 @@ void Game::buildHud() {
                 hudRect({W / 2 - BW / 2 + i * BW / SLICES + w / 2, barY}, {w + 0.5f, BH}, c, 1.f);
             }
         } else {
-            hudText("Sector " + std::to_string(sector_) + " \u00b7 disco balls " + std::to_string(chain_) + "/" + std::to_string(surge::NEED),
+            hudText("Level " + std::to_string(campaign_.level()) + " \u00b7 disco balls " + std::to_string(chain_) + "/" + std::to_string(surge::NEED),
                     corn, W / 2, top + box + 4);
+            // progress toward the finish line
+            if (level_.finish() > 0) {
+                constexpr float BW = 150.f, BH = 4.f;
+                const float barY = top + box + 4 + text_->lineBox(corn) + 6 + BH / 2;
+                const float frac = clampf(float(x_ / level_.finish()), 0.f, 1.f);
+                hudRect({W / 2, barY}, {BW + 4, BH + 4}, css("#0a0818"), 0.7f);
+                hudRect({W / 2, barY}, {BW, BH}, kMuted, 0.35f);                         // the track still to run
+                if (frac > 0.f) hudRect({W / 2 - BW / 2 + BW * frac / 2, barY}, {BW * frac, BH}, glm::mix(kNeon, kVolt, frac), 1.f);
+                hudRect({W / 2 - BW / 2 + BW * frac, barY}, {7, 7}, glm::mix(kNeon, kVolt, frac), 0.9f, Shape::SoftDisc); // where you are
+                // a little checkered flag at the end
+                const glm::vec2 f0{W / 2 + BW / 2 + 8, barY - 5};
+                hudRect({f0.x - 4, barY}, {1.5f, 14}, glm::vec3(0.85f), 1.f);
+                for (int r = 0; r < 2; ++r)
+                    for (int c = 0; c < 3; ++c)
+                        hudRect({f0.x - 2 + c * 3.f, f0.y + r * 3.f}, {3, 3}, (r + c) % 2 ? css("#1a1030") : glm::vec3(1.f), 1.f);
+            }
         }
     }
 

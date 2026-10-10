@@ -88,13 +88,14 @@ void Streak::keep() {
 namespace {
 struct Spec { MissionKind kind; int targets[3]; }; // easy / medium / hard
 const Spec kSpecs[] = {
-    {MissionKind::Distance, {120, 250, 420}},
+    {MissionKind::Distance, {100, 180, 250}},   // levels are ~300 m long
     {MissionKind::Runs, {3, 5, 8}},
     {MissionKind::Perfects, {4, 10, 20}},
     {MissionKind::Surges, {1, 2, 4}},
     {MissionKind::CloseCalls, {2, 4, 8}},
     {MissionKind::Eggs, {60, 140, 260}},
     {MissionKind::BeatBest, {1, 1, 1}},
+    {MissionKind::LevelsCleared, {1, 2, 3}},
 };
 constexpr int kSpecCount = int(sizeof kSpecs / sizeof kSpecs[0]);
 } // namespace
@@ -203,7 +204,8 @@ std::string Missions::describe(const Mission& m) {
     case MissionKind::Surges: return m.target == 1 ? "Trigger a surge" : "Trigger " + n + " surges";
     case MissionKind::CloseCalls: return "Survive " + n + " close calls";
     case MissionKind::Eggs: return "Lay " + n + " eggs";
-    case MissionKind::BeatBest: return "Beat today’s best";
+    case MissionKind::BeatBest: return "Beat your best on a level";
+    case MissionKind::LevelsCleared: return m.target == 1 ? "Clear a level" : "Clear " + n + " levels";
     default: return "";
     }
 }

@@ -14,6 +14,9 @@ struct Tuning {
     int missionAllBonus = 150;     // "mission_bonus"   all three daily missions done
     int dailyDrop[7] = {20, 30, 40, 60, 80, 100, 250}; // "drop_1".."drop_7"  7-day login ladder, then it repeats
     int levelChestCoins = 100;     // "chest_coins"
+    int clearCoins = 50;           // "clear_coins"     coins for clearing a course level ...
+    int clearCoinsStep = 10;       // "clear_coins_step" ... plus this many per level number
+    int clearXp = 100;             // "clear_xp"        XP for clearing a course level
     int freeCoins = 50;            // "free_coins"      shop tile, rewarded ad
     int removeAdsBonus = 500;      // "noads_bonus"     one-off with the Remove Ads purchase
     int starterCoins = 1500;       // "starter_coins"

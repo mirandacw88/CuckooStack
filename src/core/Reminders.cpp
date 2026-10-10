@@ -20,7 +20,7 @@ std::vector<Reminder> planReminders(IClock& clock, const Tuning& t, const Remind
             out.push_back({100, when, "Your " + std::to_string(s.streak) + "-day streak ends tonight",
                            "One quick run keeps the flame alive."});
     }
-    // the next days: a new course every day, at the player's usual time
+    // the next days: one reminder a day, at the player's usual time
     for (int d = 1; d < days; ++d) {
         if (backoff && d % 3 != 0) continue;
         const int64_t when = at(d, s.usualHour);
@@ -29,10 +29,10 @@ std::vector<Reminder> planReminders(IClock& clock, const Tuning& t, const Remind
         Reminder r{100 + d, when, "", ""};
         if (d == 1 && s.streak >= 2) {
             r.title = "Day " + std::to_string(s.streak + 1) + " of your streak";
-            r.body = "A new course just dropped. Keep the flame going!";
+            r.body = "Your next level is waiting. Keep the flame going!";
         } else if (variant == 0) {
-            r.title = "New course is live";
-            r.body = "Same course for everyone today. Can you top the board?";
+            r.title = "Your next level is waiting";
+            r.body = "Can you reach the finish line this time?";
         } else if (variant == 1) {
             r.title = step == 6 ? "Day 7 chest is waiting" : "Your daily drop is ready";
             r.body = step == 6 ? "The big one: a chest full of coins." : "Free coins are waiting in today's drop.";
