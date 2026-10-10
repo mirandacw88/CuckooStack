@@ -23,7 +23,7 @@ public:
 
     // IAudio (game thread)
     void play(Sfx sfx, int variant = 0) override;
-    void musicStart() override;
+    void musicStart(bool fromTop) override;
     void musicStop(bool powerDown) override;
     void musicTempo(float bpm) override;
     void musicSurge(bool on) override;

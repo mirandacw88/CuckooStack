@@ -116,7 +116,8 @@ src/platform  PlatformSurface implementations + entry points (Android, iOS, desk
 and streamed by `src/core/audio/Music.{h,cpp}` (miniaudio's MP3 decoder, cubic resampling to the device rate, mixed
 in stereo under the synth's sound effects). Midnight City Sprint plays on the title screen and during runs; a surge
 eases it up to 1.15× speed (about two semitones higher, like a fast-forwarded tape) and back down afterwards; a crash
-winds the tape down. The synthesized songs below remain as the fallback when no tracks are built in, and every sound effect is
+winds the tape down. Every new run (a retry or the next level) starts the song from the top; only a revive carries
+on where the crash stopped it. The synthesized songs below remain as the fallback when no tracks are built in, and every sound effect is
 still synthesized except the finish-line applause (`assets/sfx/applause_cheer.mp3`, `Sfx::Cheer`, played by
 `MusicPlayer::cheer` on its own voice so the music fading out doesn't cut it off). Each finish-line firework
 burst plays a synthesized boom (`Sfx::Firework`; willow shells crackle as they fall). Visuals pulse on the track's beat grid (`MusicTracks.inc`), scaled by the playback speed. To change the music,

@@ -282,7 +282,7 @@ void Game::start() {
     if (dayStreak_.count() != streakBefore) track("streak_update", {{"count", std::to_string(dayStreak_.count())}});
     reset();
     state_ = State::Play;
-    beat_.start(); svc_.audio->musicStart();
+    beat_.start(); svc_.audio->musicStart(true); // a new run: the song from the top
     day_.attempts++; saveDay(); campaign_.attempt(); placeGate();
     if (debugNearFinish_) { // developer menu: test the finish quickly
         debugNearFinish_ = false;
@@ -603,7 +603,7 @@ void Game::revive() {
     hen_.unshatter();
     graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
     timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
-    beat_.start(); svc_.audio->musicStart();
+    beat_.start(); svc_.audio->musicStart(false); // a revive: the song carries on where the crash stopped it
     const glm::vec3 p{float(x_), float(baseY_) + 0.6f, 0};
     rings_.spawn(p, C().cyan, 3.2f, 0.6f, true); rings_.spawn(p, C().pink, 2.2f, 0.5f, true);
     burst(p, 90, {C().cyan, C().white, C().volt}, 3, 10, 0.8f, 0.1f, 0.6f, 0, false, 2, 3);
@@ -1073,7 +1073,7 @@ void Game::update(double rawDt) {
     // the soundtrack starts on the title screen (once the age screen has been answered)
     if (state_ == State::Title && !titleMusic_ && profile_.audience() != Audience::Unknown) {
         titleMusic_ = true;
-        beat_.start(); svc_.audio->musicStart();
+        beat_.start(); svc_.audio->musicStart(true);
     }
     if (freeze_ > 0) freeze_ -= rdt;
     timeScale_ += (1 - timeScale_) * std::min(1.f, rdt * (state_ == State::Dead ? 1.2f : 4.f));

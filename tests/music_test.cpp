@@ -1,4 +1,4 @@
-// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop; beat grid for the visuals;
+// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop, restart vs revive; beat grid for the visuals;
 // the finish-line applause and firework bursts.
 #include "TestUtil.h"
 #include "../src/core/audio/Synth.h"
@@ -29,7 +29,7 @@ int main() {
     audio::Synth s(48000);
     double bpm = 0, first = 0, pos = 0, rate = 0;
     check(!s.musicBeat(bpm, first, pos, rate), "silent until the music starts");
-    s.musicStart();
+    s.musicStart(true);
     std::vector<float> out;
     play(s, 3, &out);
     check(rms(out) > 0.02, "the track is audible");
@@ -54,9 +54,22 @@ int main() {
     s.musicStop(true);
     play(s, 1.5);
     check(!s.musicBeat(bpm, first, pos, rate), "a crash winds the tape down to silence");
-    s.musicStart();
+    s.musicStart(false);
     play(s, 1);
-    check(s.musicBeat(bpm, first, pos, rate) && pos > 8, "the next run carries on from there");
+    check(s.musicBeat(bpm, first, pos, rate) && pos > 8, "a revive carries on from there");
+    s.musicStop(true);
+    play(s, 1.5);
+    s.musicStart(true);
+    play(s, 1);
+    check(s.musicBeat(bpm, first, pos, rate) && std::abs(pos - 1) < 0.05, "a new run starts the song from the top");
+    s.musicStart(true);
+    play(s, 1);
+    check(s.musicBeat(bpm, first, pos, rate) && std::abs(pos - 2) < 0.05, "...but not if it's already playing (title into the first run)");
+    s.musicStop(true);
+    play(s, 0.3);
+    s.musicStart(true);
+    play(s, 1);
+    check(s.musicBeat(bpm, first, pos, rate) && std::abs(pos - 1) < 0.05, "a quick retry, mid wind-down, also starts over");
     s.setMuted(true);
     out.clear();
     play(s, 1, &out);
@@ -72,7 +85,7 @@ int main() {
     out.clear();
     play(c, 2, &out);
     check(rms(out) > 0.02, "the applause is audible without music");
-    c.musicStart();
+    c.musicStart(true);
     play(c, 1);
     c.musicStop(false);
     out.clear();

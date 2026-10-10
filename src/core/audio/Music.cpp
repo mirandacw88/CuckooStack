@@ -117,8 +117,15 @@ MusicPlayer::MusicPlayer() {
 
 MusicPlayer::~MusicPlayer() = default;
 
-void MusicPlayer::start() {
+void MusicPlayer::start(bool fromTop) {
     if (!ok_) return;
+    const bool stopping = !playing_ || tapeStopping_ || masterTarget_ <= 0.f; // stopped, or winding / fading down
+    if (fromTop && stopping) {
+        Track& t = *tracks_[0];
+        t.seekTo(0);
+        master_ = 0.f; t.gain = 0.f;                // fade in from silence (cuts any wind-down short)
+        surgeRate_ = 1.f;
+    }
     playing_ = true; tapeStopping_ = false; rate_ = 1.f;
     masterTarget_ = 1.f;
     tracks_[0]->target = 1.f;

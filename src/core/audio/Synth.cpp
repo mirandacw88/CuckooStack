@@ -100,7 +100,7 @@ void Synth::push(const Command& c) {
     head_.store(next, std::memory_order_release);
 }
 void Synth::play(Sfx s, int variant) { push({Command::Sfx, int(s) | (variant << 8), 0}); }
-void Synth::musicStart() { push({Command::MusicStart, 0, 0}); }
+void Synth::musicStart(bool fromTop) { push({Command::MusicStart, fromTop ? 1 : 0, 0}); }
 void Synth::musicStop(bool sad) { push({Command::MusicStop, sad ? 1 : 0, 0}); }
 void Synth::musicTempo(float bpm) { push({Command::Tempo, 0, bpm}); }
 void Synth::musicSurge(bool on) { push({Command::Surge, on ? 1 : 0, 0}); }
@@ -122,7 +122,7 @@ void Synth::processCommands() {
         const Command c = queue_[t];
         switch (c.type) {
         case Command::Sfx: sfx(Sfx(c.a & 0xFF), c.a >> 8); break;
-        case Command::MusicStart: if (music_.ok()) music_.start(); else startMusic(); break;
+        case Command::MusicStart: if (music_.ok()) music_.start(c.a != 0); else startMusic(); break;
         case Command::MusicStop: if (music_.ok()) music_.stop(c.a != 0); else stopMusic(c.a != 0); break;
         case Command::Tempo: bpm_ = c.f; break; // (recorded tracks keep their own tempo)
         case Command::Surge:

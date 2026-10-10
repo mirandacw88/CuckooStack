@@ -21,7 +21,9 @@ class IAudio {
 public:
     virtual ~IAudio() = default;
     virtual void play(Sfx sfx, int variant = 0) = 0;    // variant: egg index for Lay, semitone step for Perfect
-    virtual void musicStart() = 0;
+    // fromTop: a new run, so the song starts over (unless it's already playing, e.g. the title music flowing into the
+    // first run); false: carry on where it stopped (a revive)
+    virtual void musicStart(bool fromTop) = 0;
     virtual void musicStop(bool powerDown) = 0;
     virtual void musicTempo(float bpm) = 0;
     virtual void musicSurge(bool on) = 0;            // party pattern during a surge; the song resumes where it left off
@@ -167,7 +169,7 @@ public:
 class NullAudio final : public IAudio {
 public:
     void play(Sfx, int) override {}
-    void musicStart() override {}
+    void musicStart(bool) override {}
     void musicStop(bool) override {}
     void musicTempo(float) override {}
     void musicSurge(bool) override {}

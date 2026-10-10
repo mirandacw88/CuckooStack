@@ -2,10 +2,10 @@
 // decoded while it plays (no full-length PCM in memory), resampled to the device rate and mixed in stereo under the
 // synth's sound effects (Synth::render).
 //
-// Behaviour: start() fades the track in where it last stopped; a surge speeds it up (and, like a fast-forwarded
-// tape, raises its pitch) and eases it back afterwards; stop(tapeStop) winds the music down like a tape stopping
-// (a crash) or just fades it. The beat grid (MusicTracks.inc, from scripts/audio/analyze_music.py) lets the game's
-// visuals pulse in time (beat()).
+// Behaviour: start(fromTop) fades the track in from the beginning (a new run) or where it last stopped (a revive); a
+// surge speeds it up (and, like a fast-forwarded tape, raises its pitch) and eases it back afterwards; stop(tapeStop)
+// winds the music down like a tape stopping (a crash) or just fades it. The beat grid (MusicTracks.inc, from
+// scripts/audio/analyze_music.py) lets the game's visuals pulse in time (beat()).
 //
 // It also plays the recorded one-shot sound effects (cheer(): the applause at the finish line), on their own voice so
 // the music fading out doesn't cut them off.
@@ -31,7 +31,7 @@ public:
     bool ok() const { return ok_; }
 
     // audio thread
-    void start();
+    void start(bool fromTop);           // fromTop: unless it's already playing (the title music into the first run)
     void stop(bool tapeStop);
     void surge(bool on);
     void cheer();                       // the finish-line applause, from the start
