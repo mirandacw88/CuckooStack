@@ -106,16 +106,27 @@ void Synth::musicTempo(float bpm) { push({Command::Tempo, 0, bpm}); }
 void Synth::musicSurge(bool on) { push({Command::Surge, on ? 1 : 0, 0}); }
 void Synth::setMuted(bool m) { push({Command::Mute, m ? 1 : 0, 0}); }
 
+bool Synth::musicBeat(double& bpm, double& firstBeat, double& position) const {
+    int track = -1;
+    double pos = 0;
+    music_.beat(track, pos);
+    const TrackInfo* info = musicTrackInfo(track);
+    if (!info) return false;
+    bpm = info->bpm; firstBeat = info->firstBeat; position = pos;
+    return true;
+}
+
 void Synth::processCommands() {
     size_t t = tail_.load(std::memory_order_relaxed);
     while (t != head_.load(std::memory_order_acquire)) {
         const Command c = queue_[t];
         switch (c.type) {
         case Command::Sfx: sfx(Sfx(c.a & 0xFF), c.a >> 8); break;
-        case Command::MusicStart: startMusic(); break;
-        case Command::MusicStop: stopMusic(c.a != 0); break;
-        case Command::Tempo: bpm_ = c.f; break;
+        case Command::MusicStart: if (music_.ok()) music_.start(); else startMusic(); break;
+        case Command::MusicStop: if (music_.ok()) music_.stop(c.a != 0); else stopMusic(c.a != 0); break;
+        case Command::Tempo: bpm_ = c.f; break; // (recorded tracks keep their own tempo)
         case Command::Surge:
+            if (music_.ok()) { music_.surge(c.a != 0); break; }
             if (c.a && playing_ && !muted_ && !party_) { // party music only while the music is audible
                 party_ = true; partyStep_ = 0;
                 filtFreq_.cancelScheduledValues(now_);   // open any intro / build filter fully
@@ -126,6 +137,7 @@ void Synth::processCommands() {
             break;
         case Command::Mute:
             muted_ = c.a != 0;
+            music_.setMuted(muted_);
             out_.setTargetAtTime(muted_ || !playing_ ? 0.f : 0.55f, now_, 0.05f); // music.toggle()
             break;
         }
@@ -448,6 +460,7 @@ void Synth::render(float* out, int frames, int channels) {
         renderBlock(mono_.data(), n);
         for (int i = 0; i < n; ++i)
             for (int c = 0; c < channels; ++c) out[(done + i) * channels + c] = mono_[i];
+        music_.render(out + size_t(done) * channels, n, channels, sr_); // the soundtrack, in stereo, under the SFX
         done += n;
     }
 }

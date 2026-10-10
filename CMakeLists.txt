@@ -97,6 +97,18 @@ add_custom_command(OUTPUT ${_hen_cpp}
   COMMENT "Embedding the hen model"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hen_cpp})
+# the soundtrack (assets/music, beat grids in src/core/audio/MusicTracks.inc via scripts/audio/analyze_music.py)
+foreach(_m midnight_city_sprint.mp3 turbo_button_rush.mp3)
+  string(REPLACE "." "_" _sym ${_m})
+  set(_in ${CMAKE_CURRENT_SOURCE_DIR}/assets/music/${_m})
+  set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)
+  add_custom_command(OUTPUT ${_out}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${_in} -DOUTPUT=${_out} -DSYMBOL=${_sym} -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_in} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding music ${_m}"
+    VERBATIM)
+  list(APPEND CS_FONT_SOURCES ${_out})
+endforeach()
 # outfits with their own hen model (scripts/models/add_outfit_model.py): every assets/models/outfits/<id>.mesh + .jpg
 file(GLOB _outfit_assets CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.mesh
      ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/outfits/*.jpg)
@@ -138,9 +150,16 @@ add_library(cs_core STATIC
   src/core/Reminders.cpp
   src/core/Tuning.cpp
   src/core/World.cpp
+  src/core/audio/Music.cpp
+  src/core/audio/MiniaudioImpl.cpp
   src/core/audio/Synth.cpp)
 target_include_directories(cs_core PUBLIC src)
-target_include_directories(cs_core SYSTEM PRIVATE ${TP}/stb)
+target_include_directories(cs_core SYSTEM PRIVATE ${TP}/stb ${TP}/miniaudio)
+# miniaudio: MP3 decoding everywhere; the playback device too on desktop (DesktopAudio.cpp)
+if(CS_PLATFORM STREQUAL "desktop")
+  set_source_files_properties(src/core/audio/MiniaudioImpl.cpp PROPERTIES COMPILE_DEFINITIONS CS_MA_DEVICE_IO)
+endif()
+set_source_files_properties(src/core/audio/MiniaudioImpl.cpp PROPERTIES COMPILE_OPTIONS "-O2;-w") # decode fast even in Debug
 target_link_libraries(cs_core PUBLIC glm PRIVATE cs_fonts)
 # the SDF atlas bake (stb_truetype) runs at startup: keep it optimised even in Debug builds
 set_source_files_properties(src/core/Font.cpp PROPERTIES COMPILE_OPTIONS "-O2")
@@ -384,6 +403,9 @@ if(CS_PLATFORM STREQUAL "desktop")
   add_executable(campaign_test tests/campaign_test.cpp)
   target_link_libraries(campaign_test PRIVATE cs_core)
   add_test(NAME campaign COMMAND campaign_test)
+  add_executable(music_test tests/music_test.cpp)
+  target_link_libraries(music_test PRIVATE cs_core)
+  add_test(NAME music COMMAND music_test)
   add_executable(render_audio tests/render_audio.cpp)
   target_link_libraries(render_audio PRIVATE cs_core)
   find_program(NODE node)

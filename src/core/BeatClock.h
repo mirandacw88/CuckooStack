@@ -14,13 +14,23 @@ public:
     // Surge party pattern: kick on every beat plus the last 16th of the bar (mirrors Synth::schedulePartyStep)
     void setParty(bool on) { if (on && !party_) partyStep_ = 0; party_ = on; }
     void stop() { playing_ = false; }
-    void setTempoFromSpeed(double speed, double cap = 1e9) { bpm_ = std::min(cap, 126.0 + std::max(0.0, speed - 8.0) * 3.4); }
+    void setTempoFromSpeed(double speed, double cap = 1e9) { if (!tracked_) bpm_ = std::min(cap, 126.0 + std::max(0.0, speed - 8.0) * 3.4); }
     double bpm() const { return bpm_; }
+
+    // A recorded soundtrack is playing: lock the pulses to its beat grid (every beat is a pulse). Call each frame;
+    // untrack() falls back to the synthetic clock (the synth soundtrack, or no audio at all).
+    void syncToTrack(double bpm, double firstBeat, double position) {
+        tracked_ = true;
+        bpm_ = bpm;
+        const double period = 60.0 / bpm, since = position - firstBeat;
+        if (since >= 0) lastKick_ = now_ - std::fmod(since, period);
+    }
+    void untrack() { tracked_ = false; }
 
     // advance in real (not slowed) time, like AudioContext.currentTime
     void advance(double realDt) {
         now_ += realDt;
-        if (!playing_) return;
+        if (!playing_ || tracked_) return;
         const double sixteenth = 60.0 / bpm_ / 4.0;
         while (nextT_ <= now_) {
             if (party_) {
@@ -46,7 +56,7 @@ public:
     }
 
 private:
-    bool playing_ = false, party_ = false;
+    bool playing_ = false, party_ = false, tracked_ = false;
     int step_ = 0, partyStep_ = 0;
     double now_ = 0, nextT_ = 0, bpm_ = 126.0, lastKick_ = -1;
 };

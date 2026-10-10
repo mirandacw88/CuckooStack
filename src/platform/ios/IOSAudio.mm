@@ -2,6 +2,7 @@
 #include "../../core/Log.h"
 #include "../../core/audio/Synth.h"
 
+#include <algorithm>
 #import <AVFoundation/AVFoundation.h>
 
 @interface CSAudioImpl : NSObject
@@ -27,10 +28,21 @@
     AVAudioFormat* format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:(rate > 0 ? rate : 48000.0) channels:2];
     cs::audio::Synth* synth = self.synth;
     self.source = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL*, const AudioTimeStamp*, AVAudioFrameCount frames, AudioBufferList* out) {
-        // standard format is deinterleaved float32: render mono into the first buffer, copy to the rest
+        // standard format is deinterleaved float32: render interleaved stereo (the soundtrack is stereo) in chunks
+        // into a stack buffer, then split it into the left / right buffers
         float* left = static_cast<float*>(out->mBuffers[0].mData);
-        synth->render(left, int(frames), 1);
-        for (UInt32 b = 1; b < out->mNumberBuffers; ++b) memcpy(out->mBuffers[b].mData, left, frames * sizeof(float));
+        float* right = out->mNumberBuffers > 1 ? static_cast<float*>(out->mBuffers[1].mData) : nullptr;
+        float inter[512 * 2];
+        for (AVAudioFrameCount done = 0; done < frames;) {
+            const int n = int(std::min<AVAudioFrameCount>(512, frames - done));
+            synth->render(inter, n, 2);
+            for (int i = 0; i < n; ++i) {
+                left[done + i] = inter[i * 2];
+                if (right) right[done + i] = inter[i * 2 + 1];
+            }
+            done += AVAudioFrameCount(n);
+        }
+        for (UInt32 b = 2; b < out->mNumberBuffers; ++b) memcpy(out->mBuffers[b].mData, left, frames * sizeof(float));
         return noErr;
     }];
     [self.engine attachNode:self.source];

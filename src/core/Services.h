@@ -24,6 +24,9 @@ public:
     virtual void musicTempo(float bpm) = 0;
     virtual void musicSurge(bool on) = 0;            // party pattern during a surge; the song resumes where it left off
     virtual void setMuted(bool muted) = 0;
+    // A recorded soundtrack's beat grid, for visuals in time with the music: false = none (synth or no audio);
+    // otherwise its tempo, first-beat time and the playback position, seconds.
+    virtual bool musicBeat(double& bpm, double& firstBeat, double& position) const { (void)bpm; (void)firstBeat; (void)position; return false; }
 };
 
 // localStorage replacement: small string key/value pairs, persisted by the platform.

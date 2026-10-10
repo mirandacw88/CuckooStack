@@ -112,7 +112,15 @@ src/platform  PlatformSurface implementations + entry points (Android, iOS, desk
 
 ### Audio
 
-There are no audio assets: like the web build, every sound is synthesized live. `src/core/audio/` ports the Web
+**Soundtrack (recorded).** The background music is now two recorded tracks in `assets/music/`, embedded in the build
+and streamed by `src/core/audio/Music.{h,cpp}` (miniaudio's MP3 decoder, cubic resampling to the device rate, mixed
+in stereo under the synth's sound effects). Midnight City Sprint plays on the title screen and during runs; a surge
+crossfades to Turbo Button Rush's loudest section, then back to where the run track paused; a crash winds the tape
+down. The synthesized songs below remain as the fallback when no tracks are built in, and every sound effect is
+still synthesized. Visuals pulse on each track's beat grid (`MusicTracks.inc`). To change the music, replace the
+files and run `python3 scripts/audio/analyze_music.py` (tempo, first beat and loudest section per track).
+
+Apart from the soundtrack, there are no audio assets: like the web build, every sound is synthesized live. `src/core/audio/` ports the Web
 Audio graph the game uses onto a small engine. It has `AudioParam` automation (set, linear and exponential ramps,
 set-target, cancel), PolyBLEP band-limited oscillators, `BiquadFilterNode` with the spec's coefficient formulas
 (Q in dB for lowpass/highpass), the feedback delay, sidechain pump, master filter, and the
