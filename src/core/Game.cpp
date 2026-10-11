@@ -1196,7 +1196,7 @@ void Game::update(double rawDt) {
             m.distance = int(std::floor(x_)); m.score = score_;
             const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
             m.label = "LEVEL " + std::to_string(lvl) + (runCleared_ ? " CLEARED" : "");
-            m.newBest = x_ > day_.bestDist || score_ > best_;
+            m.newBest = newBestRun_; // (finishRun has already recorded the run's bests)
             svc_.replay->saveClip(m);
         }
     }

@@ -38,7 +38,11 @@ struct IOSVideoRecorder::Impl {
     double lastPush = -1, retryAt = 0;
     double pausedTotal = 0, pausedAt = -1; // capture pauses, cut out of the clip's timeline
     double markPts = -1;                   // the last crash, on the clip's timeline
-    std::atomic<double> dropFrom{-1}, dropTo{-1}; // a cut stretch: encoder output from it that arrives late is dropped
+    // a revive's cut: frames encoded before it (the generation then) and stamped from the crash on are dropped
+    // when the encoder hands them back late. (Not by time alone: the timeline closes over the cut, so the revived
+    // run's frames reuse those timestamps.)
+    std::atomic<uintptr_t> generation{0};
+    std::atomic<double> cutFrom{-1};
     bool forceKey = true;
 #ifndef NDEBUG
     double costSec = 0, costLogAt = 0; // debug: time spent in push() (copy + submit), logged every 2 s
@@ -61,12 +65,12 @@ struct IOSVideoRecorder::Impl {
         inFlight = 0;
     }
     // encoder thread
-    void encoded(OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
+    void encoded(uintptr_t gen, OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
         --inFlight;
         if (status != noErr) rebuild = true;
         if (status != noErr || !sb || (flags & kVTEncodeInfo_FrameDropped) || !CMSampleBufferDataIsReady(sb)) return;
         std::lock_guard<std::mutex> lock(m);
-        if (const double p = ptsOf(sb); p >= dropFrom.load() && p < dropTo.load()) return; // inside a cut (a revived crash)
+        if (gen != generation.load() && ptsOf(sb) >= cutFrom.load()) return; // from the crash a revive cut out
         if (samples.empty() && !isKeyframe(sb)) return; // the window always starts on a keyframe
         CFRetain(sb);
         samples.push_back(sb);
@@ -90,8 +94,8 @@ bool IOSVideoRecorder::start(int width, int height) {
     s.stop();
     NSDictionary* source = @{(id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA), (id)kCVPixelBufferWidthKey: @(width),
                              (id)kCVPixelBufferHeightKey: @(height), (id)kCVPixelBufferIOSurfacePropertiesKey: @{}};
-    VTCompressionOutputCallback cb = [](void* ref, void*, OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
-        static_cast<Impl*>(ref)->encoded(status, flags, sb);
+    VTCompressionOutputCallback cb = [](void* ref, void* frameRef, OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
+        static_cast<Impl*>(ref)->encoded(reinterpret_cast<uintptr_t>(frameRef), status, flags, sb);
     };
     OSStatus st = VTCompressionSessionCreate(nullptr, width, height, kCMVideoCodecType_H264, nullptr, (__bridge CFDictionaryRef)source, nullptr, cb, &s,
                                              &s.session);
@@ -131,7 +135,8 @@ void IOSVideoRecorder::dropSinceMark() {
         std::lock_guard<std::mutex> lock(s.m);
         while (!s.samples.empty() && ptsOf(s.samples.back()) >= s.markPts) { CFRelease(s.samples.back()); s.samples.pop_back(); }
     }
-    s.dropFrom = s.markPts; s.dropTo = end;
+    s.cutFrom = s.markPts;
+    ++s.generation;
     s.pausedTotal += std::max(0.0, end - s.markPts); // the timeline closes over the cut
     s.forceKey = true; // the next frame can't lean on the dropped ones
     s.markPts = -1;
@@ -174,8 +179,8 @@ void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height
     NSDictionary* props = s.forceKey ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame: @YES} : nil;
     s.forceKey = false;
     ++s.inFlight;
-    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now - s.pausedTotal, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props, nullptr,
-                                        nullptr) != noErr) {
+    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now - s.pausedTotal, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props,
+                                        reinterpret_cast<void*>(s.generation.load()), nullptr) != noErr) {
         --s.inFlight;
         s.rebuild = true;
     }

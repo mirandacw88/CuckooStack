@@ -5,23 +5,6 @@
 using namespace cs;
 using namespace test;
 
-namespace {
-// records what the game asks of Share Replay
-struct FakeReplay final : IReplay {
-    int saves = 0, crashes = 0, revives = 0;
-    bool capturing = false;
-    ReplayState state() override { return ReplayState::Recording; }
-    void setEnabled(bool) override {}
-    void runStarted() override {}
-    void setCapturing(bool on) override { capturing = on; }
-    void crashed() override { ++crashes; }
-    void revived() override { ++revives; }
-    void saveClip(const ReplayMeta&) override { ++saves; }
-    void shareVideo() override {}
-    bool consumeShared(std::string&) override { return false; }
-};
-} // namespace
-
 int main() {
     {   // ---- AdPolicy: interstitial rules
         FakeStorage st;

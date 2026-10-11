@@ -36,7 +36,7 @@ public:
     // shatter, and the finish line's runway, fireworks and applause. Real seconds.
     static constexpr float kCrashTail = 2.5f;
     static constexpr float kFinishCelebration = 5.5f;
-
+    static constexpr float kMinReplaySeconds = 3.f; // shorter runs make no replay clip
     enum class State { Title, Play, Dead };
 
     explicit Game(const GameServices& services);
@@ -96,6 +96,8 @@ public:
     int courseLevel() const { return campaign_.level(); }
     int levelAttempts() const { return campaign_.attempts(); }
     bool lastRunCleared() const { return runCleared_; }
+    float runSeconds() const { return run_.seconds; } // play time this run (revives included)
+    bool replayTooShort() const { return replayTooShort_; }
     int coins() const { return wallet_.coins(); }
     void debugNearFinish() { debugNearFinish_ = true; }
     int liveSmashDebris() const { int n = 0; for (const auto& b : smashPool_) n += b.life > 0; return n; }
@@ -323,7 +325,6 @@ private:
     bool runOver_ = false;                    // finishRun has run: no revive any more, the clip can be requested
     bool replayRequested_ = false;            // the run's clip was requested (or it was too short for one)
     bool replayTooShort_ = false;             // ... too short: the results say so
-    static constexpr float kMinReplaySeconds = 3.f;
     // a friend's challenge on today's course (challenge links): their distance shows as a pink marker
     struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };
     std::optional<Challenge> challenge_;

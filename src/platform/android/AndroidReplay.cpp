@@ -1,4 +1,5 @@
 #include "AndroidReplay.h"
+#include "../../core/ReplayClip.h"
 #include "../../core/Log.h"
 #include "../../graphics/Renderer.h"
 
@@ -340,58 +341,33 @@ void AndroidReplay::exportClip(int64_t toUs, std::string path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     // gameplay time: real time minus the capture pauses before it (Continue panel, menus...)
-    std::vector<std::pair<int64_t, int64_t>> pauses;
+    std::vector<replay::Pause> pauses; // capture pauses and revived crashes, cut out of the clip
     { std::lock_guard<std::mutex> lock(pauseMutex_); pauses.assign(pauses_.begin(), pauses_.end()); }
-    auto paused = [&pauses](int64_t pts) { // inside a pause or a cut (frames still in the encoder when it began)
-        for (const auto& [a, b] : pauses) if (pts >= a && pts < b) return true;
-        return false;
-    };
-    auto played = [&pauses](int64_t pts) {
-        int64_t t = pts;
-        for (const auto& [a, b] : pauses) t -= std::clamp<int64_t>(pts, a, b) - a;
-        return t;
-    };
     std::vector<Sample> video, audio;
     std::vector<int64_t> videoOut, audioOut; // output timestamps
     AMediaFormat* vfmt = nullptr;
     AMediaFormat* afmt = nullptr;
     // the formats are borrowed for the export (AMediaFormat_copy needs API 28) and handed back afterwards
-    int64_t startKey = INT64_MIN, t0 = 0, lastGame = 0;
+    replay::ClipRequest req;
+    req.runStart = runStart; req.cut = cut; req.card = card; req.to = toUs; req.clipUs = kClipUs; req.frameUs = 1'000'000 / kFps;
+    int64_t lastGame = 0;
     {
         std::lock_guard<std::mutex> lock(videoTrack_.m);
+        std::lock_guard<std::mutex> alock(audioTrack_.m);
         std::swap(vfmt, videoTrack_.format);
-        // game frames: this run's last kClipUs of play before the cut, from a keyframe; then the end card from its keyframe
-        const int64_t from = played(cut) - kClipUs;
-        for (const Sample& s : videoTrack_.samples) {
-            if (s.pts < runStart || s.pts >= cut || !(s.flags & kKeyFrame) || paused(s.pts)) continue;
-            if (played(s.pts) <= from || startKey == INT64_MIN) startKey = s.pts;
-            if (played(s.pts) > from) break;
-        }
-        t0 = startKey == INT64_MIN ? 0 : played(startKey);
-        bool inCard = false, needKey = false;
-        for (const Sample& s : videoTrack_.samples) {
-            if (s.pts > toUs) break;
-            if (startKey == INT64_MIN || s.pts < startKey) continue;
-            if (s.pts < cut) {
-                if (paused(s.pts)) { needKey = true; continue; } // a cut: carry on from the next keyframe
-                if (needKey && !(s.flags & kKeyFrame)) continue;
-                needKey = false;
-                video.push_back(s);
-                videoOut.push_back(lastGame = played(s.pts) - t0);
-                continue;
-            }
-            if (!inCard && !(s.pts >= card && (s.flags & kKeyFrame))) continue;
-            if (!inCard) { inCard = true; t0 = s.pts - (lastGame + 1'000'000 / kFps); } // the card follows the last game frame
-            video.push_back(s);
-            videoOut.push_back(s.pts - t0);
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(audioTrack_.m);
         std::swap(afmt, audioTrack_.format);
-        const int64_t a0 = startKey == INT64_MIN ? 0 : played(startKey);
-        for (const Sample& s : audioTrack_.samples)
-            if (startKey != INT64_MIN && s.pts >= startKey && s.pts < cut && !paused(s.pts)) { audio.push_back(s); audioOut.push_back(played(s.pts) - a0); }
+        std::vector<replay::Frame> frames;
+        frames.reserve(videoTrack_.samples.size());
+        for (const Sample& s : videoTrack_.samples) frames.push_back({s.pts, (s.flags & kKeyFrame) != 0});
+        std::vector<int64_t> audioPts;
+        audioPts.reserve(audioTrack_.samples.size());
+        for (const Sample& s : audioTrack_.samples) audioPts.push_back(s.pts);
+        const replay::ClipPlan plan = replay::planClip(frames, audioPts, pauses, req); // ReplayClip.h
+        for (size_t i : plan.video) video.push_back(videoTrack_.samples[i]);
+        for (size_t i : plan.audio) audio.push_back(audioTrack_.samples[i]);
+        videoOut = plan.videoOut;
+        audioOut = plan.audioOut;
+        lastGame = plan.gameLength;
     }
     bool ok = vfmt && video.size() >= 2 && lastGame >= 1'000'000; // at least a second of play
     if (ok) {

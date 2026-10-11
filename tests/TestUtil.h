@@ -78,6 +78,24 @@ struct FakeStore : cs::IStore {
     bool pollEvent(cs::PurchaseEvent& e) override { if (queue.empty()) return false; e = queue.front(); queue.erase(queue.begin()); return true; }
 };
 
+// Share Replay as the game drives it: records every call (tests/replay_test.cpp, monetization_test.cpp)
+struct FakeReplay final : cs::IReplay {
+    cs::ReplayState st = cs::ReplayState::Recording;
+    int saves = 0, crashes = 0, revives = 0, runStarts = 0, shares = 0, enables = 0;
+    bool enabled = false, capturing = false;
+    std::vector<bool> captureLog; // every setCapturing change
+    cs::ReplayMeta last;
+    cs::ReplayState state() override { return st; }
+    void setEnabled(bool on) override { enabled = on; ++enables; }
+    void runStarted() override { ++runStarts; }
+    void setCapturing(bool on) override { if (on != capturing) captureLog.push_back(on); capturing = on; }
+    void crashed() override { ++crashes; }
+    void revived() override { ++revives; }
+    void saveClip(const cs::ReplayMeta& m) override { ++saves; last = m; }
+    void shareVideo() override { ++shares; }
+    bool consumeShared(std::string&) override { return false; }
+};
+
 inline void step(cs::Game& g, float seconds) { for (int i = 0; i < int(seconds * 60); ++i) g.update(1.0 / 60.0); }
 
 // start a run and let the hen hit the first wall without laying eggs
