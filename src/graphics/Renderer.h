@@ -62,6 +62,7 @@ public:
     bool startReadback(VkExtent2D size, FrameSink sink);
     void stopReadback();
     bool readingBack() const { return bool(rbSink_); }
+    void setReadbackPaused(bool paused) { rbPaused_ = paused; } // no GPU copies while paused (nothing to record)
     // While set, the recorder receives this image (RGBA8, e.g. the replay end card) instead of the screen.
     bool setRecordOverlay(const uint8_t* rgba, uint32_t width, uint32_t height);
     void clearRecordOverlay() { recOverlayOn_ = false; }
@@ -156,7 +157,7 @@ private:
     std::array<Readback, kFramesInFlight> rb_{};
     VkExtent2D rbSize_{};
     FrameSink rbSink_;
-    bool rbThisFrame_ = false;
+    bool rbThisFrame_ = false, rbPaused_ = false;
     std::chrono::steady_clock::time_point rbLast_{};
     void recordReadback(VkCommandBuffer cmd, uint32_t imageIndex);
 

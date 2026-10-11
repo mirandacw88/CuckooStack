@@ -25,9 +25,12 @@ public:
         ready_.store(true, std::memory_order_release);
     }
 
+    // only gameplay is kept (IReplay::setCapturing): paused stretches are left out, like the video's
+    void setCapturing(bool on) { capturing_.store(on, std::memory_order_relaxed); }
+
     // audio thread: interleaved stereo float
     void push(const float* inter, int frames) {
-        if (!ready_.load(std::memory_order_acquire)) return;
+        if (!ready_.load(std::memory_order_acquire) || !capturing_.load(std::memory_order_relaxed)) return;
         const uint64_t w = write_.load(std::memory_order_relaxed);
         for (int i = 0; i < frames; ++i) {
             const size_t at = size_t((w + uint64_t(i)) % kFrames) * 2;
@@ -67,7 +70,7 @@ private:
     static constexpr uint64_t kFrames = 20 * 48000; // ~20 s at 48 kHz (more at 44.1 kHz)
     static int16_t toPcm(float x) { return int16_t(std::clamp(x, -1.f, 1.f) * 32767.f); }
     std::vector<int16_t> buf_;
-    std::atomic<bool> ready_{false};
+    std::atomic<bool> ready_{false}, capturing_{false};
     std::atomic<uint64_t> write_{0};
     std::atomic<double> rate_{48000.0};
 };

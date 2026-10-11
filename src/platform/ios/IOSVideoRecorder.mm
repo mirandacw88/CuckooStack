@@ -36,6 +36,7 @@ struct IOSVideoRecorder::Impl {
     std::atomic<int> inFlight{0};
     std::atomic<bool> rebuild{false}; // the session died (iOS kills hardware encoders in the background): start over
     double lastPush = -1, retryAt = 0;
+    double pausedTotal = 0, pausedAt = -1; // capture pauses, cut out of the clip's timeline
     bool forceKey = true;
 #ifndef NDEBUG
     double costSec = 0, costLogAt = 0; // debug: time spent in push() (copy + submit), logged every 2 s
@@ -108,9 +109,26 @@ bool IOSVideoRecorder::start(int width, int height) {
 
 void IOSVideoRecorder::stop() { impl_->stop(); }
 
+void IOSVideoRecorder::resetWindow() {
+    impl_->clear();
+    impl_->forceKey = true; // the new window starts on a keyframe
+}
+
+void IOSVideoRecorder::setCapturing(bool on) {
+    Impl& s = *impl_;
+    const double now = CACurrentMediaTime();
+    if (!on && s.pausedAt < 0) s.pausedAt = now;
+    if (on && s.pausedAt >= 0) {
+        s.pausedTotal += now - s.pausedAt;
+        s.pausedAt = -1;
+        s.lastPush = -1; // the pause isn't a trip to the background
+    }
+}
+
 void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height) {
     Impl& s = *impl_;
     if (s.width == 0 || int(width) != s.width || int(height) != s.height) return;
+    if (s.pausedAt >= 0) return; // a frame read back just before the pause: not gameplay any more
     const double now = CACurrentMediaTime();
     // back from the background (iOS invalidated the encoder) or an encode error: a fresh session and window
     const bool away = s.lastPush >= 0 && now - s.lastPush > 0.5;
@@ -133,7 +151,7 @@ void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height
     NSDictionary* props = s.forceKey ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame: @YES} : nil;
     s.forceKey = false;
     ++s.inFlight;
-    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props, nullptr,
+    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now - s.pausedTotal, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props, nullptr,
                                         nullptr) != noErr) {
         --s.inFlight;
         s.rebuild = true;
@@ -154,6 +172,10 @@ double IOSVideoRecorder::writeLast(double seconds, const std::string& path) {
     std::vector<CMSampleBufferRef> clip;
     {
         std::lock_guard<std::mutex> lock(s.m);
+#ifndef NDEBUG
+        if (!s.samples.empty())
+            CS_LOGI("Replay: window %zu frames, %.2f..%.2f s", s.samples.size(), ptsOf(s.samples.front()), ptsOf(s.samples.back()));
+#endif
         if (s.samples.empty()) return 0;
         const double from = ptsOf(s.samples.back()) - seconds;
         size_t start = 0;

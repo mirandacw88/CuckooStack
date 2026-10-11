@@ -36,6 +36,7 @@ public:
     ReplayState state() override;
     void setEnabled(bool on) override;
     void runStarted() override;
+    void setCapturing(bool on) override;
     void saveClip(const ReplayMeta& meta) override;
     void shareVideo() override;
     bool consumeShared(std::string& target) override;
@@ -43,7 +44,7 @@ public:
 private:
     Renderer* renderer_ = nullptr;
     IOSVideoRecorder recorder_;
-    bool enabled_ = false, startFailed_ = false;
+    bool enabled_ = false, startFailed_ = false, capturing_ = false;
 };
 
 class IOSLeaderboards final : public ILeaderboards {

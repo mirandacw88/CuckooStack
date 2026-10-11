@@ -369,7 +369,7 @@ bool Renderer::render(const RenderList& list) {
 
     // readback recorder: ~30 fps whatever the display rate
     rbThisFrame_ = false;
-    if (rbSink_) {
+    if (rbSink_ && !rbPaused_) {
         const auto now = std::chrono::steady_clock::now();
         if (now - rbLast_ >= std::chrono::microseconds(31000)) { rbLast_ = now; rbThisFrame_ = true; }
     }

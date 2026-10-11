@@ -315,13 +315,17 @@ private:
     bool pendingStart_ = false;               // the next run starts once the interstitial is dismissed
     bool continuePending_ = false;            // the Continue panel opens once the crash has played
     float deadRealT_ = 0;                     // real seconds since the crash (deadT_ runs in slow motion)
-    bool replaySaved_ = false;                // this crash's replay clip was requested
+    bool replaySaved_ = false;                // this crash's replay moment has passed (clip requested, or too short)
+    bool replayRequested_ = false;            // ... and the clip was requested
+    bool replayTooShort_ = false;             // ... but the run was too short for one
+    static constexpr float kMinReplaySeconds = 3.f;
     // a friend's challenge on today's course (challenge links): their distance shows as a pink marker
     struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };
     std::optional<Challenge> challenge_;
     void saveChallenge();
     bool beatenPending_ = false;
     void shareReplay();
+    void hudReplayTooShort(glm::vec2 c);
     bool requestReward(Placement p, std::function<void()> grant); // false: no ad ready (caller shows a message)
     bool rewardReady(Placement p) const;
     void pollAds();

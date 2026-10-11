@@ -143,6 +143,8 @@ public:
     virtual ReplayState state() = 0;
     virtual void setEnabled(bool on) = 0;              // the player opted in (Profile flag "replays")
     virtual void runStarted() = 0;                      // keep a rolling buffer from now on
+    // only gameplay goes into the clip: false pauses video and audio (the pause is cut out of the clip)
+    virtual void setCapturing(bool on) { (void)on; }
     virtual void saveClip(const ReplayMeta& meta) = 0;  // the crash: export the last ~15 s + the end card
     virtual void shareVideo() = 0;                      // the Ready clip through the system share sheet (video only)
     virtual bool consumeShared(std::string& target) = 0; // the share sheet finished (target app, for analytics)

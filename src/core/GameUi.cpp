@@ -359,6 +359,7 @@ void Game::hudOverMenu(float bottom) {
 void Game::hudShareReplayButton(glm::vec2 c) {
     if (profile_.child()) return;
     const ReplayState rs = svc_.replay->state();
+    if (replayTooShort_ && rs != ReplayState::Off && rs != ReplayState::Unavailable) { hudReplayTooShort(c); return; }
     if (rs != ReplayState::Exporting && rs != ReplayState::Ready) return; // no video this run: no button
     const bool saving = rs == ReplayState::Exporting;
     const float W = viewW_;
@@ -1626,6 +1627,31 @@ void Game::primerAccepted(bool notif) {
     profile_.setFlag(notif ? "notif_asked" : "replay_asked", true);
     if (notif) onNotificationsAccepted();
     else { profile_.setFlag("replays", true); svc_.replay->setEnabled(true); }
+}
+
+// In the Share Replay button's place when the run was too short for a clip: a muted pill that pops in the same way,
+// the replay icon dimmed and tilting, so it reads as "not this time" rather than a broken button.
+void Game::hudReplayTooShort(glm::vec2 c) {
+    const float pop = easeOutBack(seg(overT_, 0.35f, 0.75f), 1.6f);
+    if (pop <= 0.01f) return;
+    const float k = std::min(1.f, pop);
+    const float breathe = 1.f + 0.015f * std::sin(time_ * 2.4f);
+    const glm::vec2 size = glm::vec2(std::min(viewW_ - 64.f, 300.f), 64.f) * pop * breathe;
+    const glm::vec3 violet = css("#9a5bff");
+    hudRect(c, size * glm::vec2(1.25f, 1.9f), violet, 0.08f * k, Shape::RadialGlow);
+    hudRect(c, size, css("#140822"), 0.92f * k, Shape::PillOutline, 1.f);
+    hudRect(c, size, violet, 0.45f * k, Shape::PillOutline, 1.6f / size.y);
+    // the icon, dimmed, rocking gently
+    const float iconS = size.y * 0.72f;
+    const glm::vec2 ic{c.x - size.x / 2 + 18.f + iconS / 2, c.y};
+    hudSprite(Icon::Replay, ic, iconS, 0.18f * std::sin(time_ * 1.8f), glm::vec3(0.75f), 0.55f * k);
+    const float tx = ic.x + iconS / 2 + 10.f;
+    TextStyle t = style(FontId::BodyBold, 17.f * pop, kText, 0.04f);
+    t.opacity = 0.9f * k;
+    hudText("Too quick for a replay", t, tx, c.y - 19.f * pop, TextAlign::Left);
+    TextStyle s = style(FontId::Body, 13.f * pop, kMuted, 0.02f);
+    s.opacity = k;
+    hudText("Survive " + std::to_string(int(kMinReplaySeconds)) + " s to film your run", s, tx, c.y + 2.f * pop, TextAlign::Left);
 }
 
 // The results' Share Replay button: the run's video, nothing else (the button only shows once there is one).
