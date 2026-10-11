@@ -97,8 +97,10 @@ int main() {
         double len = r.writeLast(15.0, path);
         Clip c = read(path);
         check(std::abs(len - 2.0) < 0.25, "gameplay only: 2 s of play, the pause cut out");
-        check(c.frames > 50 && c.firstKey && c.rising, "the clip: ~30 fps, starts on a keyframe, timestamps rise");
-        check(c.maxGap < 0.2, "no hole where the pause was"); // (a 0.6 s pause would show; timing jitter won't)
+        // (Frame rate and gaps depend on the machine: CI's virtual Macs encode in software at ~15 fps and the recorder
+        // skips frames rather than fall behind. So these check the logic: a cut-out pause would leave a 0.6 s hole.)
+        check(c.frames >= 20 && c.firstKey && c.rising, "the clip: at least 10 fps, starts on a keyframe, timestamps rise");
+        check(c.maxGap < 0.45, "no hole where the pause was");
 
         // the last N seconds only
         len = r.writeLast(1.0, path);
@@ -119,7 +121,7 @@ int main() {
         len = r.writeLast(15.0, path);
         c = read(path);
         check(std::abs(len - 3.3) < 0.3, "revive: the crash and the Continue panel are cut (2.5 s + 0.8 s of play)");
-        check(c.rising && c.maxGap < 0.2, "revive: the clip carries straight on");
+        check(c.rising && c.maxGap < 0.45, "revive: the clip carries straight on (the cut was 1.2 s)");
 
         // a new run: its clip doesn't reach into the last one
         usleep(300000);
