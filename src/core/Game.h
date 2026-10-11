@@ -32,6 +32,11 @@ namespace cs {
 
 class Game {
 public:
+    // How long the end of a run plays before any panel (and before the replay clip ends): the crash's slow-motion
+    // shatter, and the finish line's runway, fireworks and applause. Real seconds.
+    static constexpr float kCrashTail = 2.5f;
+    static constexpr float kFinishCelebration = 5.5f;
+
     enum class State { Title, Play, Dead };
 
     explicit Game(const GameServices& services);

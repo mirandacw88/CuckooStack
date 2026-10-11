@@ -10,7 +10,9 @@ Since the pause, the recorder also follows the iOS rules (untested on a device, 
   audio while the game isn't in play; `exportClip` cuts the paused stretches out of the timeline.
 - **One run per clip.** `runStarted` marks the run's start and requests a keyframe there; a clip never reaches back
   past it, and a revive keeps it.
-- **Cut at the clip request.** The cut is the clip request (`crashUs_`), since capture stops there.
+- **Cut at the clip request.** The cut is the clip request (`crashUs_`), since capture stops there. The game makes
+  that request once the end of the run has played: `Game::kCrashTail` (2.5 s) after a crash, and after
+  `Game::kFinishCelebration` (5.5 s) at the finish line. No panel opens before then.
 - **Heat.** Only Thermal Critical stops recording.
 - **Watchdog.** It only counts time spent capturing.
 

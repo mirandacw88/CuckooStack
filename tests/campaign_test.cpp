@@ -67,7 +67,7 @@ int main() {
         test::dieQuickly(g);
         check(g.state() == Game::State::Dead && !g.lastRunCleared(), "a crash is not a clear");
         check(g.courseLevel() == 1 && g.levelAttempts() == 1, "after a crash: still level 1, 1 attempt");
-        test::step(g, 2.f);
+        test::step(g, Game::kCrashTail + 0.5f); // the crash plays out, then the results
         test::dieQuickly(g);
         check(g.courseLevel() == 1 && g.levelAttempts() == 2, "the retry is level 1 again (2 attempts)");
     }

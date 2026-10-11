@@ -657,7 +657,9 @@ void Game::finishRun(bool cleared) {
     track("run_end", {{"level", std::to_string(levelPlayed)}, {"cleared", cleared ? "1" : "0"}, {"distance", std::to_string(finalDist_)}, {"score", std::to_string(score_)}, {"seconds", std::to_string(int(run_.seconds))},
                       {"attempt", std::to_string(attempts)}, {"new_best", newBestRun_ ? "1" : "0"}, {"surges", std::to_string(run_.surges)},
                       {"continues", std::to_string(run_.continues)}, {"coins", std::to_string(runCoins_)}, {"boosted", run_.boosted ? "1" : "0"}});
-    overDelay_ = cleared ? 0.3f : continueOffered_ ? 0.2f : 0.9f; overT_ = 0;
+    // results: a clear right away (the celebration has played); a crash once its tail has played (at once if the
+    // Continue panel already waited for it)
+    overDelay_ = cleared ? 0.3f : std::max(0.2f, kCrashTail + 0.1f - deadRealT_); overT_ = 0;
     continueOffered_ = false;
     if (newBestRun_ && !profile_.child() && !profile_.flag("replay_asked") && svc_.replay->state() != ReplayState::Unavailable) {
         profile_.setFlag("replay_asked", true);
@@ -1180,9 +1182,9 @@ void Game::update(double rawDt) {
     if (pendingStart_ && !svc_.ads->adShowing()) start(); // the interstitial was dismissed
     // the Continue panel, once the crash has played
     if (state_ == State::Dead) deadRealT_ += rdt; else deadRealT_ = 0;
-    // the replay clip: after a crash once it has played (panels not up yet); after a level clear right away (the
-    // celebration has played; the results are about to show)
-    if (state_ == State::Dead && !replaySaved_ && (runCleared_ || deadRealT_ > 0.62f)) {
+    // the replay clip: after a crash once its tail has played (kCrashTail; no panel opens before); after a level clear
+    // right away (the celebration has played; the results are about to show)
+    if (state_ == State::Dead && !replaySaved_ && (runCleared_ || deadRealT_ >= kCrashTail)) {
         replaySaved_ = true;
         replayTooShort_ = run_.seconds < kMinReplaySeconds; // a blink of a run: no clip (the results say so)
     }
@@ -1201,7 +1203,7 @@ void Game::update(double rawDt) {
         std::string target;
         if (svc_.replay->consumeShared(target)) track("replay_shared", {{"target", target}, {"distance", std::to_string(finalDist_)}});
     }
-    if (continuePending_ && !continueOffered_ && state_ == State::Dead && deadRealT_ > 0.7f) {
+    if (continuePending_ && !continueOffered_ && state_ == State::Dead && deadRealT_ > kCrashTail) { // after the crash's tail
         continueOffered_ = true;
         continueT_ = 0;
         openScreen(Screen::Continue);
@@ -1286,7 +1288,7 @@ void Game::updatePlay(float dt, float rdt) {
         graceT_ = 99.f;
         fireworkAcc_ += rdt * 5.f;
         while (fireworkAcc_ >= 1.f) { fireworkAcc_ -= 1.f; launchFirework(); }
-        if (clearT_ > 2.2f) { completeLevel(); return; }
+        if (clearT_ > kFinishCelebration) { completeLevel(); return; }
     }
 
     if ((autoSurge_ || runBoost_ == Boost::Surge) && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
