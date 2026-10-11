@@ -200,20 +200,6 @@ void Game::saveChallenge() {
     r.save();
 }
 
-std::string Game::challengeLink(int meters) const {
-    const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // the level that was just played
-    std::string url = std::string(links::kSite) + "/c?l=" + std::to_string(lvl) + "&m=" + std::to_string(meters);
-    if (!sharedChallengeId_.empty()) url += "&c=" + sharedChallengeId_;
-    return url + "&utm_source=share&utm_medium=challenge";
-}
-
-// Share: with friend nudges available, register the challenge first (waits at most 1.5 s for the id), so the
-// sharer hears about it when a friend beats them.
-void Game::doShare(const std::string& caption, int meters, const std::string& id) {
-    sharedChallengeId_ = id;
-    svc_.replay->share(caption, challengeLink(meters));
-}
-
 // ---------- persistence ----------
 void Game::loadRecords() {
     day_.date = svc_.clock->today();
@@ -1196,22 +1182,15 @@ void Game::update(double rawDt) {
     if (state_ == State::Dead && !replaySaved_ && deadRealT_ > 0.62f) { // the crash has played; panels not up yet
         replaySaved_ = true;
         ReplayMeta m;
-        m.distance = int(std::floor(x_)); m.score = score_; m.day = dayLabel();
+        m.distance = int(std::floor(x_)); m.score = score_;
+        const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
+        m.label = "LEVEL " + std::to_string(lvl) + (runCleared_ ? " CLEARED" : "");
         m.newBest = x_ > day_.bestDist || score_ > best_;
         svc_.replay->saveClip(m);
     }
     {
         std::string target;
         if (svc_.replay->consumeShared(target)) track("replay_shared", {{"target", target}, {"distance", std::to_string(finalDist_)}});
-    }
-    if (pendingShare_) {
-        std::string id;
-        pendingShare_->wait -= rdt;
-        if (svc_.backend->pollChallengeId(id) || pendingShare_->wait <= 0) {
-            const PendingShare p = *pendingShare_;
-            pendingShare_.reset();
-            doShare(p.caption, p.meters, id);
-        }
     }
     if (continuePending_ && !continueOffered_ && state_ == State::Dead && deadRealT_ > 0.7f) {
         continueOffered_ = true;

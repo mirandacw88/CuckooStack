@@ -112,11 +112,11 @@ void IOSReplay::saveClip(const ReplayMeta& m) {
     const ReplayMeta meta = m;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (recorder_.writeLast(15.0, raw.UTF8String) <= 0) { [CSReplay.shared exportFailed]; return; }
-        [CSReplay.shared composeWithRaw:raw audio:audio ? wav : nil distance:meta.distance newBest:meta.newBest day:ns(meta.day)];
+        [CSReplay.shared composeWithRaw:raw audio:audio ? wav : nil distance:meta.distance newBest:meta.newBest label:ns(meta.label)];
     });
 }
 
-void IOSReplay::share(const std::string& caption, const std::string& url) { [CSReplay.shared shareWithCaption:ns(caption) url:ns(url)]; }
+void IOSReplay::shareVideo() { [CSReplay.shared shareVideo]; }
 bool IOSReplay::consumeShared(std::string& target) {
     NSString* t = [CSReplay.shared consumeShared];
     if (!t) return false;

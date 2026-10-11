@@ -199,7 +199,6 @@ private:
     void hudCoinPill(bool interactive);
     void worldGateLabel();
     void worldMarkerLabel(double x, float opacity, std::string_view top, std::string_view bottom, glm::vec3 topColor);
-    std::string dayLabel() const;
 
     GameServices svc_;      // every pointer set (null services replaced by no-op ones)
     FastRandom rng_;
@@ -321,13 +320,7 @@ private:
     struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };
     std::optional<Challenge> challenge_;
     void saveChallenge();
-    std::string challengeLink(int meters) const;
-    // share flow: with nudges available the link waits (briefly) for a server challenge id
-    struct PendingShare { std::string caption; int meters; float wait; };
-    std::optional<PendingShare> pendingShare_;
-    std::string sharedChallengeId_;
     bool beatenPending_ = false;
-    void doShare(const std::string& caption, int meters, const std::string& id);
     void shareReplay();
     bool requestReward(Placement p, std::function<void()> grant); // false: no ad ready (caller shows a message)
     bool rewardReady(Placement p) const;

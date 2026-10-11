@@ -34,8 +34,13 @@ struct IOSVideoRecorder::Impl {
     std::mutex m;
     std::deque<CMSampleBufferRef> samples; // retained; presentation = decode order (no frame reordering)
     std::atomic<int> inFlight{0};
-    double lastPush = -1;
+    std::atomic<bool> rebuild{false}; // the session died (iOS kills hardware encoders in the background): start over
+    double lastPush = -1, retryAt = 0;
     bool forceKey = true;
+#ifndef NDEBUG
+    double costSec = 0, costLogAt = 0; // debug: time spent in push() (copy + submit), logged every 2 s
+    int costFrames = 0;
+#endif
 
     void clear() {
         std::lock_guard<std::mutex> lock(m);
@@ -55,6 +60,7 @@ struct IOSVideoRecorder::Impl {
     // encoder thread
     void encoded(OSStatus status, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
         --inFlight;
+        if (status != noErr) rebuild = true;
         if (status != noErr || !sb || (flags & kVTEncodeInfo_FrameDropped) || !CMSampleBufferDataIsReady(sb)) return;
         std::lock_guard<std::mutex> lock(m);
         if (samples.empty() && !isKeyframe(sb)) return; // the window always starts on a keyframe
@@ -95,7 +101,7 @@ bool IOSVideoRecorder::start(int width, int height) {
     VTSessionSetProperty(s.session, kVTCompressionPropertyKey_AverageBitRate, (__bridge CFNumberRef)@6000000);
     VTCompressionSessionPrepareToEncodeFrames(s.session);
     s.width = width; s.height = height;
-    s.lastPush = -1; s.forceKey = true;
+    s.lastPush = -1; s.forceKey = true; s.rebuild = false;
     CS_LOGI("Replay: recording %dx%d (H.264, in-game)", width, height);
     return true;
 }
@@ -104,10 +110,17 @@ void IOSVideoRecorder::stop() { impl_->stop(); }
 
 void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height) {
     Impl& s = *impl_;
-    if (!s.session || int(width) != s.width || int(height) != s.height) return;
-    if (s.inFlight.load() >= kMaxInFlight) return; // the encoder is behind: skip this source frame
+    if (s.width == 0 || int(width) != s.width || int(height) != s.height) return;
     const double now = CACurrentMediaTime();
-    if (s.lastPush >= 0 && now - s.lastPush > 0.5) { s.clear(); s.forceKey = true; } // back from the background: start over
+    // back from the background (iOS invalidated the encoder) or an encode error: a fresh session and window
+    const bool away = s.lastPush >= 0 && now - s.lastPush > 0.5;
+    if (away || s.rebuild || !s.session) {
+        if (now < s.retryAt) return;
+        const bool error = s.rebuild || !s.session;
+        if (!start(s.width, s.height)) { s.retryAt = now + 1.0; return; } // (start keeps the size; tried again in a second)
+        if (error) CS_LOGW("Replay: video encoder restarted after an error");
+    }
+    if (s.inFlight.load() >= kMaxInFlight) return; // the encoder is behind: skip this source frame
     s.lastPush = now;
     CVPixelBufferPoolRef pool = VTCompressionSessionGetPixelBufferPool(s.session);
     CVPixelBufferRef pb = nullptr;
@@ -121,9 +134,19 @@ void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height
     s.forceKey = false;
     ++s.inFlight;
     if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props, nullptr,
-                                        nullptr) != noErr)
+                                        nullptr) != noErr) {
         --s.inFlight;
+        s.rebuild = true;
+    }
     CVPixelBufferRelease(pb);
+#ifndef NDEBUG
+    s.costSec += CACurrentMediaTime() - now;
+    ++s.costFrames;
+    if (now >= s.costLogAt) {
+        if (s.costFrames > 0 && s.costLogAt > 0) CS_LOGI("Replay: recorder %.2f ms per frame (%d frames)", s.costSec * 1000.0 / s.costFrames, s.costFrames);
+        s.costSec = 0; s.costFrames = 0; s.costLogAt = now + 2.0;
+    }
+#endif
 }
 
 double IOSVideoRecorder::writeLast(double seconds, const std::string& path) {

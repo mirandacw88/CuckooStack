@@ -376,10 +376,11 @@ void AndroidReplay::exportClip(int64_t fromUs, int64_t toUs, std::string path) {
     CS_LOGI("Replay: %s (%zu video, %zu audio samples)", ok ? "clip saved" : "export failed", video.size(), audio.size());
 }
 
-void AndroidReplay::share(const std::string& caption, const std::string& url) {
+void AndroidReplay::shareVideo() {
+    if (state_ != ReplayState::Ready || !platform_.share) return;
     std::string path;
-    if (state_ == ReplayState::Ready) { std::lock_guard<std::mutex> lock(clipMutex_); path = clipPath_; }
-    if (platform_.share) platform_.share(path, caption + " " + url);
+    { std::lock_guard<std::mutex> lock(clipMutex_); path = clipPath_; }
+    platform_.share(path, ""); // the video only
 }
 
 bool AndroidReplay::consumeShared(std::string& target) {

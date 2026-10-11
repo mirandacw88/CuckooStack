@@ -206,7 +206,8 @@ std::string savePath() {
     if (!gPendingLink.empty()) { _game->openLink(gPendingLink); gPendingLink.clear(); }
     _game->update(now - _last);
     _last = now;
-    _replay.frame(NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious); // no recording while hot
+    // recording is light (a small GPU copy + the hardware encoder): it only stops when iOS says Critical
+    _replay.frame(NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateCritical);
     if (!_renderer.render(_game->renderList())) {
         [self pause];
         _ready = NO;

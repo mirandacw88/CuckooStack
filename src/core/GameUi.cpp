@@ -359,6 +359,7 @@ void Game::hudOverMenu(float bottom) {
 void Game::hudShareReplayButton(glm::vec2 c) {
     if (profile_.child()) return;
     const ReplayState rs = svc_.replay->state();
+    if (rs != ReplayState::Exporting && rs != ReplayState::Ready) return; // no video this run: no button
     const bool saving = rs == ReplayState::Exporting;
     const float W = viewW_;
     const float pop = easeOutBack(seg(overT_, 0.35f, 0.75f), 1.6f);
@@ -1627,29 +1628,11 @@ void Game::primerAccepted(bool notif) {
     else { profile_.setFlag("replays", true); svc_.replay->setEnabled(true); }
 }
 
-// The results' Share button: the replay when there is one, otherwise turn replays on (they record from the next run).
+// The results' Share Replay button: the run's video, nothing else (the button only shows once there is one).
 void Game::shareReplay() {
-    if (profile_.child()) return;
-    const ReplayState rs = svc_.replay->state();
-    // the link is a challenge: friends who open it race this distance on the same level
-    const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level();
-    const std::string caption = runCleared_ ? "I cleared level " + std::to_string(lvl) + " of Cuckoo Stack. Can you?"
-        : challenge_ && challenge_->beaten
-        ? "Beat your " + std::to_string(challenge_->meters) + " m with " + std::to_string(finalDist_) + " m on Cuckoo Stack. Your move:"
-        : "I hit " + std::to_string(finalDist_) + " m on level " + std::to_string(lvl) + " of Cuckoo Stack. Can you beat it?";
-    track("replay_share_tap", {{"distance", std::to_string(finalDist_)}, {"video", rs == ReplayState::Ready ? "1" : "0"}});
-    if (svc_.backend->nudgesAvailable()) {
-        svc_.backend->createChallenge("level:" + std::to_string(lvl), finalDist_);
-        pendingShare_ = PendingShare{caption, finalDist_, 1.5f};
-    } else {
-        doShare(caption, finalDist_, "");
-    }
-    if (rs == ReplayState::Off) { // turn replays on so the next run comes with a video
-        profile_.setFlag("replays", true);
-        svc_.replay->setEnabled(true);
-        toast("Replays on: your next run comes with video", Icon::Replay);
-        track("replay_enabled", {{"from", "results"}});
-    }
+    if (profile_.child() || svc_.replay->state() != ReplayState::Ready) return;
+    track("replay_share_tap", {{"distance", std::to_string(finalDist_)}, {"video", "1"}});
+    svc_.replay->shareVideo();
 }
 
 void Game::primerDeclined(bool notif) {

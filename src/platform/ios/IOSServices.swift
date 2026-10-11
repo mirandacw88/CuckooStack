@@ -378,11 +378,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     @objc public func exportFailed() { set(.failed) }
 
     /// `raw`: the recorder's clip (video only); `audio`: the game's own recording of the same seconds (a WAV)
-    @objc public func compose(raw: String, audio: String?, distance: Int, newBest: Bool, day: String) {
+    @objc public func compose(raw: String, audio: String?, distance: Int, newBest: Bool, label: String) {
         let rawURL = URL(fileURLWithPath: raw)
         Task {
             // the end card is a bonus: if composing fails, share the plain clip
-            var url = await self.compose(rawURL, audio: audio.map { URL(fileURLWithPath: $0) }, distance: distance, newBest: newBest, day: day)
+            var url = await self.compose(rawURL, audio: audio.map { URL(fileURLWithPath: $0) }, distance: distance, newBest: newBest, label: label)
             if url == nil, let size = (try? FileManager.default.attributesOfItem(atPath: raw))?[.size] as? Int, size > 10_000 { url = rawURL }
             self.lock.locked { self.clip = url }
             self.set(url != nil ? .ready : .failed)
@@ -390,7 +390,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 
     // MARK: composition: watermark + end card, scaled to 720 px wide
-    private func compose(_ src: URL, audio gameAudio: URL?, distance: Int, newBest: Bool, day: String) async -> URL? {
+    private func compose(_ src: URL, audio gameAudio: URL?, distance: Int, newBest: Bool, label: String) async -> URL? {
         let asset = AVURLAsset(url: src)
         do {
             guard let video = try await asset.loadTracks(withMediaType: .video).first else { return nil }
@@ -442,7 +442,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             layer.setTransform(transform.concatenating(CGAffineTransform(scaleX: scale, y: scale)), at: .zero)
             instruction.layerInstructions = [layer]
             vc.instructions = [instruction]
-            vc.animationTool = overlay(size: size, clipSeconds: duration.seconds, distance: distance, newBest: newBest, day: day)
+            vc.animationTool = overlay(size: size, clipSeconds: duration.seconds, distance: distance, newBest: newBest, label: label)
 
             let out = FileManager.default.temporaryDirectory.appendingPathComponent("Cuckoo Stack \(distance)m.mp4")
             try? FileManager.default.removeItem(at: out)
@@ -476,7 +476,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         return t
     }
 
-    private func overlay(size: CGSize, clipSeconds: Double, distance: Int, newBest: Bool, day: String) -> AVVideoCompositionCoreAnimationTool {
+    private func overlay(size: CGSize, clipSeconds: Double, distance: Int, newBest: Bool, label: String) -> AVVideoCompositionCoreAnimationTool {
         let pink = UIColor(red: 1, green: 0.17, blue: 0.84, alpha: 1), cyan = UIColor(red: 0.16, green: 0.91, blue: 1, alpha: 1)
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: size)
@@ -494,12 +494,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         card.backgroundColor = UIColor(red: 0.03, green: 0.02, blue: 0.06, alpha: 1).cgColor
         card.opacity = 0
         let mid = size.height / 2
-        card.addSublayer(text(newBest ? "NEW BEST!" : "DAILY RUN", size: 34, color: cyan, weight: .heavy, y: mid - 230, width: size.width, glow: cyan))
+        card.addSublayer(text(newBest ? "NEW BEST!" : label, size: 34, color: cyan, weight: .heavy, y: mid - 230, width: size.width, glow: cyan))
         card.addSublayer(text("\(distance) m", size: 120, color: .white, weight: .black, y: mid - 170, width: size.width, glow: pink))
         card.addSublayer(text("Can you beat it?", size: 48, color: .white, weight: .bold, y: mid + 10, width: size.width, glow: pink))
-        card.addSublayer(text(day, size: 30, color: cyan, weight: .semibold, y: mid + 90, width: size.width, glow: cyan))
-        card.addSublayer(text("Cuckoo Stack", size: 64, color: .white, weight: .black, y: mid + 200, width: size.width, glow: pink))
-        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 290, width: size.width, glow: cyan))
+        card.addSublayer(text("Cuckoo Stack", size: 64, color: .white, weight: .black, y: mid + 160, width: size.width, glow: pink))
+        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 250, width: size.width, glow: cyan))
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -513,13 +512,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 
     // MARK: share
-    /// With a clip: the video plus the caption. Without one (no recording, or it failed): the caption and link alone.
-    @objc public func share(caption: String, url: String) {
-        let clip = lock.locked({ current == .ready ? self.clip : nil })
+    /// The run's video, nothing else (the game only offers this once the clip is ready).
+    @objc public func shareVideo() {
+        guard let clip = lock.locked({ current == .ready ? self.clip : nil }) else { return }
         DispatchQueue.main.async {
-            var items: [Any] = ["\(caption) \(url)"]
-            if let clip { items.insert(clip, at: 0) }
-            let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            let sheet = UIActivityViewController(activityItems: [clip], applicationActivities: nil)
             sheet.completionWithItemsHandler = { type, completed, _, _ in
                 if completed { self.lock.locked { self.sharedTarget = type?.rawValue ?? "unknown" } }
             }

@@ -37,7 +37,7 @@ public:
     void setEnabled(bool on) override;
     void runStarted() override;
     void saveClip(const ReplayMeta& meta) override;
-    void share(const std::string& caption, const std::string& url) override;
+    void shareVideo() override;
     bool consumeShared(std::string& target) override;
     void setEndCardRenderer(EndCardRenderer r) override { endCard_ = std::move(r); }
 
