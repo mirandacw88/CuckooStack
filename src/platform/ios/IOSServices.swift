@@ -441,7 +441,8 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         RPScreenRecorder.shared().stopClipBuffering { _ in }
     }
 
-    @objc public func saveClip(distance: Int, score: Int, newBest: Bool, day: String) {
+    /// `audio`: the game's own recording of the same last 15 s (a WAV), used instead of ReplayKit's app audio
+    @objc public func saveClip(distance: Int, score: Int, newBest: Bool, day: String, audio: String?) {
         guard lock.locked({ buffering }) else { return }
         set(.exporting)
         let raw = FileManager.default.temporaryDirectory.appendingPathComponent("cs-replay-raw.mp4")
@@ -454,7 +455,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             }
             Task {
                 // the end card is a bonus: if composing fails, share the plain clip
-                var url = await self.compose(raw, distance: distance, newBest: newBest, day: day)
+                var url = await self.compose(raw, audio: audio.map { URL(fileURLWithPath: $0) }, distance: distance, newBest: newBest, day: day)
                 if url == nil, let size = (try? FileManager.default.attributesOfItem(atPath: raw.path))?[.size] as? Int, size > 10_000 { url = raw }
                 self.lock.locked { self.clip = url }
                 self.set(url != nil ? .ready : .failed)
@@ -463,23 +464,44 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 
     // MARK: composition: watermark + end card, scaled to 720 px wide
-    private func compose(_ src: URL, distance: Int, newBest: Bool, day: String) async -> URL? {
+    private func compose(_ src: URL, audio gameAudio: URL?, distance: Int, newBest: Bool, day: String) async -> URL? {
         let asset = AVURLAsset(url: src)
         do {
-            let duration = try await asset.load(.duration)
             guard let video = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            let vr = try await video.load(.timeRange)
+            let duration = vr.duration
             let natural = try await video.load(.naturalSize)
             let transform = try await video.load(.preferredTransform)
             let comp = AVMutableComposition()
             guard let cv = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
-            try cv.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
-            for a in try await asset.loadTracks(withMediaType: .audio) {
-                let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-                try ca?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: a, at: .zero)
-            }
+            try cv.insertTimeRange(vr, of: video, at: .zero)
+            // the end card: the last frame held for 1.8 s under it (an empty range at the end is dropped on export,
+            // which cut the card off)
             let card = CMTime(seconds: 1.8, preferredTimescale: 600)
-            cv.insertEmptyTimeRange(CMTimeRange(start: duration, duration: card))
+            let frame = CMTime(value: 1, timescale: 30)
+            try cv.insertTimeRange(CMTimeRange(start: CMTimeSubtract(vr.end, frame), duration: frame), of: video, at: duration)
+            cv.scaleTimeRange(CMTimeRange(start: duration, duration: frame), toDuration: card)
             let total = CMTimeAdd(duration, card)
+            // sound: the game's own recording, both ending at the crash; ReplayKit's app audio only as a fallback
+            var audioDone = false
+            let audioAsset = gameAudio.map { AVURLAsset(url: $0) } // kept alive: a track whose asset is gone can't be inserted
+            if let audioAsset, let ga = try? await audioAsset.loadTracks(withMediaType: .audio).first,
+               let ar = try? await ga.load(.timeRange), ar.duration > .zero,
+               let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                if ar.duration >= duration { // the tail that lines up with the clip
+                    try ca.insertTimeRange(CMTimeRange(start: CMTimeSubtract(ar.end, duration), duration: duration), of: ga, at: .zero)
+                } else {                     // replays turned on mid-run: shorter, so it ends with the clip
+                    try ca.insertTimeRange(ar, of: ga, at: CMTimeSubtract(duration, ar.duration))
+                }
+                audioDone = true
+            }
+            if !audioDone {
+                for a in try await asset.loadTracks(withMediaType: .audio) {
+                    let r = try await a.load(.timeRange)
+                    let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                    try ca?.insertTimeRange(r, of: a, at: CMTimeSubtract(r.start, vr.start))
+                }
+            }
 
             let oriented = natural.applying(transform)
             let srcSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
@@ -503,6 +525,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             export.outputFileType = .mp4
             export.videoComposition = vc
             export.shouldOptimizeForNetworkUse = true
+            export.timeRange = CMTimeRange(start: .zero, duration: total)
             await export.export()
             return export.status == .completed ? out : nil
         } catch {

@@ -3,6 +3,7 @@
 #include "../../core/Log.h"
 
 #import "CuckooStack-Swift.h"
+#import "ReplayAudioTap.h"
 #import <Foundation/Foundation.h>
 
 #include <algorithm>
@@ -68,9 +69,17 @@ bool IOSNotifications::consumeOpened(int& id) {
 
 // ---------------------------------------------------------------- share replay
 ReplayState IOSReplay::state() { return ReplayState(std::clamp(int([CSReplay.shared state]), 0, 6)); }
-void IOSReplay::setEnabled(bool on) { [CSReplay.shared setEnabled:on]; }
+void IOSReplay::setEnabled(bool on) {
+    if (on) ReplayAudioTap::shared().enable(); // the clip's soundtrack (ReplayKit's app audio drops buffers)
+    [CSReplay.shared setEnabled:on];
+}
 void IOSReplay::runStarted() { [CSReplay.shared runStarted]; }
-void IOSReplay::saveClip(const ReplayMeta& m) { [CSReplay.shared saveClipWithDistance:m.distance score:m.score newBest:m.newBest day:ns(m.day)]; }
+void IOSReplay::saveClip(const ReplayMeta& m) {
+    // the game's own audio for the same last 15 s that ReplayKit exports (both end now)
+    NSString* wav = [NSTemporaryDirectory() stringByAppendingPathComponent:@"cs-replay-audio.wav"];
+    const bool audio = ReplayAudioTap::shared().writeWav(wav.UTF8String, 15.0);
+    [CSReplay.shared saveClipWithDistance:m.distance score:m.score newBest:m.newBest day:ns(m.day) audio:audio ? wav : nil];
+}
 void IOSReplay::share(const std::string& caption, const std::string& url) { [CSReplay.shared shareWithCaption:ns(caption) url:ns(url)]; }
 bool IOSReplay::consumeShared(std::string& target) {
     NSString* t = [CSReplay.shared consumeShared];
