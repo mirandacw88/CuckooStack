@@ -2,7 +2,7 @@
 
 Status: **built, not yet working end to end.** The game ships with it switched on, but it falls back safely. If no clip
 is produced, the results screen's Share button sends the caption and store link as text, so players never see a
-broken button. iOS Share Replay (ReplayKit) is separate and complete.
+broken button. iOS Share Replay is separate and complete: the same in-engine design (Renderer::startReadback -> VideoToolbox, the game's own audio via ReplayAudioTap), replacing ReplayKit, which dropped frames and audio under load.
 
 ## Design (as implemented)
 

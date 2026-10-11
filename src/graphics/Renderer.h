@@ -11,6 +11,8 @@
 #include "../core/RenderList.h"
 
 #include <array>
+#include <chrono>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -53,6 +55,13 @@ public:
     bool startRecording(PlatformSurface& encoderSurface, VkExtent2D size);
     void stopRecording();
     bool recording() const { return recChain_.valid(); }
+    // Video recording by readback (iOS Share Replay): ~30 times a second the finished frame is scaled into a small
+    // image and copied to host memory; `sink` gets the pixels once that frame's GPU work is done (one frame later),
+    // so the GPU is never waited on. Pixels are in the swapchain's byte order (BGRA on iOS), rows tightly packed.
+    using FrameSink = std::function<void(const uint8_t* pixels, uint32_t width, uint32_t height)>;
+    bool startReadback(VkExtent2D size, FrameSink sink);
+    void stopReadback();
+    bool readingBack() const { return bool(rbSink_); }
     // While set, the recorder receives this image (RGBA8, e.g. the replay end card) instead of the screen.
     bool setRecordOverlay(const uint8_t* rgba, uint32_t width, uint32_t height);
     void clearRecordOverlay() { recOverlayOn_ = false; }
@@ -142,6 +151,14 @@ private:
     VulkanImage recOverlay_;
     bool recOverlayOn_ = false;
     void recordBlit(VkCommandBuffer cmd, uint32_t imageIndex);
+
+    struct Readback { VulkanImage image; VulkanBuffer buffer; bool pending = false; };
+    std::array<Readback, kFramesInFlight> rb_{};
+    VkExtent2D rbSize_{};
+    FrameSink rbSink_;
+    bool rbThisFrame_ = false;
+    std::chrono::steady_clock::time_point rbLast_{};
+    void recordReadback(VkCommandBuffer cmd, uint32_t imageIndex);
 
     bool resizePending_ = false;
     bool warnedOverflow_ = false;

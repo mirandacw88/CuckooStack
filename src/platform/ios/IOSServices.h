@@ -3,6 +3,7 @@
 #pragma once
 
 #include "../../core/Services.h"
+#include "IOSVideoRecorder.h"
 
 #include <deque>
 #include <set>
@@ -25,14 +26,24 @@ public:
     bool consumeOpened(int& reminderId) override;
 };
 
+// Share Replay: the game records itself (IOSVideoRecorder: the renderer's frames through the hardware encoder;
+// ReplayAudioTap: its own audio). No ReplayKit, so no permission prompt and no dropped frames.
+class Renderer;
 class IOSReplay final : public IReplay {
 public:
+    void attach(Renderer* renderer) { renderer_ = renderer; } // the app, once the renderer is up
+    void frame(bool hot);                                      // every frame: start / stop the recorder
     ReplayState state() override;
     void setEnabled(bool on) override;
     void runStarted() override;
     void saveClip(const ReplayMeta& meta) override;
     void share(const std::string& caption, const std::string& url) override;
     bool consumeShared(std::string& target) override;
+
+private:
+    Renderer* renderer_ = nullptr;
+    IOSVideoRecorder recorder_;
+    bool enabled_ = false, startFailed_ = false;
 };
 
 class IOSLeaderboards final : public ILeaderboards {

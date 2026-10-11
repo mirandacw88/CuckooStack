@@ -1,4 +1,5 @@
 #include "IOSServices.h"
+#include "../../graphics/Renderer.h"
 #include "../../core/Economy.h"
 #include "../../core/Log.h"
 
@@ -68,18 +69,53 @@ bool IOSNotifications::consumeOpened(int& id) {
 }
 
 // ---------------------------------------------------------------- share replay
-ReplayState IOSReplay::state() { return ReplayState(std::clamp(int([CSReplay.shared state]), 0, 6)); }
+ReplayState IOSReplay::state() { return ReplayState(std::clamp(int([CSReplay.shared state]), 0, 5)); }
+
 void IOSReplay::setEnabled(bool on) {
-    if (on) ReplayAudioTap::shared().enable(); // the clip's soundtrack (ReplayKit's app audio drops buffers)
-    [CSReplay.shared setEnabled:on];
+    enabled_ = on;
+    startFailed_ = false;
+    if (on) ReplayAudioTap::shared().enable(); // the clip's soundtrack
+    frame(false);
 }
+
+void IOSReplay::frame(bool hot) {
+    if (!renderer_) return;
+    const bool want = enabled_ && !hot && renderer_->hasSurface();
+    if (want && !renderer_->readingBack() && !startFailed_) {
+        // 720 px wide, the screen's shape (even sizes for the encoder)
+        const VkExtent2D e = renderer_->logicalExtent();
+        const int w = 720, h = std::max(2, int(std::lround(720.0 * e.height / std::max(1u, e.width) / 2.0)) * 2);
+        const bool ok = recorder_.start(w, h) &&
+            renderer_->startReadback({uint32_t(w), uint32_t(h)}, [this](const uint8_t* px, uint32_t pw, uint32_t ph) { recorder_.push(px, pw, ph); });
+        [CSReplay.shared setRecording:YES];
+        if (!ok) { recorder_.stop(); startFailed_ = true; [CSReplay.shared exportFailed]; } // (tried again when replays are re-enabled)
+    } else if (!want && renderer_->readingBack()) {
+        renderer_->stopReadback();
+        recorder_.stop();
+        if (enabled_) [CSReplay.shared exportFailed]; // heat: no clip for this run
+        else [CSReplay.shared setRecording:NO];
+    } else if (!enabled_) {
+        [CSReplay.shared setRecording:NO];
+    }
+}
+
 void IOSReplay::runStarted() { [CSReplay.shared runStarted]; }
+
 void IOSReplay::saveClip(const ReplayMeta& m) {
-    // the game's own audio for the same last 15 s that ReplayKit exports (both end now)
-    NSString* wav = [NSTemporaryDirectory() stringByAppendingPathComponent:@"cs-replay-audio.wav"];
-    const bool audio = ReplayAudioTap::shared().writeWav(wav.UTF8String, 15.0);
-    [CSReplay.shared saveClipWithDistance:m.distance score:m.score newBest:m.newBest day:ns(m.day) audio:audio ? wav : nil];
+    if (!renderer_ || !renderer_->readingBack()) return;
+    // the game's own audio, a little longer than the clip (it starts on a keyframe); compose lines up the ends
+    NSString* tmp = NSTemporaryDirectory();
+    NSString* wav = [tmp stringByAppendingPathComponent:@"cs-replay-audio.wav"];
+    NSString* raw = [tmp stringByAppendingPathComponent:@"cs-replay-raw.mp4"];
+    const bool audio = ReplayAudioTap::shared().writeWav(wav.UTF8String, 17.0);
+    [CSReplay.shared beginExport];
+    const ReplayMeta meta = m;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (recorder_.writeLast(15.0, raw.UTF8String) <= 0) { [CSReplay.shared exportFailed]; return; }
+        [CSReplay.shared composeWithRaw:raw audio:audio ? wav : nil distance:meta.distance newBest:meta.newBest day:ns(meta.day)];
+    });
 }
+
 void IOSReplay::share(const std::string& caption, const std::string& url) { [CSReplay.shared shareWithCaption:ns(caption) url:ns(url)]; }
 bool IOSReplay::consumeShared(std::string& target) {
     NSString* t = [CSReplay.shared consumeShared];

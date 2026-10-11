@@ -317,6 +317,7 @@ elseif(CS_PLATFORM STREQUAL "ios")
     src/platform/ios/IOSAudio.mm
     src/platform/ios/IOSServices.mm
     src/platform/ios/IOSServices.swift
+    src/platform/ios/IOSVideoRecorder.mm
     src/platform/ios/IOSWindow.mm
     ${CS_LAUNCH}
     ${CS_ASSETS}
@@ -329,7 +330,7 @@ elseif(CS_PLATFORM STREQUAL "ios")
   set_source_files_properties(${CS_LAUNCH} ${CS_ASSETS} ${CS_FB_PRIVACY} ${CS_FIREBASE_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   target_link_libraries(CuckooStack PRIVATE cs_graphics ${CS_MOLTENVK_XCFRAMEWORK}
     "-framework UIKit" "-framework QuartzCore" "-framework Metal" "-framework IOSurface" "-framework Foundation"
-    "-framework AVFoundation"
+    "-framework AVFoundation" "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo"
     "-framework StoreKit" "-framework AppTrackingTransparency" "-framework AdSupport" "-framework JavaScriptCore"
     "-framework WebKit" "-framework SystemConfiguration" "-framework CoreTelephony" "-framework MessageUI"
     "-framework SafariServices" "-ObjC")

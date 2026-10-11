@@ -312,6 +312,7 @@ bool Renderer::recreateSwapchain() {
 void Renderer::onSurfaceLost() {
     if (!ctx_.device) return;
     stopRecording();
+    stopReadback();
     vkDeviceWaitIdle(ctx_.device);
     destroyTargets();
     swapchain_.destroy();
@@ -347,6 +348,11 @@ bool Renderer::render(const RenderList& list) {
     Frame& f = frames_[frameIndex_];
     vkWaitForFences(ctx_.device, 1, &f.inFlight, VK_TRUE, UINT64_MAX);
     if (f.timed) readTimestamps(f);
+    if (Readback& rb = rb_[frameIndex_]; rb.pending) { // this slot's readback is done: hand the pixels over
+        rb.pending = false;
+        rb.buffer.invalidate();
+        if (rbSink_) rbSink_(static_cast<const uint8_t*>(rb.buffer.mapped()), rbSize_.width, rbSize_.height);
+    }
 
     uint32_t imageIndex = 0;
     VkResult r = swapchain_.acquire(f.imageAvailable, imageIndex);
@@ -361,9 +367,17 @@ bool Renderer::render(const RenderList& list) {
         if (rr != VK_SUCCESS && rr != VK_SUBOPTIMAL_KHR) recIndex_ = UINT32_MAX;
     }
 
+    // readback recorder: ~30 fps whatever the display rate
+    rbThisFrame_ = false;
+    if (rbSink_) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - rbLast_ >= std::chrono::microseconds(31000)) { rbLast_ = now; rbThisFrame_ = true; }
+    }
+
     vkResetFences(ctx_.device, 1, &f.inFlight);
     vkResetCommandPool(ctx_.device, f.pool, 0);
     record(f, imageIndex, list);
+    if (rbThisFrame_) rb_[frameIndex_].pending = true;
 
     const bool rec = recIndex_ != UINT32_MAX;
     const VkPipelineStageFlags waitStages[2] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
@@ -670,6 +684,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
     if (f.timed) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, f.timestamps, 3);
     if (!capturePath_.empty()) recordCapture(cmd, imageIndex);
     if (recIndex_ != UINT32_MAX) recordBlit(cmd, imageIndex);
+    if (rbThisFrame_) recordReadback(cmd, imageIndex);
     vkEndCommandBuffer(cmd);
 }
 
@@ -800,6 +815,75 @@ void Renderer::recordBlit(VkCommandBuffer cmd, uint32_t imageIndex) {
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
 }
 
+bool Renderer::startReadback(VkExtent2D size, FrameSink sink) {
+    stopReadback();
+    if (!swapchain_.valid() || !swapchain_.canReadback()) { CS_LOGW("Readback recorder: swapchain can't be read back"); return false; }
+    VkFormatProperties fp{};
+    vkGetPhysicalDeviceFormatProperties(ctx_.gpu, swapchain_.format(), &fp);
+    const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((fp.optimalTilingFeatures & need) != need) { CS_LOGW("Readback recorder: screen format can't be scaled"); return false; }
+    for (Readback& rb : rb_) {
+        // the swapchain's own format, so the bytes come back exactly as displayed (no sRGB conversion)
+        if (!rb.image.create(ctx_.device, ctx_.allocator, size, swapchain_.format(), VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             VK_IMAGE_ASPECT_COLOR_BIT, false) ||
+            !rb.buffer.createReadback(ctx_.allocator, VkDeviceSize(size.width) * size.height * 4)) {
+            stopReadback();
+            return false;
+        }
+        rb.pending = false;
+    }
+    rbSize_ = size;
+    rbSink_ = std::move(sink);
+    CS_LOGI("Readback recorder: %ux%u, format %d", size.width, size.height, int(swapchain_.format()));
+    return true;
+}
+
+void Renderer::stopReadback() {
+    if (!rbSink_ && !rb_[0].image.image()) return;
+    vkDeviceWaitIdle(ctx_.device);
+    for (Readback& rb : rb_) { rb.image.destroy(); rb.buffer.destroy(); rb.pending = false; }
+    rbSink_ = nullptr;
+    rbThisFrame_ = false;
+}
+
+void Renderer::recordReadback(VkCommandBuffer cmd, uint32_t imageIndex) {
+    Readback& rb = rb_[frameIndex_];
+    const VkImage src = swapchain_.image(imageIndex), dst = rb.image.image();
+    VkImageMemoryBarrier b[2]{};
+    for (VkImageMemoryBarrier& x : b) {
+        x.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        x.srcQueueFamilyIndex = x.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        x.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    }
+    b[0].image = src; b[0].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; b[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT; b[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    b[1].image = dst; b[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b[1].srcAccessMask = 0; b[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 2, b);
+    const VkExtent2D se = swapchain_.extent();
+    VkImageBlit blit{};
+    blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {int32_t(se.width), int32_t(se.height), 1};
+    blit.dstOffsets[1] = {int32_t(rbSize_.width), int32_t(rbSize_.height), 1};
+    vkCmdBlitImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    // the screen goes back to presenting; the small image is copied out to host memory
+    b[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b[0].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    b[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; b[0].dstAccessMask = 0;
+    b[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                         nullptr, 2, b);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {rbSize_.width, rbSize_.height, 1};
+    vkCmdCopyImageToBuffer(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer.handle(), 1, &copy);
+    VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &host, 0, nullptr, 0, nullptr);
+}
+
 void Renderer::writeCapture() {
     vkDeviceWaitIdle(ctx_.device);
     captureBuffer_.invalidate(); // needed on non-coherent host memory before the CPU reads
@@ -866,6 +950,7 @@ void Renderer::shutdown() {
         f = Frame{};
     }
     stopRecording();
+    stopReadback();
     vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;
