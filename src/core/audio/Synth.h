@@ -8,6 +8,7 @@
 
 #include "../Services.h"
 #include "AudioParam.h"
+#include "Music.h"
 
 #include <array>
 #include <atomic>
@@ -22,11 +23,12 @@ public:
 
     // IAudio (game thread)
     void play(Sfx sfx, int variant = 0) override;
-    void musicStart() override;
+    void musicStart(bool fromTop) override;
     void musicStop(bool powerDown) override;
     void musicTempo(float bpm) override;
     void musicSurge(bool on) override;
     void setMuted(bool muted) override;
+    bool musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const override;
 
     // Audio thread. Interleaved float output; `channels` copies of the mono mix.
     void render(float* out, int frames, int channels);
@@ -60,7 +62,7 @@ private:
     // ---- web build ports (audio thread)
     void sfx(Sfx s, int variant);
     void tone(float f0, float f1, float dur, Wave type = Wave::Sine, float vol = 0.15f, float delay = 0);
-    void noise(float dur, float vol, float freq);
+    void noise(float dur, float vol, float freq, float delay = 0.f, Biquad::Type type = Biquad::Type::Bandpass);
     void schedule();
     void schedulePartyStep(double t, double sixteenth);
     void woop(double t, float dur);
@@ -109,6 +111,7 @@ private:
     std::atomic<size_t> head_{0}, tail_{0};
     void push(const Command& c);
 
+    MusicPlayer music_; // the recorded soundtrack (when built in): replaces the synthesized songs, keeps the SFX
     std::vector<float> mono_, busPump_, busDrums_, busDelay_, busMaster_;
 };
 

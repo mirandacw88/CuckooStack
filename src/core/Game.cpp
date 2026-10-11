@@ -282,7 +282,7 @@ void Game::start() {
     if (dayStreak_.count() != streakBefore) track("streak_update", {{"count", std::to_string(dayStreak_.count())}});
     reset();
     state_ = State::Play;
-    beat_.start(); svc_.audio->musicStart();
+    beat_.start(); svc_.audio->musicStart(true); // a new run: the song from the top
     day_.attempts++; saveDay(); campaign_.attempt(); placeGate();
     if (debugNearFinish_) { // developer menu: test the finish quickly
         debugNearFinish_ = false;
@@ -603,7 +603,7 @@ void Game::revive() {
     hen_.unshatter();
     graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
     timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
-    beat_.start(); svc_.audio->musicStart();
+    beat_.start(); svc_.audio->musicStart(false); // a revive: the song carries on where the crash stopped it
     const glm::vec3 p{float(x_), float(baseY_) + 0.6f, 0};
     rings_.spawn(p, C().cyan, 3.2f, 0.6f, true); rings_.spawn(p, C().pink, 2.2f, 0.5f, true);
     burst(p, 90, {C().cyan, C().white, C().volt}, 3, 10, 0.8f, 0.1f, 0.6f, 0, false, 2, 3);
@@ -689,7 +689,7 @@ void Game::completeLevel() {
     graceT_ = 0; clearT_ = -1;
     state_ = State::Dead; deadT_ = 1.f; // no crash: the hen stands on the runway while the results show
     henV_ = henW_ = glm::vec3(0.f);
-    beat_.stop(); svc_.audio->musicStop(true);
+    beat_.stop(); svc_.audio->musicStop(false); // a win: fade out (a crash winds the tape down)
     finishRun(true); // (the replay clip is saved once the run has ended, as after a crash)
 }
 
@@ -1066,6 +1066,15 @@ void Game::update(double rawDt) {
     const float raw = static_cast<float>(rawDt), rdt = std::min(0.033f, raw);
     rdt_ = rdt;
     beat_.advance(std::min(0.25f, raw));
+    { // visuals in time with the recorded soundtrack, when one is playing
+        double bpm = 0, first = 0, pos = 0, rate = 1;
+        if (svc_.audio->musicBeat(bpm, first, pos, rate)) beat_.syncToTrack(bpm, first, pos, rate); else beat_.untrack();
+    }
+    // the soundtrack starts on the title screen (once the age screen has been answered)
+    if (state_ == State::Title && !titleMusic_ && profile_.audience() != Audience::Unknown) {
+        titleMusic_ = true;
+        beat_.start(); svc_.audio->musicStart(true);
+    }
     if (freeze_ > 0) freeze_ -= rdt;
     timeScale_ += (1 - timeScale_) * std::min(1.f, rdt * (state_ == State::Dead ? 1.2f : 4.f));
     const float dt = rdt * (freeze_ > 0 ? 0.04f : timeScale_);
@@ -1280,7 +1289,7 @@ void Game::updatePlay(float dt, float rdt) {
         graceT_ = 99.f;
         const float top = float(baseY_) + eggs_.size() * Uf;
         popup("FINISH!", {float(x_) + 1.5f, top + 2.4f, 0}, PopKind::Surge);
-        sfx(Sfx::SurgeStart); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
+        sfx(Sfx::SurgeStart); sfx(Sfx::Cheer); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
         rings_.spawn({float(x_), top + 0.6f, 0.4f}, C().volt, 4.f, 0.8f, true);
         for (int i = 0; i < 8; ++i) launchFirework(i * 0.08f);
     }

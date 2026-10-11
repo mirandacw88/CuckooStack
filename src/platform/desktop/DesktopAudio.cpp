@@ -1,10 +1,4 @@
-#define MINIAUDIO_IMPLEMENTATION
-#define MA_NO_DECODING
-#define MA_NO_ENCODING
-#define MA_NO_RESOURCE_MANAGER
-#define MA_NO_NODE_GRAPH
-#define MA_NO_ENGINE
-#define MA_NO_GENERATION
+// (the miniaudio implementation lives in src/core/audio/MiniaudioImpl.cpp, built with device I/O on desktop)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"

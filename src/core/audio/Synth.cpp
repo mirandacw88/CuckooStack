@@ -100,11 +100,21 @@ void Synth::push(const Command& c) {
     head_.store(next, std::memory_order_release);
 }
 void Synth::play(Sfx s, int variant) { push({Command::Sfx, int(s) | (variant << 8), 0}); }
-void Synth::musicStart() { push({Command::MusicStart, 0, 0}); }
+void Synth::musicStart(bool fromTop) { push({Command::MusicStart, fromTop ? 1 : 0, 0}); }
 void Synth::musicStop(bool sad) { push({Command::MusicStop, sad ? 1 : 0, 0}); }
 void Synth::musicTempo(float bpm) { push({Command::Tempo, 0, bpm}); }
 void Synth::musicSurge(bool on) { push({Command::Surge, on ? 1 : 0, 0}); }
 void Synth::setMuted(bool m) { push({Command::Mute, m ? 1 : 0, 0}); }
+
+bool Synth::musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const {
+    int track = -1;
+    double pos = 0, r = 1;
+    music_.beat(track, pos, r);
+    const TrackInfo* info = musicTrackInfo(track);
+    if (!info) return false;
+    bpm = info->bpm; firstBeat = info->firstBeat; position = pos; rate = r;
+    return true;
+}
 
 void Synth::processCommands() {
     size_t t = tail_.load(std::memory_order_relaxed);
@@ -112,10 +122,11 @@ void Synth::processCommands() {
         const Command c = queue_[t];
         switch (c.type) {
         case Command::Sfx: sfx(Sfx(c.a & 0xFF), c.a >> 8); break;
-        case Command::MusicStart: startMusic(); break;
-        case Command::MusicStop: stopMusic(c.a != 0); break;
-        case Command::Tempo: bpm_ = c.f; break;
+        case Command::MusicStart: if (music_.ok()) music_.start(c.a != 0); else startMusic(); break;
+        case Command::MusicStop: if (music_.ok()) music_.stop(c.a != 0); else stopMusic(c.a != 0); break;
+        case Command::Tempo: bpm_ = c.f; break; // (recorded tracks keep their own tempo)
         case Command::Surge:
+            if (music_.ok()) { music_.surge(c.a != 0); break; } // the soundtrack speeds up
             if (c.a && playing_ && !muted_ && !party_) { // party music only while the music is audible
                 party_ = true; partyStep_ = 0;
                 filtFreq_.cancelScheduledValues(now_);   // open any intro / build filter fully
@@ -126,6 +137,7 @@ void Synth::processCommands() {
             break;
         case Command::Mute:
             muted_ = c.a != 0;
+            music_.setMuted(muted_);
             out_.setTargetAtTime(muted_ || !playing_ ? 0.f : 0.55f, now_, 0.05f); // music.toggle()
             break;
         }
@@ -153,13 +165,13 @@ void Synth::tone(float f0, float f1, float dur, Wave type, float vol, float dela
     v.gain.exponentialRampToValueAtTime(0.0001f, t + dur);
 }
 
-void Synth::noise(float dur, float vol, float freq) {
-    const double t = now_;
+void Synth::noise(float dur, float vol, float freq, float delay, Biquad::Type type) {
+    const double t = now_ + delay;
     const size_t n = size_t(sr_ * dur);
     Voice& v = newVoice(t, t + dur, Bus::Master);
     v.ownBuffer.resize(n);
     for (size_t i = 0; i < n; ++i) v.ownBuffer[i] = (random01() * 2.f - 1.f) * std::pow(1.f - float(i) / float(n), 2.5f);
-    v.filtered = true; v.filterType = Biquad::Type::Bandpass; v.q = 0.9f; v.filterFreq.setValue(freq);
+    v.filtered = true; v.filterType = type; v.q = 0.9f; v.filterFreq.setValue(freq);
     v.gain.setValue(vol);
 }
 
@@ -206,6 +218,17 @@ void Synth::sfx(Sfx s, int k) {
         for (int i = 0; i < 5; ++i) tone(notes[i], notes[i], 0.12f, Wave::Square, 0.05f, 0.08f + i * 0.055f);
         break;
     }
+    case Sfx::Firework: { // a deep boom under a dark noise blast; willows crackle as they fall
+        const float p = 0.85f + 0.3f * random01(), v = 0.75f + 0.25f * random01(); // no two bursts alike
+        tone(95 * p, 32, 0.55f, Wave::Sine, 0.5f * v);
+        noise(0.45f, 0.5f * v, 700 * p, 0.f, Biquad::Type::Lowpass);
+        noise(0.12f, 0.22f * v, 2400 * p);
+        if (k == 1) tone(1800 * p, 600 * p, 0.25f, Wave::Sine, 0.03f * v); // ring: a faint whistle
+        if (k == 2)
+            for (int i = 0; i < 9; ++i) noise(0.025f, 0.25f * v, 3500 + 3000 * random01(), 0.3f + 0.7f * random01());
+        break;
+    }
+    case Sfx::Cheer: music_.cheer(); break; // recorded (assets/sfx/applause_cheer.mp3)
     case Sfx::LifeLost: // glassy crack + a two-step falling chime
         noise(0.1f, 0.35f, 3200);
         tone(988, 740, 0.12f, Wave::Triangle, 0.10f);
@@ -448,6 +471,7 @@ void Synth::render(float* out, int frames, int channels) {
         renderBlock(mono_.data(), n);
         for (int i = 0; i < n; ++i)
             for (int c = 0; c < channels; ++c) out[(done + i) * channels + c] = mono_[i];
+        music_.render(out + size_t(done) * channels, n, channels, sr_); // the soundtrack, in stereo, under the SFX
         done += n;
     }
 }

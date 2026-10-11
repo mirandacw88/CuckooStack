@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     std::vector<float> block(480);
     auto run = [&](float secs) { for (int i = 0; i < int(secs * 100); ++i) { synth.render(block.data(), 480, 1); mix.insert(mix.end(), block.begin(), block.end()); } };
 
-    synth.musicStart();
+    synth.musicStart(true);
     const float musicSecs = seconds - 6.f;
     for (float t = 0; t < musicSecs; t += 0.5f) { synth.musicTempo(126.f + std::min(4.4f, t * 0.05f) * 3.4f); run(0.5f); }
     synth.musicStop(true); // death: power-down

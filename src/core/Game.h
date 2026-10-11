@@ -285,7 +285,8 @@ private:
     Campaign campaign_;
     float clearT_ = -1;                   // seconds since crossing the finish line (-1: not crossed this run)
     bool runCleared_ = false;
-    bool debugNearFinish_ = false;        // developer menu: the next run starts 30 m before the finish line             // the last run ended at the finish line (Level Cleared screen)
+    bool debugNearFinish_ = false;
+    bool titleMusic_ = false;             // the soundtrack has been started on the title screen        // developer menu: the next run starts 30 m before the finish line             // the last run ended at the finish line (Level Cleared screen)
     int clearCoins_ = 0;                  // coins for that clear
     void applyCosmetics();
     void track(const char* event, AnalyticsParams params = {});
