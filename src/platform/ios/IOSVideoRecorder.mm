@@ -37,6 +37,8 @@ struct IOSVideoRecorder::Impl {
     std::atomic<bool> rebuild{false}; // the session died (iOS kills hardware encoders in the background): start over
     double lastPush = -1, retryAt = 0;
     double pausedTotal = 0, pausedAt = -1; // capture pauses, cut out of the clip's timeline
+    double markPts = -1;                   // the last crash, on the clip's timeline
+    std::atomic<double> dropFrom{-1}, dropTo{-1}; // a cut stretch: encoder output from it that arrives late is dropped
     bool forceKey = true;
 #ifndef NDEBUG
     double costSec = 0, costLogAt = 0; // debug: time spent in push() (copy + submit), logged every 2 s
@@ -64,6 +66,7 @@ struct IOSVideoRecorder::Impl {
         if (status != noErr) rebuild = true;
         if (status != noErr || !sb || (flags & kVTEncodeInfo_FrameDropped) || !CMSampleBufferDataIsReady(sb)) return;
         std::lock_guard<std::mutex> lock(m);
+        if (const double p = ptsOf(sb); p >= dropFrom.load() && p < dropTo.load()) return; // inside a cut (a revived crash)
         if (samples.empty() && !isKeyframe(sb)) return; // the window always starts on a keyframe
         CFRetain(sb);
         samples.push_back(sb);
@@ -111,7 +114,27 @@ void IOSVideoRecorder::stop() { impl_->stop(); }
 
 void IOSVideoRecorder::resetWindow() {
     impl_->clear();
+    impl_->markPts = -1;
     impl_->forceKey = true; // the new window starts on a keyframe
+}
+
+void IOSVideoRecorder::markCrash() {
+    Impl& s = *impl_;
+    s.markPts = (s.pausedAt >= 0 ? s.pausedAt : CACurrentMediaTime()) - s.pausedTotal;
+}
+
+void IOSVideoRecorder::dropSinceMark() {
+    Impl& s = *impl_;
+    if (s.markPts < 0) return;
+    const double end = (s.pausedAt >= 0 ? s.pausedAt : CACurrentMediaTime()) - s.pausedTotal; // captured so far
+    {
+        std::lock_guard<std::mutex> lock(s.m);
+        while (!s.samples.empty() && ptsOf(s.samples.back()) >= s.markPts) { CFRelease(s.samples.back()); s.samples.pop_back(); }
+    }
+    s.dropFrom = s.markPts; s.dropTo = end;
+    s.pausedTotal += std::max(0.0, end - s.markPts); // the timeline closes over the cut
+    s.forceKey = true; // the next frame can't lean on the dropped ones
+    s.markPts = -1;
 }
 
 void IOSVideoRecorder::setCapturing(bool on) {

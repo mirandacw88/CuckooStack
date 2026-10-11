@@ -105,6 +105,16 @@ void IOSReplay::runStarted() {
     [CSReplay.shared runStarted];
 }
 
+void IOSReplay::crashed() {
+    recorder_.markCrash();
+    ReplayAudioTap::shared().mark();
+}
+
+void IOSReplay::revived() { // (capture is paused: the Continue panel is up)
+    recorder_.dropSinceMark();
+    ReplayAudioTap::shared().rewindToMark();
+}
+
 void IOSReplay::setCapturing(bool on) {
     if (on == capturing_) return;
     capturing_ = on;

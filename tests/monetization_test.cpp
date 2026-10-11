@@ -5,6 +5,23 @@
 using namespace cs;
 using namespace test;
 
+namespace {
+// records what the game asks of Share Replay
+struct FakeReplay final : IReplay {
+    int saves = 0, crashes = 0, revives = 0;
+    bool capturing = false;
+    ReplayState state() override { return ReplayState::Recording; }
+    void setEnabled(bool) override {}
+    void runStarted() override {}
+    void setCapturing(bool on) override { capturing = on; }
+    void crashed() override { ++crashes; }
+    void revived() override { ++revives; }
+    void saveClip(const ReplayMeta&) override { ++saves; }
+    void shareVideo() override {}
+    bool consumeShared(std::string&) override { return false; }
+};
+} // namespace
+
 int main() {
     {   // ---- AdPolicy: interstitial rules
         FakeStorage st;
@@ -60,8 +77,9 @@ int main() {
         FakeClock clock;
         FakeAds ads;
         FakeAnalytics an;
+        FakeReplay replay;
         GameServices s;
-        s.storage = &st; s.clock = &clock; s.ads = &ads; s.analytics = &an;
+        s.storage = &st; s.clock = &clock; s.ads = &ads; s.analytics = &an; s.replay = &replay;
         Game g(s);
         const int coins0 = g.wallet().coins();
         dieQuickly(g);
@@ -73,6 +91,7 @@ int main() {
         check(g.tapButton("Watch ad") && ads.rewardedShows == 1 && ads.lastPlacement == "continue", "Watch ad plays a rewarded ad (placement continue)");
         step(g, 0.1f);
         check(g.state() == Game::State::Play && g.screen() == Game::Screen::None, "reward: the hen is back in the run");
+        check(replay.crashes == 1 && replay.revives == 1 && replay.saves == 0, "replay: a revived crash is cut, and gets no clip of its own");
         for (int i = 0; i < 60 * 40 && g.state() == Game::State::Play; ++i) g.update(1.0 / 60.0);
         step(g, Game::kCrashTail + 0.2f);
         // coins 0 -> no second continue possible (300 coins, no ad for the second)
@@ -81,6 +100,8 @@ int main() {
         check(g.screen() != Game::Screen::Continue, "no free second continue");
         step(g, 2.f);
         check(an.count("run_end") == 1, "exactly one run_end for the run (the continue doesn't end it)");
+        check(replay.saves <= 1 && replay.crashes == 2, "replay: one clip for the whole run, from its final crash");
+        check(!replay.capturing, "replay: capture is off on the results");
         check(g.wallet().coins() >= coins0, "run coins credited at the end");
         check(ads.interstitials == 0, "no interstitial in the first runs");
     }

@@ -320,9 +320,9 @@ private:
     bool pendingStart_ = false;               // the next run starts once the interstitial is dismissed
     bool continuePending_ = false;            // the Continue panel opens once the crash has played
     float deadRealT_ = 0;                     // real seconds since the crash (deadT_ runs in slow motion)
-    bool replaySaved_ = false;                // this crash's replay moment has passed (clip requested, or too short)
-    bool replayRequested_ = false;            // ... and the clip was requested
-    bool replayTooShort_ = false;             // ... but the run was too short for one
+    bool runOver_ = false;                    // finishRun has run: no revive any more, the clip can be requested
+    bool replayRequested_ = false;            // the run's clip was requested (or it was too short for one)
+    bool replayTooShort_ = false;             // ... too short: the results say so
     static constexpr float kMinReplaySeconds = 3.f;
     // a friend's challenge on today's course (challenge links): their distance shows as a pink marker
     struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };

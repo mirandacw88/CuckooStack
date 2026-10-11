@@ -28,6 +28,10 @@ public:
     // only gameplay is kept (IReplay::setCapturing): paused stretches are left out, like the video's
     void setCapturing(bool on) { capturing_.store(on, std::memory_order_relaxed); }
 
+    // a crash: rewindToMark() (a revive, while capture is paused) drops what was kept since, like the video's cut
+    void mark() { mark_ = write_.load(std::memory_order_acquire); }
+    void rewindToMark() { if (mark_ != UINT64_MAX) { write_.store(mark_, std::memory_order_release); mark_ = UINT64_MAX; } }
+
     // audio thread: interleaved stereo float
     void push(const float* inter, int frames) {
         if (!ready_.load(std::memory_order_acquire) || !capturing_.load(std::memory_order_relaxed)) return;
@@ -72,6 +76,7 @@ private:
     std::vector<int16_t> buf_;
     std::atomic<bool> ready_{false}, capturing_{false};
     std::atomic<uint64_t> write_{0};
+    uint64_t mark_ = UINT64_MAX;
     std::atomic<double> rate_{48000.0};
 };
 

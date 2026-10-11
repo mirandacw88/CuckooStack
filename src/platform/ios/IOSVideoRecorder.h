@@ -20,6 +20,8 @@ public:
     // only gameplay is recorded: while paused no frames come in, and the paused time is cut out of the timeline
     void setCapturing(bool on);
     void resetWindow(); // a new run: its clip never reaches back into the previous one
+    void markCrash();     // a crash: dropSinceMark() cuts from here (a revive)
+    void dropSinceMark(); // ... and the clip carries on from the next frame, on a keyframe
     // the last `seconds` (from the keyframe at or before them) as an MP4; blocks, call off the main thread.
     // Returns the clip's length in seconds, 0 on failure.
     double writeLast(double seconds, const std::string& path);

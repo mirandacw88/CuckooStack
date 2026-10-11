@@ -81,6 +81,22 @@ void AndroidReplay::runStarted() {
     }
 }
 
+void AndroidReplay::crashed() { crashMarkUs_ = nowUs(); }
+
+// A revive (capture is paused: the Continue panel is up): the crash it came back from is cut like a pause, from the
+// crash mark to the resume, and the revived run starts on a fresh keyframe.
+void AndroidReplay::revived() {
+    if (crashMarkUs_ < 0) return;
+    if (pauseStartUs_ >= 0) pauseStartUs_ = std::min(pauseStartUs_, crashMarkUs_);
+    crashMarkUs_ = -1;
+    if (running_ && video_) {
+        AMediaFormat* p = AMediaFormat_new();
+        AMediaFormat_setInt32(p, "request-sync", 0);
+        setParameters()(video_, p);
+        AMediaFormat_delete(p);
+    }
+}
+
 // Only gameplay goes into the clip: while paused the renderer sends no frames (except the end card) and the synth's
 // audio isn't fed; the export cuts the paused stretches out of the timeline.
 void AndroidReplay::setCapturing(bool on) {
@@ -326,6 +342,10 @@ void AndroidReplay::exportClip(int64_t toUs, std::string path) {
     // gameplay time: real time minus the capture pauses before it (Continue panel, menus...)
     std::vector<std::pair<int64_t, int64_t>> pauses;
     { std::lock_guard<std::mutex> lock(pauseMutex_); pauses.assign(pauses_.begin(), pauses_.end()); }
+    auto paused = [&pauses](int64_t pts) { // inside a pause or a cut (frames still in the encoder when it began)
+        for (const auto& [a, b] : pauses) if (pts >= a && pts < b) return true;
+        return false;
+    };
     auto played = [&pauses](int64_t pts) {
         int64_t t = pts;
         for (const auto& [a, b] : pauses) t -= std::clamp<int64_t>(pts, a, b) - a;
@@ -343,16 +363,23 @@ void AndroidReplay::exportClip(int64_t toUs, std::string path) {
         // game frames: this run's last kClipUs of play before the cut, from a keyframe; then the end card from its keyframe
         const int64_t from = played(cut) - kClipUs;
         for (const Sample& s : videoTrack_.samples) {
-            if (s.pts < runStart || s.pts >= cut || !(s.flags & kKeyFrame)) continue;
+            if (s.pts < runStart || s.pts >= cut || !(s.flags & kKeyFrame) || paused(s.pts)) continue;
             if (played(s.pts) <= from || startKey == INT64_MIN) startKey = s.pts;
             if (played(s.pts) > from) break;
         }
         t0 = startKey == INT64_MIN ? 0 : played(startKey);
-        bool inCard = false;
+        bool inCard = false, needKey = false;
         for (const Sample& s : videoTrack_.samples) {
             if (s.pts > toUs) break;
             if (startKey == INT64_MIN || s.pts < startKey) continue;
-            if (s.pts < cut) { video.push_back(s); videoOut.push_back(lastGame = played(s.pts) - t0); continue; }
+            if (s.pts < cut) {
+                if (paused(s.pts)) { needKey = true; continue; } // a cut: carry on from the next keyframe
+                if (needKey && !(s.flags & kKeyFrame)) continue;
+                needKey = false;
+                video.push_back(s);
+                videoOut.push_back(lastGame = played(s.pts) - t0);
+                continue;
+            }
             if (!inCard && !(s.pts >= card && (s.flags & kKeyFrame))) continue;
             if (!inCard) { inCard = true; t0 = s.pts - (lastGame + 1'000'000 / kFps); } // the card follows the last game frame
             video.push_back(s);
@@ -364,7 +391,7 @@ void AndroidReplay::exportClip(int64_t toUs, std::string path) {
         std::swap(afmt, audioTrack_.format);
         const int64_t a0 = startKey == INT64_MIN ? 0 : played(startKey);
         for (const Sample& s : audioTrack_.samples)
-            if (startKey != INT64_MIN && s.pts >= startKey && s.pts < cut) { audio.push_back(s); audioOut.push_back(played(s.pts) - a0); }
+            if (startKey != INT64_MIN && s.pts >= startKey && s.pts < cut && !paused(s.pts)) { audio.push_back(s); audioOut.push_back(played(s.pts) - a0); }
     }
     bool ok = vfmt && video.size() >= 2 && lastGame >= 1'000'000; // at least a second of play
     if (ok) {

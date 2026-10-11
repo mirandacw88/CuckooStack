@@ -37,6 +37,8 @@ public:
     void setEnabled(bool on) override;
     void runStarted() override;
     void setCapturing(bool on) override;
+    void crashed() override;
+    void revived() override;
     void saveClip(const ReplayMeta& meta) override;
     void shareVideo() override;
     bool consumeShared(std::string& target) override;

@@ -291,7 +291,7 @@ void Game::start() {
     rings_.spawn({0, 0.02f, 0}, C().cyan, 2.2f, 0.6f, false);
     burst({0, 0.1f, 0}, 30, {C().cyan, C().pink}, 2, 5, 0.6f, 0.1f, 0.3f, 0, true);
     svc_.replay->runStarted();
-    replaySaved_ = replayRequested_ = replayTooShort_ = false;
+    runOver_ = replayRequested_ = replayTooShort_ = false;
     // a friend's challenge: its marker shows on its level; it's dropped once that level is behind you
     const std::string thisLevel = "level:" + std::to_string(campaign_.level());
     if (challenge_ && (challenge_->day.rfind("level:", 0) != 0 || std::atoi(challenge_->day.c_str() + 6) < campaign_.level())) {
@@ -565,6 +565,7 @@ void Game::die(bool ceiling) {
     beat_.stop(); svc_.audio->musicStop(true);
     timeScale_ = 0.2f; chromaKick_ = 1.5f;
     crashFx(p);
+    svc_.replay->crashed(); // cut from here if the player revives
     run_.seconds = std::max(run_.seconds, 0.f);
     // Continue? (once with an ad or coins, a second time with more coins); otherwise the run is over now
     const int cost = run_.continues == 0 ? tune_.continueCost : tune_.continueCost2;
@@ -590,7 +591,7 @@ void Game::revive() {
     graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
     timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
     beat_.start(); svc_.audio->musicStart(false); // a revive: the song carries on where the crash stopped it
-    replaySaved_ = replayRequested_ = replayTooShort_ = false; // the clip that counts is the one from the run's final crash
+    svc_.replay->revived(); // the crash we came back from is cut out of the clip
     const glm::vec3 p{float(x_), float(baseY_) + 0.6f, 0};
     rings_.spawn(p, C().cyan, 3.2f, 0.6f, true); rings_.spawn(p, C().pink, 2.2f, 0.5f, true);
     burst(p, 90, {C().cyan, C().white, C().volt}, 3, 10, 0.8f, 0.1f, 0.6f, 0, false, 2, 3);
@@ -600,6 +601,7 @@ void Game::revive() {
 }
 
 void Game::finishRun(bool cleared) {
+    runOver_ = true;
     continuePending_ = false;
     const bool isBest = score_ > best_, isDayBest = score_ > day_.best;
     if (isDayBest) day_.best = score_;
@@ -1182,23 +1184,24 @@ void Game::update(double rawDt) {
     if (pendingStart_ && !svc_.ads->adShowing()) start(); // the interstitial was dismissed
     // the Continue panel, once the crash has played
     if (state_ == State::Dead) deadRealT_ += rdt; else deadRealT_ = 0;
-    // the replay clip: after a crash once its tail has played (kCrashTail; no panel opens before); after a level clear
-    // right away (the celebration has played; the results are about to show)
-    if (state_ == State::Dead && !replaySaved_ && (runCleared_ || deadRealT_ >= kCrashTail)) {
-        replaySaved_ = true;
-        replayTooShort_ = run_.seconds < kMinReplaySeconds; // a blink of a run: no clip (the results say so)
-    }
-    if (replaySaved_ && !replayTooShort_ && state_ == State::Dead && !replayRequested_) {
+    // the replay: the end of the run plays out (a crash's kCrashTail; a clear's celebration already has), then capture
+    // stops before any panel shows. The clip is requested once the run is really over: a crash that ends in a revive
+    // gets none (the revive cuts that crash out and the clip carries on).
+    const bool tailDone = runCleared_ || deadRealT_ >= kCrashTail;
+    if (state_ == State::Dead && runOver_ && tailDone && !replayRequested_) {
         replayRequested_ = true;
-        ReplayMeta m;
-        m.distance = int(std::floor(x_)); m.score = score_;
-        const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
-        m.label = "LEVEL " + std::to_string(lvl) + (runCleared_ ? " CLEARED" : "");
-        m.newBest = x_ > day_.bestDist || score_ > best_;
-        svc_.replay->saveClip(m);
+        replayTooShort_ = run_.seconds < kMinReplaySeconds; // a blink of a run: no clip (the results say so)
+        if (!replayTooShort_) {
+            ReplayMeta m;
+            m.distance = int(std::floor(x_)); m.score = score_;
+            const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
+            m.label = "LEVEL " + std::to_string(lvl) + (runCleared_ ? " CLEARED" : "");
+            m.newBest = x_ > day_.bestDist || score_ > best_;
+            svc_.replay->saveClip(m);
+        }
     }
-    // only gameplay is recorded: the run and its crash, not the Continue panel, results, title or menus
-    svc_.replay->setCapturing((state_ == State::Play && screen_ == Screen::None) || (state_ == State::Dead && !replaySaved_));
+    // only gameplay is recorded: the run and the end of it, not the Continue panel, results, title or menus
+    svc_.replay->setCapturing((state_ == State::Play && screen_ == Screen::None) || (state_ == State::Dead && !tailDone));
     {
         std::string target;
         if (svc_.replay->consumeShared(target)) track("replay_shared", {{"target", target}, {"distance", std::to_string(finalDist_)}});

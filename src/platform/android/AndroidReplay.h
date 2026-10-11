@@ -37,6 +37,8 @@ public:
     void setEnabled(bool on) override;
     void runStarted() override;
     void setCapturing(bool on) override;
+    void crashed() override;
+    void revived() override;
     void saveClip(const ReplayMeta& meta) override;
     void shareVideo() override;
     bool consumeShared(std::string& target) override;
@@ -93,7 +95,7 @@ private:
 
     // gameplay only: capture pauses (cut out of the clip) and the current run's start (a clip never reaches back past it)
     std::atomic<bool> capturing_{false};
-    int64_t pauseStartUs_ = -1, runStartUs_ = 0;
+    int64_t pauseStartUs_ = -1, runStartUs_ = 0, crashMarkUs_ = -1;
     std::deque<std::pair<int64_t, int64_t>> pauses_;
     std::mutex pauseMutex_;
     bool showingCard_ = false;
