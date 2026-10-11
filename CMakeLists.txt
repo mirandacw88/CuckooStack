@@ -5,11 +5,16 @@
 #   Android : cd platforms/android && ./gradlew assembleDebug   (Gradle drives this file through the NDK)
 cmake_minimum_required(VERSION 3.22)
 project(CuckooStack VERSION 1.0.0 LANGUAGES C CXX)
+if(APPLE)
+  # Objective-C (GLFW's Cocoa .m files) and Objective-C++ (the iOS sources; on macOS the iOS video recorder's test),
+  # enabled up front so every target, GLFW included, gets their build rules
+  enable_language(OBJC)
+  enable_language(OBJCXX)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CS_PLATFORM ios)
   cmake_minimum_required(VERSION 3.28) # xcframework linking/embedding
-  enable_language(OBJCXX)
   enable_language(Swift) # StoreKit 2 + Firebase glue (src/platform/ios/IOSServices.swift)
 elseif(ANDROID)
   set(CS_PLATFORM android)
@@ -423,7 +428,6 @@ if(CS_PLATFORM STREQUAL "desktop")
   target_link_libraries(replay_test PRIVATE cs_core)
   add_test(NAME replay COMMAND replay_test WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   if(APPLE) # the iOS video recorder runs on macOS too (VideoToolbox)
-    enable_language(OBJCXX)
     add_executable(replay_recorder_test tests/replay_recorder_test.mm src/platform/ios/IOSVideoRecorder.mm)
     target_include_directories(replay_recorder_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(replay_recorder_test PRIVATE -fobjc-arc)
