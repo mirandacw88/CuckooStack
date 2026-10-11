@@ -87,7 +87,7 @@ void IOSReplay::frame(bool hot) {
         const int w = 720, h = std::max(2, int(std::lround(720.0 * e.height / std::max(1u, e.width) / 2.0)) * 2);
         const bool ok = recorder_.start(w, h) &&
             renderer_->startReadback({uint32_t(w), uint32_t(h)}, [this](const uint8_t* px, uint32_t pw, uint32_t ph) { recorder_.push(px, pw, ph); });
-        renderer_->setReadbackPaused(!capturing_);
+        renderer_->setCapturePaused(!capturing_);
         [CSReplay.shared setRecording:YES];
         if (!ok) { recorder_.stop(); startFailed_ = true; [CSReplay.shared exportFailed]; } // (tried again when replays are re-enabled)
     } else if (!want && renderer_->readingBack()) {
@@ -110,7 +110,7 @@ void IOSReplay::setCapturing(bool on) {
     capturing_ = on;
     recorder_.setCapturing(on);
     ReplayAudioTap::shared().setCapturing(on);
-    if (renderer_) renderer_->setReadbackPaused(!on);
+    if (renderer_) renderer_->setCapturePaused(!on);
 }
 
 void IOSReplay::saveClip(const ReplayMeta& m) {

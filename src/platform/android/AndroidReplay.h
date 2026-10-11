@@ -36,12 +36,13 @@ public:
     ReplayState state() override;
     void setEnabled(bool on) override;
     void runStarted() override;
+    void setCapturing(bool on) override;
     void saveClip(const ReplayMeta& meta) override;
     void shareVideo() override;
     bool consumeShared(std::string& target) override;
     void setEndCardRenderer(EndCardRenderer r) override { endCard_ = std::move(r); }
 
-    // main loop: once per frame (drives the session and the end card); hot = thermal Serious or worse
+    // main loop: once per frame (drives the session and the end card); hot = thermal Critical
     void frame(bool hot);
     void onSurfaceLost();                                     // the window went away: the session must restart
     // audio thread (Oboe callback): the synth's output, interleaved float
@@ -57,7 +58,7 @@ private:
     void drainLoop(AMediaCodec* codec, Track& track, bool video);
     void audioLoop();
     void prune(Track& t, int64_t newest, bool video);
-    void exportClip(int64_t fromUs, int64_t toUs, std::string path);
+    void exportClip(int64_t toUs, std::string path);
     static int64_t nowUs();
 
     Renderer& renderer_;
@@ -89,6 +90,12 @@ private:
     std::vector<uint8_t> cardPixels_;
     std::thread cardThread_, exportThread_;
     int64_t crashUs_ = 0, cardShownUs_ = 0, sessionStartUs_ = 0;
+
+    // gameplay only: capture pauses (cut out of the clip) and the current run's start (a clip never reaches back past it)
+    std::atomic<bool> capturing_{false};
+    int64_t pauseStartUs_ = -1, runStartUs_ = 0;
+    std::deque<std::pair<int64_t, int64_t>> pauses_;
+    std::mutex pauseMutex_;
     bool showingCard_ = false;
     std::string clipPath_;
     std::mutex clipMutex_;

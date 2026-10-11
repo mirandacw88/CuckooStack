@@ -362,7 +362,7 @@ bool Renderer::render(const RenderList& list) {
 
     // recorder: every other frame (30 fps), if the encoder has a free buffer right now (never wait for it)
     recIndex_ = UINT32_MAX;
-    if (recChain_.valid() && (++recTick_ & 1u) == 0) {
+    if (recChain_.valid() && (!rbPaused_ || recOverlayOn_) && (++recTick_ & 1u) == 0) {
         const VkResult rr = recChain_.acquire(recAcquired_[frameIndex_], recIndex_, 0);
         if (rr != VK_SUCCESS && rr != VK_SUBOPTIMAL_KHR) recIndex_ = UINT32_MAX;
     }

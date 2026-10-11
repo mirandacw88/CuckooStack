@@ -62,7 +62,9 @@ public:
     bool startReadback(VkExtent2D size, FrameSink sink);
     void stopReadback();
     bool readingBack() const { return bool(rbSink_); }
-    void setReadbackPaused(bool paused) { rbPaused_ = paused; } // no GPU copies while paused (nothing to record)
+    // Share Replay records gameplay only: while paused neither recorder gets frames (no GPU copies), except the
+    // record overlay (the end card), which still goes to the encoder
+    void setCapturePaused(bool paused) { rbPaused_ = paused; }
     // While set, the recorder receives this image (RGBA8, e.g. the replay end card) instead of the screen.
     bool setRecordOverlay(const uint8_t* rgba, uint32_t width, uint32_t height);
     void clearRecordOverlay() { recOverlayOn_ = false; }

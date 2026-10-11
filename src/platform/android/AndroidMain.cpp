@@ -529,7 +529,7 @@ extern "C" void android_main(android_app* app) {
         if (const std::string link = s.java->callString("linkPoll"); !link.empty()) s.game->openLink(link);
         s.game->update(std::chrono::duration<double>(now - prev).count());
         prev = now;
-        if (s.replay) { s.replay->setAudioRate(s.audio ? s.audio->sampleRate() : 48000); s.replay->frame(s.thermal >= cs::quality::Thermal::Serious); }
+        if (s.replay) { s.replay->setAudioRate(s.audio ? s.audio->sampleRate() : 48000); s.replay->frame(s.thermal >= cs::quality::Thermal::Critical); } // recording is light: only Critical stops it
         if (!s.renderer.render(s.game->renderList())) {
             s.failed = true;
             s.java->fatal("The graphics device stopped responding (VK_ERROR_DEVICE_LOST).");
