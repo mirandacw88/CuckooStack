@@ -1644,7 +1644,7 @@ void Game::shareReplay() {
     } else {
         doShare(caption, finalDist_, "");
     }
-    if (rs == ReplayState::Off) { // turn replays on so the next run comes with a video
+    if (rs == ReplayState::Off || rs == ReplayState::Declined) { // turn replays on so the next run comes with a video
         profile_.setFlag("replays", true);
         svc_.replay->setEnabled(true);
         toast("Replays on: your next run comes with video", Icon::Replay);

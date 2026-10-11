@@ -67,7 +67,7 @@ bool IOSNotifications::consumeOpened(int& id) {
 }
 
 // ---------------------------------------------------------------- share replay
-ReplayState IOSReplay::state() { return ReplayState(std::clamp(int([CSReplay.shared state]), 0, 5)); }
+ReplayState IOSReplay::state() { return ReplayState(std::clamp(int([CSReplay.shared state]), 0, 6)); }
 void IOSReplay::setEnabled(bool on) { [CSReplay.shared setEnabled:on]; }
 void IOSReplay::runStarted() { [CSReplay.shared runStarted]; }
 void IOSReplay::saveClip(const ReplayMeta& m) { [CSReplay.shared saveClipWithDistance:m.distance score:m.score newBest:m.newBest day:ns(m.day)]; }

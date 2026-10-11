@@ -131,7 +131,8 @@ public:
 
 // Share Replay: the last ~15 s of the run as a 9:16 video with an end card, shared through the system sheet.
 // iOS: ReplayKit clip buffering. Android: in-engine recorder (Vulkan -> MediaCodec). Never offered to under-13s.
-enum class ReplayState : uint8_t { Unavailable, Off, Recording, Exporting, Ready, Failed };
+// Declined: the player said no to the system's recording permission (iOS); the game turns replays off
+enum class ReplayState : uint8_t { Unavailable, Off, Recording, Exporting, Ready, Failed, Declined };
 struct ReplayMeta { int distance = 0, score = 0; bool newBest = false; std::string day; };
 // draws the end card (RGBA8, opaque) at the requested size; the game provides it (EndCard.h)
 using EndCardRenderer = std::function<std::vector<uint8_t>(int width, int height, const ReplayMeta&)>;

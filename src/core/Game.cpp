@@ -1200,6 +1200,13 @@ void Game::update(double rawDt) {
         m.newBest = x_ > day_.bestDist || score_ > best_;
         svc_.replay->saveClip(m);
     }
+    // the player said no to the system's recording permission: replays off, like a declined primer (no prompt on
+    // every run); the results' Share button can turn them back on
+    if (profile_.flag("replays") && svc_.replay->state() == ReplayState::Declined) {
+        profile_.setFlag("replays", false);
+        svc_.replay->setEnabled(false);
+        track("replay_permission", {{"granted", "0"}});
+    }
     {
         std::string target;
         if (svc_.replay->consumeShared(target)) track("replay_shared", {{"target", target}, {"distance", std::to_string(finalDist_)}});

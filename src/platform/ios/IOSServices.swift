@@ -347,14 +347,19 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
 // MARK: - Share Replay (ReplayKit clip buffering)
 
 /// The last ~15 s of the run as a video with an end card. ReplayKit keeps a rolling buffer of the screen and the
-/// app's audio while replays are on (iOS asks permission the first time); at the crash the game asks for the clip,
-/// AVFoundation adds a watermark and the end card, and the system share sheet sends it anywhere.
+/// app's audio while replays are on; at the crash the game asks for the clip, AVFoundation adds a watermark and the
+/// end card, and the system share sheet sends it anywhere.
+///
+/// Permission: iOS has no lasting "allow" for screen recording. ReplayKit asks every time buffering starts (unless
+/// the player agreed moments ago), so buffering starts once and keeps running across runs: never restarted while it's
+/// running or while the prompt is up, not stopped for heat. "Don't Allow" is reported as `declined`, and the game
+/// turns replays off rather than asking again on every run.
 @objc(CSReplay) public final class CSReplay: NSObject {
     @objc public static let shared = CSReplay()
     // mirrors cs::ReplayState
-    private enum State: Int { case unavailable = 0, off, recording, exporting, ready, failed }
+    private enum State: Int { case unavailable = 0, off, recording, exporting, ready, failed, declined }
     private let lock = NSLock()
-    private var enabled = false, buffering = false
+    private var enabled = false, buffering = false, starting = false // starting: the permission prompt may be up
     private var current = State.off
     private var clip: URL?
     private var sharedTarget: String?
@@ -362,16 +367,33 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
 
     private func set(_ s: State) { lock.locked { current = s } }
 
+    /// iOS stopped the buffer itself (e.g. an interruption): the next run starts it again. (A private delegate object,
+    /// so the ReplayKit protocol stays out of the generated Objective-C header.)
+    private final class StopWatcher: NSObject, RPScreenRecorderDelegate {
+        var onStop: () -> Void = {}
+        func screenRecorder(_ screenRecorder: RPScreenRecorder, didStopRecordingWith previewViewController: RPPreviewViewController?, error: Error?) { onStop() }
+    }
+    private let watcher = StopWatcher()
+
+    private override init() {
+        super.init()
+        watcher.onStop = { [weak self] in self?.lock.locked { self?.buffering = false } }
+        RPScreenRecorder.shared().delegate = watcher
+    }
+
     @objc public func state() -> Int {
         let now = ProcessInfo.processInfo.systemUptime
         if now - availableCheckedAt > 2 { availableCheckedAt = now; available = RPScreenRecorder.shared().isAvailable }
         guard available else { return State.unavailable.rawValue }
-        return lock.locked { enabled ? current.rawValue : State.off.rawValue }
+        return lock.locked { enabled || current == .declined ? current.rawValue : State.off.rawValue }
     }
 
     /// Buffering starts right away (iOS asks permission the first time), so a full 15 s is ready at the first crash.
     @objc public func setEnabled(_ on: Bool) {
-        lock.locked { enabled = on }
+        lock.locked {
+            enabled = on
+            if on, current == .declined { current = .off } // the player turned replays back on: ask once more
+        }
         if on { startBuffering() } else { stopBuffering() }
     }
 
@@ -381,31 +403,46 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 
     private func startBuffering() {
-        // heat: no recording while the device is already hot (the game drops quality too)
-        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue { stopBuffering(); set(.failed); return }
-        if buffering { set(.recording); return }
+        let (running, prompting) = lock.locked { (buffering, starting) }
+        if running { set(.recording); return } // already buffering: restarting would ask for permission again
+        if prompting { return }
+        // heat: don't start while the device is already hot (the game drops quality too); a running buffer is kept,
+        // since stopping it means asking for permission again
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue { set(.failed); return }
+        lock.locked { starting = true }
         let rec = RPScreenRecorder.shared()
         rec.isMicrophoneEnabled = false
         rec.startClipBuffering { error in
             if let error {
-                NSLog("[CuckooStack] Replay: clip buffering unavailable (%@)", error.localizedDescription)
-                self.buffering = false
-                self.set(.failed)
+                let ns = error as NSError
+                let declined = ns.domain == RPRecordingErrorDomain && ns.code == RPRecordingErrorCode.userDeclined.rawValue
+                NSLog("[CuckooStack] Replay: clip buffering %@ (%@)", declined ? "declined" : "unavailable", error.localizedDescription)
+                self.lock.locked {
+                    self.starting = false
+                    self.buffering = false
+                    if declined { self.enabled = false }
+                    self.current = declined ? .declined : .failed
+                }
                 return
             }
-            self.buffering = true
-            self.set(.recording)
+            let keep = self.lock.locked { () -> Bool in
+                self.starting = false
+                self.buffering = self.enabled
+                if self.enabled { self.current = .recording }
+                return self.enabled
+            }
+            if !keep { rec.stopClipBuffering { _ in } } // turned off while the prompt was up
         }
     }
 
     private func stopBuffering() {
-        guard buffering else { return }
-        buffering = false
+        let was = lock.locked { () -> Bool in let b = buffering; buffering = false; return b }
+        guard was else { return }
         RPScreenRecorder.shared().stopClipBuffering { _ in }
     }
 
     @objc public func saveClip(distance: Int, score: Int, newBest: Bool, day: String) {
-        guard buffering else { return }
+        guard lock.locked({ buffering }) else { return }
         set(.exporting)
         let raw = FileManager.default.temporaryDirectory.appendingPathComponent("cs-replay-raw.mp4")
         try? FileManager.default.removeItem(at: raw)
