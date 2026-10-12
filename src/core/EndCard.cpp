@@ -100,15 +100,13 @@ std::vector<uint8_t> renderEndCard(const FontAtlas& fonts, const HudImage& icons
     const float mid = H * 0.42f;
     TextStyle tag = style(FontId::BodyBold, 34 * S, m.newBest ? kVolt : kNeon, 0.26f, true);
     tag.shadows = {blur(14 * S, m.newBest ? kVolt : kNeon, 0.8f)};
-    drawText(cv, fonts, tl, m.newBest ? "New best!" : "Daily run", tag, W / 2.f, mid - 250 * S);
+    drawText(cv, fonts, tl, m.newBest ? "New best!" : m.label, tag, W / 2.f, mid - 250 * S);
     TextStyle big = style(FontId::Display, 150 * S, kText, 0.f, false, 1.f);
     big.shadows = {hard(-5 * S, kHot), hard(5 * S, kNeon), blur(40 * S, kHot, 0.5f)};
     drawText(cv, fonts, tl, std::to_string(m.distance) + " m", big, W / 2.f, mid - 190 * S);
     TextStyle q = style(FontId::BodyBold, 52 * S, kText, 0.02f);
     q.shadows = {blur(16 * S, kHot, 0.6f)};
     drawText(cv, fonts, tl, "Can you beat it?", q, W / 2.f, mid + 10 * S);
-    TextStyle day = style(FontId::BodyBold, 30 * S, kNeon, 0.18f, true);
-    drawText(cv, fonts, tl, m.day, day, W / 2.f, mid + 95 * S);
     // brand block: spinning-coin logo + name + where to get it
     drawIcon(cv, icons, Icon::Coin, 0, {W / 2.f, mid + 260 * S}, 120 * S);
     TextStyle name = style(FontId::Display, 76 * S, kText, 0.02f, false, 1.f);

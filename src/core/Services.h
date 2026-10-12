@@ -130,9 +130,10 @@ public:
 };
 
 // Share Replay: the last ~15 s of the run as a 9:16 video with an end card, shared through the system sheet.
-// iOS: ReplayKit clip buffering. Android: in-engine recorder (Vulkan -> MediaCodec). Never offered to under-13s.
+// iOS: in-engine recorder (Vulkan readback -> VideoToolbox). Android: in-engine recorder (Vulkan -> MediaCodec). Never offered to under-13s.
 enum class ReplayState : uint8_t { Unavailable, Off, Recording, Exporting, Ready, Failed };
-struct ReplayMeta { int distance = 0, score = 0; bool newBest = false; std::string day; };
+// label: the end card's headline unless it's a new best, e.g. "LEVEL 3" / "LEVEL 3 CLEARED"
+struct ReplayMeta { int distance = 0, score = 0; bool newBest = false; std::string label; };
 // draws the end card (RGBA8, opaque) at the requested size; the game provides it (EndCard.h)
 using EndCardRenderer = std::function<std::vector<uint8_t>(int width, int height, const ReplayMeta&)>;
 class IReplay {
@@ -142,8 +143,14 @@ public:
     virtual ReplayState state() = 0;
     virtual void setEnabled(bool on) = 0;              // the player opted in (Profile flag "replays")
     virtual void runStarted() = 0;                      // keep a rolling buffer from now on
+    // only gameplay goes into the clip: false pauses video and audio (the pause is cut out of the clip)
+    virtual void setCapturing(bool on) { (void)on; }
+    // a crash: marks the moment; revived() then cuts everything captured since (the crash the player came back
+    // from never shows), and the clip carries on from the revived run
+    virtual void crashed() {}
+    virtual void revived() {}
     virtual void saveClip(const ReplayMeta& meta) = 0;  // the crash: export the last ~15 s + the end card
-    virtual void share(const std::string& caption, const std::string& url) = 0;
+    virtual void shareVideo() = 0;                      // the Ready clip through the system share sheet (video only)
     virtual bool consumeShared(std::string& target) = 0; // the share sheet finished (target app, for analytics)
 };
 
@@ -200,7 +207,7 @@ public:
     void setEnabled(bool) override {}
     void runStarted() override {}
     void saveClip(const ReplayMeta&) override {}
-    void share(const std::string&, const std::string&) override {}
+    void shareVideo() override {}
     bool consumeShared(std::string&) override { return false; }
 };
 class NullLeaderboards final : public ILeaderboards {

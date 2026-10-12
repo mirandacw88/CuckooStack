@@ -5,11 +5,16 @@
 #   Android : cd platforms/android && ./gradlew assembleDebug   (Gradle drives this file through the NDK)
 cmake_minimum_required(VERSION 3.22)
 project(CuckooStack VERSION 1.0.0 LANGUAGES C CXX)
+if(APPLE)
+  # Objective-C (GLFW's Cocoa .m files) and Objective-C++ (the iOS sources; on macOS the iOS video recorder's test),
+  # enabled up front so every target, GLFW included, gets their build rules
+  enable_language(OBJC)
+  enable_language(OBJCXX)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CS_PLATFORM ios)
   cmake_minimum_required(VERSION 3.28) # xcframework linking/embedding
-  enable_language(OBJCXX)
   enable_language(Swift) # StoreKit 2 + Firebase glue (src/platform/ios/IOSServices.swift)
 elseif(ANDROID)
   set(CS_PLATFORM android)
@@ -317,6 +322,7 @@ elseif(CS_PLATFORM STREQUAL "ios")
     src/platform/ios/IOSAudio.mm
     src/platform/ios/IOSServices.mm
     src/platform/ios/IOSServices.swift
+    src/platform/ios/IOSVideoRecorder.mm
     src/platform/ios/IOSWindow.mm
     ${CS_LAUNCH}
     ${CS_ASSETS}
@@ -329,7 +335,7 @@ elseif(CS_PLATFORM STREQUAL "ios")
   set_source_files_properties(${CS_LAUNCH} ${CS_ASSETS} ${CS_FB_PRIVACY} ${CS_FIREBASE_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   target_link_libraries(CuckooStack PRIVATE cs_graphics ${CS_MOLTENVK_XCFRAMEWORK}
     "-framework UIKit" "-framework QuartzCore" "-framework Metal" "-framework IOSurface" "-framework Foundation"
-    "-framework AVFoundation"
+    "-framework AVFoundation" "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo"
     "-framework StoreKit" "-framework AppTrackingTransparency" "-framework AdSupport" "-framework JavaScriptCore"
     "-framework WebKit" "-framework SystemConfiguration" "-framework CoreTelephony" "-framework MessageUI"
     "-framework SafariServices" "-ObjC")
@@ -418,6 +424,17 @@ if(CS_PLATFORM STREQUAL "desktop")
   add_executable(music_test tests/music_test.cpp)
   target_link_libraries(music_test PRIVATE cs_core)
   add_test(NAME music COMMAND music_test)
+  add_executable(replay_test tests/replay_test.cpp)
+  target_link_libraries(replay_test PRIVATE cs_core)
+  add_test(NAME replay COMMAND replay_test WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  if(APPLE) # the iOS video recorder runs on macOS too (VideoToolbox)
+    add_executable(replay_recorder_test tests/replay_recorder_test.mm src/platform/ios/IOSVideoRecorder.mm)
+    target_include_directories(replay_recorder_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(replay_recorder_test PRIVATE -fobjc-arc)
+    target_link_libraries(replay_recorder_test PRIVATE "-framework Foundation" "-framework AVFoundation" "-framework VideoToolbox"
+                          "-framework CoreMedia" "-framework CoreVideo" "-framework QuartzCore")
+    add_test(NAME replay_recorder COMMAND replay_recorder_test WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  endif()
   add_executable(render_audio tests/render_audio.cpp)
   target_link_libraries(render_audio PRIVATE cs_core)
   find_program(NODE node)

@@ -22,6 +22,8 @@ public:
     // Host-visible, persistently mapped, sequential-write (VBO/IBO streams, UBO). On UMA mobile GPUs VMA
     // places this in device-local + host-visible memory automatically.
     bool createMapped(VmaAllocator allocator, VkDeviceSize size, VkBufferUsageFlags usage);
+    // Host-visible, persistently mapped, cached for CPU reads (GPU -> CPU readback; TRANSFER_DST).
+    bool createReadback(VmaAllocator allocator, VkDeviceSize size);
     // Device-local, filled once through a staging buffer.
     bool createStatic(VulkanContext& ctx, const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
     void destroy();

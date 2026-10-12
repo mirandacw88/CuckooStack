@@ -161,6 +161,7 @@ std::string savePath() {
             return;
         }
         _ready = YES;
+        _replay.attach(&_renderer); // Share Replay records the renderer's frames
         [self applyQuality];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(thermalChanged) name:NSProcessInfoThermalStateDidChangeNotification object:nil];
         // hold the logo a moment once the game is running underneath, then fade to the title screen
@@ -205,6 +206,8 @@ std::string savePath() {
     if (!gPendingLink.empty()) { _game->openLink(gPendingLink); gPendingLink.clear(); }
     _game->update(now - _last);
     _last = now;
+    // recording is light (a small GPU copy + the hardware encoder): it only stops when iOS says Critical
+    _replay.frame(NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateCritical);
     if (!_renderer.render(_game->renderList())) {
         [self pause];
         _ready = NO;
@@ -259,6 +262,7 @@ std::string savePath() {
 
 - (void)dealloc {
     [self pause];
+    _replay.attach(nullptr);
     _renderer.shutdown();
 }
 @end

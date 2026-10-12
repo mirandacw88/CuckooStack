@@ -1,4 +1,5 @@
 #include "AndroidReplay.h"
+#include "../../core/ReplayClip.h"
 #include "../../core/Log.h"
 #include "../../graphics/Renderer.h"
 
@@ -22,7 +23,6 @@ namespace {
 constexpr int kVideoWidth = 720, kFps = 30, kVideoBitrate = 4'000'000, kAudioBitrate = 128'000;
 constexpr int64_t kWindowUs = 22'000'000;     // rolling window kept in memory
 constexpr int64_t kClipUs = 15'000'000;       // shared clip length (before the end card)
-constexpr int64_t kAfterCrashUs = 600'000;    // game frames kept after the crash (the hit and the feathers)
 constexpr int64_t kCardUs = 1'800'000;        // end card on screen
 constexpr int kAudioChunk = 1024;             // AAC frame size
 constexpr uint32_t kKeyFrame = 1;             // MediaCodec BUFFER_FLAG_KEY_FRAME
@@ -73,6 +73,46 @@ void AndroidReplay::setEnabled(bool on) {
 
 void AndroidReplay::runStarted() {
     if (enabled_ && running_ && state_ != ReplayState::Exporting) state_ = ReplayState::Recording;
+    runStartUs_ = nowUs(); // this run's clip starts here at the earliest
+    if (running_ && video_) { // ... on a fresh keyframe
+        AMediaFormat* p = AMediaFormat_new();
+        AMediaFormat_setInt32(p, "request-sync", 0);
+        setParameters()(video_, p);
+        AMediaFormat_delete(p);
+    }
+}
+
+void AndroidReplay::crashed() { crashMarkUs_ = nowUs(); }
+
+// A revive (capture is paused: the Continue panel is up): the crash it came back from is cut like a pause, from the
+// crash mark to the resume, and the revived run starts on a fresh keyframe.
+void AndroidReplay::revived() {
+    if (crashMarkUs_ < 0) return;
+    if (pauseStartUs_ >= 0) pauseStartUs_ = std::min(pauseStartUs_, crashMarkUs_);
+    crashMarkUs_ = -1;
+    if (running_ && video_) {
+        AMediaFormat* p = AMediaFormat_new();
+        AMediaFormat_setInt32(p, "request-sync", 0);
+        setParameters()(video_, p);
+        AMediaFormat_delete(p);
+    }
+}
+
+// Only gameplay goes into the clip: while paused the renderer sends no frames (except the end card) and the synth's
+// audio isn't fed; the export cuts the paused stretches out of the timeline.
+void AndroidReplay::setCapturing(bool on) {
+    if (on == capturing_.load()) return;
+    capturing_ = on;
+    renderer_.setCapturePaused(!on);
+    const int64_t now = nowUs();
+    if (!on) { pauseStartUs_ = now; return; }
+    if (pauseStartUs_ >= 0) {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        pauses_.emplace_back(pauseStartUs_, now);
+        while (pauses_.size() > 64) pauses_.pop_front();
+    }
+    pauseStartUs_ = -1;
+    if (sessionStartUs_) sessionStartUs_ = now; // the watchdog only counts time spent capturing
 }
 
 void AndroidReplay::onSurfaceLost() { stopSession(); }
@@ -110,6 +150,7 @@ bool AndroidReplay::startSession() {
         available_ = false;
         return false;
     }
+    renderer_.setCapturePaused(!capturing_);
 
     audio_ = AMediaCodec_createEncoderByType("audio/mp4a-latm");
     if (audio_) {
@@ -192,7 +233,7 @@ void AndroidReplay::drainLoop(AMediaCodec* codec, Track& track, bool video) {
 // ---------------------------------------------------------------- audio
 
 void AndroidReplay::pushAudio(const float* samples, int frames, int channels) {
-    if (!audioTap_) return;
+    if (!audioTap_ || !capturing_.load(std::memory_order_relaxed)) return; // gameplay only
     const uint64_t w = ringWrite_.load(std::memory_order_relaxed), r = ringRead_.load(std::memory_order_acquire);
     const size_t capFrames = ring_.size() / 2;
     if (w - r + uint64_t(frames) > capFrames) return; // encoder behind: drop rather than block the audio thread
@@ -241,7 +282,7 @@ void AndroidReplay::audioLoop() {
 
 void AndroidReplay::saveClip(const ReplayMeta& meta) {
     if (!running_ || state_ == ReplayState::Exporting || showingCard_) return;
-    crashUs_ = nowUs();
+    crashUs_ = nowUs(); // the cut: capture pauses now (the game stops capturing once the clip is requested)
     state_ = ReplayState::Exporting;
     if (cardThread_.joinable()) cardThread_.join();
     cardReady_ = false;
@@ -258,7 +299,7 @@ void AndroidReplay::frame(bool hot) {
     if (!running_ && !hot && renderer_.hasSurface() && state_ != ReplayState::Exporting) startSession();
     if (!running_) return;
     // watchdog: an encoder that won't take the GPU's frames (seen on emulators) gets no second chance on this device
-    if (sessionStartUs_ && nowUs() - sessionStartUs_ > 4'000'000) {
+    if (capturing_ && sessionStartUs_ && nowUs() - sessionStartUs_ > 4'000'000) {
         size_t n = 0;
         { std::lock_guard<std::mutex> lock(videoTrack_.m); n = videoTrack_.samples.size(); }
         if (n <= 2) {
@@ -287,57 +328,49 @@ void AndroidReplay::frame(bool hot) {
         showingCard_ = false;
         if (exportThread_.joinable()) exportThread_.join();
         const std::string path = cacheDir_ + "/replays/cuckoo-stack-replay.mp4";
-        const int64_t from = crashUs_ + kAfterCrashUs - kClipUs, cut = crashUs_ + kAfterCrashUs, card = cardShownUs_, to = nowUs();
-        exportThread_ = std::thread([this, from, to, path] { exportClip(from, to, path); });
+        const int64_t to = nowUs();
+        exportThread_ = std::thread([this, to, path] { exportClip(to, path); });
     }
 }
 
-void AndroidReplay::exportClip(int64_t fromUs, int64_t toUs, std::string path) {
-    const int64_t cut = crashUs_ + kAfterCrashUs, card = cardShownUs_;
+void AndroidReplay::exportClip(int64_t toUs, std::string path) {
+    const int64_t cut = crashUs_, card = cardShownUs_, runStart = runStartUs_;
     // the encoder runs a little behind the screen: give it up to 1.5 s to deliver the end card's frames
     for (int i = 0; i < 30; ++i) {
         { std::lock_guard<std::mutex> lock(videoTrack_.m); if (!videoTrack_.samples.empty() && videoTrack_.samples.back().pts >= toUs - 300'000) break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+    // gameplay time: real time minus the capture pauses before it (Continue panel, menus...)
+    std::vector<replay::Pause> pauses; // capture pauses and revived crashes, cut out of the clip
+    { std::lock_guard<std::mutex> lock(pauseMutex_); pauses.assign(pauses_.begin(), pauses_.end()); }
     std::vector<Sample> video, audio;
+    std::vector<int64_t> videoOut, audioOut; // output timestamps
     AMediaFormat* vfmt = nullptr;
     AMediaFormat* afmt = nullptr;
     // the formats are borrowed for the export (AMediaFormat_copy needs API 28) and handed back afterwards
+    replay::ClipRequest req;
+    req.runStart = runStart; req.cut = cut; req.card = card; req.to = toUs; req.clipUs = kClipUs; req.frameUs = 1'000'000 / kFps;
+    int64_t lastGame = 0;
     {
         std::lock_guard<std::mutex> lock(videoTrack_.m);
-        if (!videoTrack_.samples.empty())
-            CS_LOGI("Replay: window %zu video samples, pts %lld..%lld; clip %lld..%lld cut %lld card %lld", videoTrack_.samples.size(),
-                    (long long)videoTrack_.samples.front().pts, (long long)videoTrack_.samples.back().pts, (long long)fromUs, (long long)toUs,
-                    (long long)cut, (long long)card);
+        std::lock_guard<std::mutex> alock(audioTrack_.m);
         std::swap(vfmt, videoTrack_.format);
-        // game frames: from the last keyframe at or before the clip start (or the first one after it) to the cut;
-        // then the end card from its keyframe
-        int64_t startKey = INT64_MIN;
-        for (const Sample& s : videoTrack_.samples)
-            if (s.flags & kKeyFrame) { if (s.pts <= fromUs || startKey == INT64_MIN) startKey = s.pts; if (s.pts > fromUs) break; }
-        bool started = false, inCard = false;
-        for (const Sample& s : videoTrack_.samples) {
-            if (s.pts > toUs) break;
-            if (!started) { if (s.pts >= startKey && (s.flags & kKeyFrame)) started = true; else continue; }
-            if (s.pts >= cut && !inCard) { if (s.pts >= card && (s.flags & kKeyFrame)) inCard = true; else continue; }
-            video.push_back(s);
-        }
-    }
-    {
-        std::lock_guard<std::mutex> lock(audioTrack_.m);
         std::swap(afmt, audioTrack_.format);
-        const int64_t start = video.empty() ? fromUs : video.front().pts;
-        for (const Sample& s : audioTrack_.samples)
-            if (s.pts >= start && s.pts <= toUs && (s.pts < cut || s.pts >= card)) audio.push_back(s);
+        std::vector<replay::Frame> frames;
+        frames.reserve(videoTrack_.samples.size());
+        for (const Sample& s : videoTrack_.samples) frames.push_back({s.pts, (s.flags & kKeyFrame) != 0});
+        std::vector<int64_t> audioPts;
+        audioPts.reserve(audioTrack_.samples.size());
+        for (const Sample& s : audioTrack_.samples) audioPts.push_back(s.pts);
+        const replay::ClipPlan plan = replay::planClip(frames, audioPts, pauses, req); // ReplayClip.h
+        for (size_t i : plan.video) video.push_back(videoTrack_.samples[i]);
+        for (size_t i : plan.audio) audio.push_back(audioTrack_.samples[i]);
+        videoOut = plan.videoOut;
+        audioOut = plan.audioOut;
+        lastGame = plan.gameLength;
     }
-    bool ok = vfmt && video.size() >= 2 && video.back().pts - video.front().pts >= 1'000'000; // at least a second of video
+    bool ok = vfmt && video.size() >= 2 && lastGame >= 1'000'000; // at least a second of play
     if (ok) {
-        // close the gap between the cut and the card, and start the timeline at zero
-        int64_t cardKey = INT64_MAX;
-        for (const Sample& s : video) if (s.pts >= card) { cardKey = s.pts; break; }
-        const int64_t gap = cardKey == INT64_MAX ? 0 : std::max<int64_t>(0, cardKey - cut);
-        const int64_t t0 = video.front().pts;
-        auto remap = [&](int64_t pts) { return (pts >= card ? pts - gap : pts) - t0; };
         ::mkdir((cacheDir_ + "/replays").c_str(), 0700);
         const int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0600);
         AMediaMuxer* mux = fd >= 0 ? AMediaMuxer_new(fd, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4) : nullptr;
@@ -348,14 +381,12 @@ void AndroidReplay::exportClip(int64_t fromUs, int64_t toUs, std::string path) {
             ok = vt >= 0 && AMediaMuxer_start(mux) == AMEDIA_OK;
             size_t ai = 0;
             for (size_t vi = 0; ok && vi < video.size(); ++vi) {
-                const int64_t vp = remap(video[vi].pts);
-                for (; at >= 0 && ai < audio.size() && remap(audio[ai].pts) <= vp; ++ai) { // interleave by time
-                    const int64_t ap = remap(audio[ai].pts);
-                    if (ap < 0) continue;
-                    AMediaCodecBufferInfo info{0, int32_t(audio[ai].data.size()), ap, 0};
+                for (; at >= 0 && ai < audio.size() && audioOut[ai] <= videoOut[vi]; ++ai) { // interleave by time
+                    if (audioOut[ai] < 0) continue;
+                    AMediaCodecBufferInfo info{0, int32_t(audio[ai].data.size()), audioOut[ai], 0};
                     AMediaMuxer_writeSampleData(mux, size_t(at), audio[ai].data.data(), &info);
                 }
-                AMediaCodecBufferInfo info{0, int32_t(video[vi].data.size()), vp, video[vi].flags & kKeyFrame};
+                AMediaCodecBufferInfo info{0, int32_t(video[vi].data.size()), videoOut[vi], video[vi].flags & kKeyFrame};
                 ok = AMediaMuxer_writeSampleData(mux, size_t(vt), video[vi].data.data(), &info) == AMEDIA_OK;
             }
             if (AMediaMuxer_stop(mux) != AMEDIA_OK) ok = false;
@@ -376,10 +407,11 @@ void AndroidReplay::exportClip(int64_t fromUs, int64_t toUs, std::string path) {
     CS_LOGI("Replay: %s (%zu video, %zu audio samples)", ok ? "clip saved" : "export failed", video.size(), audio.size());
 }
 
-void AndroidReplay::share(const std::string& caption, const std::string& url) {
+void AndroidReplay::shareVideo() {
+    if (state_ != ReplayState::Ready || !platform_.share) return;
     std::string path;
-    if (state_ == ReplayState::Ready) { std::lock_guard<std::mutex> lock(clipMutex_); path = clipPath_; }
-    if (platform_.share) platform_.share(path, caption + " " + url);
+    { std::lock_guard<std::mutex> lock(clipMutex_); path = clipPath_; }
+    platform_.share(path, ""); // the video only
 }
 
 bool AndroidReplay::consumeShared(std::string& target) {

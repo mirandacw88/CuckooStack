@@ -30,6 +30,22 @@ bool VulkanBuffer::createMapped(VmaAllocator allocator, VkDeviceSize size, VkBuf
     return mapped_ != nullptr;
 }
 
+bool VulkanBuffer::createReadback(VmaAllocator allocator, VkDeviceSize size) {
+    destroy();
+    allocator_ = allocator; size_ = size;
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = size;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VmaAllocationCreateInfo ai{};
+    ai.usage = VMA_MEMORY_USAGE_AUTO;
+    ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo info{};
+    VK_TRY(vmaCreateBuffer(allocator, &bi, &ai, &buffer_, &allocation_, &info));
+    mapped_ = info.pMappedData;
+    return mapped_ != nullptr;
+}
+
 bool VulkanBuffer::createStatic(VulkanContext& ctx, const void* data, VkDeviceSize size, VkBufferUsageFlags usage) {
     destroy();
     allocator_ = ctx.allocator; size_ = size;

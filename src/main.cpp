@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     if (!outfit.empty()) game.debugWear(outfit);
     if (!endCardPath.empty()) { // the Android replay end card, for review: --endcard out.ppm
         cs::ReplayMeta m;
-        m.distance = 412; m.newBest = true; m.day = "Thu, Oct 8";
+        m.distance = 412; m.newBest = true; m.label = "LEVEL 3";
         const std::vector<uint8_t> px = game.endCard(720, 1600, m);
         if (FILE* f = std::fopen(endCardPath.c_str(), "wb")) {
             std::fprintf(f, "P6\n720 1600\n255\n");

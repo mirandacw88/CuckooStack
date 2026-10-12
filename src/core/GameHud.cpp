@@ -13,15 +13,6 @@ namespace cs {
 
 using namespace hud;
 
-std::string Game::dayLabel() const {
-    // d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })  ->  "Tue, Oct 6"
-    const std::time_t now = std::time(nullptr);
-    const std::tm* t = std::localtime(&now);
-    static const char* kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    static const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    return std::string(kDays[t->tm_wday]) + ", " + kMonths[t->tm_mon] + " " + std::to_string(t->tm_mday);
-}
-
 void Game::hudRect(glm::vec2 c, glm::vec2 size, glm::vec3 color, float alpha, Shape shape, float param, float rot) {
     // negative Y scale: HUD space is Y-down, so this keeps uv.y = 1 at the top of the quad on screen
     Instance i = makeUnlit(compose({c, 0}, {0, 0, rot}, {size.x, -size.y, 1}), color, alpha, shape, param);

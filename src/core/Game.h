@@ -32,6 +32,11 @@ namespace cs {
 
 class Game {
 public:
+    // How long the end of a run plays before any panel (and before the replay clip ends): the crash's slow-motion
+    // shatter, and the finish line's runway, fireworks and applause. Real seconds.
+    static constexpr float kCrashTail = 2.5f;
+    static constexpr float kFinishCelebration = 5.5f;
+    static constexpr float kMinReplaySeconds = 3.f; // shorter runs make no replay clip
     enum class State { Title, Play, Dead };
 
     explicit Game(const GameServices& services);
@@ -91,6 +96,8 @@ public:
     int courseLevel() const { return campaign_.level(); }
     int levelAttempts() const { return campaign_.attempts(); }
     bool lastRunCleared() const { return runCleared_; }
+    float runSeconds() const { return run_.seconds; } // play time this run (revives included)
+    bool replayTooShort() const { return replayTooShort_; }
     int coins() const { return wallet_.coins(); }
     void debugNearFinish() { debugNearFinish_ = true; }
     int liveSmashDebris() const { int n = 0; for (const auto& b : smashPool_) n += b.life > 0; return n; }
@@ -199,7 +206,6 @@ private:
     void hudCoinPill(bool interactive);
     void worldGateLabel();
     void worldMarkerLabel(double x, float opacity, std::string_view top, std::string_view bottom, glm::vec3 topColor);
-    std::string dayLabel() const;
 
     GameServices svc_;      // every pointer set (null services replaced by no-op ones)
     FastRandom rng_;
@@ -316,19 +322,16 @@ private:
     bool pendingStart_ = false;               // the next run starts once the interstitial is dismissed
     bool continuePending_ = false;            // the Continue panel opens once the crash has played
     float deadRealT_ = 0;                     // real seconds since the crash (deadT_ runs in slow motion)
-    bool replaySaved_ = false;                // this crash's replay clip was requested
+    bool runOver_ = false;                    // finishRun has run: no revive any more, the clip can be requested
+    bool replayRequested_ = false;            // the run's clip was requested (or it was too short for one)
+    bool replayTooShort_ = false;             // ... too short: the results say so
     // a friend's challenge on today's course (challenge links): their distance shows as a pink marker
     struct Challenge { std::string day, name, id; int meters = 0; bool beaten = false; float opacity = 1; };
     std::optional<Challenge> challenge_;
     void saveChallenge();
-    std::string challengeLink(int meters) const;
-    // share flow: with nudges available the link waits (briefly) for a server challenge id
-    struct PendingShare { std::string caption; int meters; float wait; };
-    std::optional<PendingShare> pendingShare_;
-    std::string sharedChallengeId_;
     bool beatenPending_ = false;
-    void doShare(const std::string& caption, int meters, const std::string& id);
     void shareReplay();
+    void hudReplayTooShort(glm::vec2 c);
     bool requestReward(Placement p, std::function<void()> grant); // false: no ad ready (caller shows a message)
     bool rewardReady(Placement p) const;
     void pollAds();

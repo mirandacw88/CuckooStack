@@ -1,8 +1,23 @@
 # Android Share Replay: status and findings (paused 2026-10-08)
 
-Status: **built, not yet working end to end.** The game ships with it switched on, but it falls back safely. If no clip
-is produced, the results screen's Share button sends the caption and store link as text, so players never see a
-broken button. iOS Share Replay (ReplayKit) is separate and complete.
+Status: **built, not yet working end to end.** The game ships with it switched on, but it fails safely: when no clip
+is produced, the results screen simply shows no Share Replay button (Share Replay shares the video only, never a
+link). iOS Share Replay is separate and complete: the same in-engine design (Renderer::startReadback -> VideoToolbox,
+the game's own audio via ReplayAudioTap), replacing ReplayKit, which dropped frames and audio under load.
+
+Since the pause, the recorder also follows the iOS rules (untested on a device, like the rest):
+- **Gameplay only.** `IReplay::setCapturing`: no frames (`Renderer::setCapturePaused`, except the end card) and no
+  audio while the game isn't in play; `exportClip` cuts the paused stretches out of the timeline.
+- **One run per clip.** `runStarted` marks the run's start and requests a keyframe there; a clip never reaches back
+  past it, and a revive keeps it.
+- **Cut at the clip request.** The cut is the clip request (`crashUs_`), since capture stops there. The game makes
+  that request once the end of the run has played: `Game::kCrashTail` (2.5 s) after a crash, and after
+  `Game::kFinishCelebration` (5.5 s) at the finish line. No panel opens before then.
+- **Revive.** A revived crash is cut out: `crashed()` marks it, and `revived()` widens the open pause back to the mark
+  and requests a keyframe. The export skips anything inside a pause, and the clip is only requested once the run is
+  over, so a revived crash gets no end card.
+- **Heat.** Only Thermal Critical stops recording.
+- **Watchdog.** It only counts time spent capturing.
 
 ## Design (as implemented)
 
@@ -16,7 +31,7 @@ No MediaProjection, so there's no system consent dialog and no casting icon. Eve
 | End card | `src/core/EndCard.{h,cpp}` (`Game::endCard`) | CPU-rasterised with the game's SDF fonts and icon atlas on a worker thread, uploaded once, shown to the encoder for 1.8 s. Rendering is verified on desktop: `build/cuckoo_stack --endcard out.ppm`. |
 | Clip export | `AndroidReplay::exportClip` | At the crash (+0.62 s): request an IDR (`request-sync`), show the card, then mux [last keyframe ≤ crash+0.6 s−15 s … cut] + [card keyframe … end] into `<cache>/replays/cuckoo-stack-replay.mp4` with `AMediaMuxer`, closing the gap between cut and card. |
 | Share sheet | `CuckooActivity.replayShare` + `ShareTargetReceiver` + FileProvider (`res/xml/replay_paths.xml`) | `ACTION_SEND video/mp4` (or `text/plain` without a clip) through a chooser. The chosen app is reported as `replay_shared` analytics. |
-| Safety | `AndroidReplay::frame` | Watchdog: if the encoder produces ≤2 samples in 4 s, recording is turned off for the session (`available_ = false`). Thermal Serious or worse also pauses recording. |
+| Safety | `AndroidReplay::frame` | Watchdog: if the encoder produces ≤2 samples in 4 s, recording is turned off for the session (`available_ = false`). Thermal Critical also stops recording. |
 
 ## What was observed (Pixel 10 Pro XL emulator, API 36, gfxstream/llvmpipe, `c2.android.avc.encoder` software)
 

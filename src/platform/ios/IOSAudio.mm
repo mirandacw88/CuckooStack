@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #import <AVFoundation/AVFoundation.h>
+#import "ReplayAudioTap.h"
 
 @interface CSAudioImpl : NSObject
 @property(nonatomic, strong) AVAudioEngine* engine;
@@ -25,6 +26,7 @@
     self.engine = [AVAudioEngine new];
     const double rate = [self.engine.outputNode outputFormatForBus:0].sampleRate;
     self.synth->setSampleRate(float(rate > 0 ? rate : 48000.0));
+    cs::ReplayAudioTap::shared().setRate(rate > 0 ? rate : 48000.0);
     AVAudioFormat* format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:(rate > 0 ? rate : 48000.0) channels:2];
     cs::audio::Synth* synth = self.synth;
     self.source = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL*, const AudioTimeStamp*, AVAudioFrameCount frames, AudioBufferList* out) {
@@ -36,6 +38,7 @@
         for (AVAudioFrameCount done = 0; done < frames;) {
             const int n = int(std::min<AVAudioFrameCount>(512, frames - done));
             synth->render(inter, n, 2);
+            cs::ReplayAudioTap::shared().push(inter, n); // Share Replay's soundtrack
             for (int i = 0; i < n; ++i) {
                 left[done + i] = inter[i * 2];
                 if (right) right[done + i] = inter[i * 2 + 1];

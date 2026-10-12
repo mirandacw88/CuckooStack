@@ -60,27 +60,31 @@ int main() {
         FakeClock clock;
         FakeAds ads;
         FakeAnalytics an;
+        FakeReplay replay;
         GameServices s;
-        s.storage = &st; s.clock = &clock; s.ads = &ads; s.analytics = &an;
+        s.storage = &st; s.clock = &clock; s.ads = &ads; s.analytics = &an; s.replay = &replay;
         Game g(s);
         const int coins0 = g.wallet().coins();
         dieQuickly(g);
         check(g.state() == Game::State::Dead, "crash");
-        step(g, 0.9f);
+        step(g, Game::kCrashTail + 0.2f); // the crash plays out first
         check(g.screen() == Game::Screen::Continue, "Continue panel opens after the crash");
         check(g.wallet().coins() == coins0, "no results yet while Continue is up");
         check(!g.tapButton("Tap to reboot") && g.screen() == Game::Screen::Continue, "results screen hidden while Continue is up");
         check(g.tapButton("Watch ad") && ads.rewardedShows == 1 && ads.lastPlacement == "continue", "Watch ad plays a rewarded ad (placement continue)");
         step(g, 0.1f);
         check(g.state() == Game::State::Play && g.screen() == Game::Screen::None, "reward: the hen is back in the run");
+        check(replay.crashes == 1 && replay.revives == 1 && replay.saves == 0, "replay: a revived crash is cut, and gets no clip of its own");
         for (int i = 0; i < 60 * 40 && g.state() == Game::State::Play; ++i) g.update(1.0 / 60.0);
-        step(g, 0.9f);
+        step(g, Game::kCrashTail + 0.2f);
         // coins 0 -> no second continue possible (300 coins, no ad for the second)
         const bool second = g.screen() == Game::Screen::Continue;
         if (second) { g.tapButton("No thanks"); step(g, 0.1f); }
         check(g.screen() != Game::Screen::Continue, "no free second continue");
         step(g, 2.f);
         check(an.count("run_end") == 1, "exactly one run_end for the run (the continue doesn't end it)");
+        check(replay.saves <= 1 && replay.crashes == 2, "replay: one clip for the whole run, from its final crash");
+        check(!replay.capturing, "replay: capture is off on the results");
         check(g.wallet().coins() >= coins0, "run coins credited at the end");
         check(ads.interstitials == 0, "no interstitial in the first runs");
     }
@@ -98,7 +102,7 @@ int main() {
         step(g, 1.5f);
         check(g.screen() == Game::Screen::None, "no ad and no coins: no Continue panel");
         check(ads.interstitials == 0, "interstitial never shown during the crash / results");
-        step(g, 1.f);
+        step(g, Game::kCrashTail);       // results once the crash has played
         g.press(); // next run
         check(ads.interstitials == 1, "interstitial plays when the player starts the next run");
         ads.showing = true;
@@ -107,7 +111,7 @@ int main() {
         ads.showing = false;
         step(g, 0.1f);
         check(g.state() == Game::State::Play, "...and starts once it's dismissed");
-        dieQuickly(g); step(g, 2.5f); g.press();
+        dieQuickly(g); step(g, Game::kCrashTail + 0.5f); g.press();
         check(ads.interstitials == 1, "not again right after (3 runs / 90 s spacing)");
     }
     return finish("monetization");

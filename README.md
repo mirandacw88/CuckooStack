@@ -120,7 +120,17 @@ cd build && ctest
 ```
 
 Headless checks of the meta-game: ad rules, economy and purchases, streak, missions, daily drop, reminders, age
-screen and challenge links (`tests/*_test.cpp`).
+screen and challenge links, plus the soundtrack and Share Replay (`tests/*_test.cpp`; on macOS also the iOS video
+recorder, `tests/replay_recorder_test.mm`).
+
+**Every commit runs them.** A pre-commit hook (`.githooks/pre-commit`) builds the desktop target and runs `ctest`;
+a failing build or test stops the commit. Turn it on once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+GitHub Actions runs the same build and tests on every push and pull request (`.github/workflows/tests.yml`, macOS).
 
 ```bash
 tests/run_level_parity.sh

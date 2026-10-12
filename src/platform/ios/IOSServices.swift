@@ -10,7 +10,6 @@ import FirebaseMessaging
 import FirebaseRemoteConfig
 import Foundation
 import GameKit
-import ReplayKit
 import StoreKit
 import UIKit
 import UserNotifications
@@ -344,105 +343,91 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 }
 
-// MARK: - Share Replay (ReplayKit clip buffering)
+// MARK: - Share Replay (in-game recorder: IOSVideoRecorder.mm + ReplayAudioTap.h)
 
-/// The last ~15 s of the run as a video with an end card. ReplayKit keeps a rolling buffer of the screen and the
-/// app's audio while replays are on (iOS asks permission the first time); at the crash the game asks for the clip,
-/// AVFoundation adds a watermark and the end card, and the system share sheet sends it anywhere.
+/// The last ~15 s of the run as a video with an end card. The game records itself (the renderer's frames through the
+/// hardware H.264 encoder, plus its own audio), so there's no system permission prompt and nothing gets dropped. At
+/// the crash the C++ side (IOSReplay) writes the raw clip and the audio, then calls `compose`: AVFoundation adds a
+/// watermark and the end card, and the system share sheet sends it anywhere.
 @objc(CSReplay) public final class CSReplay: NSObject {
     @objc public static let shared = CSReplay()
     // mirrors cs::ReplayState
     private enum State: Int { case unavailable = 0, off, recording, exporting, ready, failed }
     private let lock = NSLock()
-    private var enabled = false, buffering = false
     private var current = State.off
     private var clip: URL?
     private var sharedTarget: String?
-    private var available = true, availableCheckedAt = 0.0 // RPScreenRecorder.isAvailable is polled every frame: cache it
 
     private func set(_ s: State) { lock.locked { current = s } }
 
-    @objc public func state() -> Int {
-        let now = ProcessInfo.processInfo.systemUptime
-        if now - availableCheckedAt > 2 { availableCheckedAt = now; available = RPScreenRecorder.shared().isAvailable }
-        guard available else { return State.unavailable.rawValue }
-        return lock.locked { enabled ? current.rawValue : State.off.rawValue }
-    }
+    @objc public func state() -> Int { lock.locked { current.rawValue } }
 
-    /// Buffering starts right away (iOS asks permission the first time), so a full 15 s is ready at the first crash.
-    @objc public func setEnabled(_ on: Bool) {
-        lock.locked { enabled = on }
-        if on { startBuffering() } else { stopBuffering() }
-    }
-
-    @objc public func runStarted() {
-        guard lock.locked({ enabled }) else { return }
-        startBuffering()
-    }
-
-    private func startBuffering() {
-        // heat: no recording while the device is already hot (the game drops quality too)
-        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue { stopBuffering(); set(.failed); return }
-        if buffering { set(.recording); return }
-        let rec = RPScreenRecorder.shared()
-        rec.isMicrophoneEnabled = false
-        rec.startClipBuffering { error in
-            if let error {
-                NSLog("[CuckooStack] Replay: clip buffering unavailable (%@)", error.localizedDescription)
-                self.buffering = false
-                self.set(.failed)
-                return
-            }
-            self.buffering = true
-            self.set(.recording)
+    /// the recorder started / stopped (IOSReplay runs it)
+    @objc public func setRecording(_ on: Bool) {
+        lock.locked {
+            if !on { current = .off } else if current == .off || current == .failed { current = .recording }
         }
     }
 
-    private func stopBuffering() {
-        guard buffering else { return }
-        buffering = false
-        RPScreenRecorder.shared().stopClipBuffering { _ in }
+    /// a new run: the previous clip no longer applies
+    @objc public func runStarted() {
+        lock.locked { if current != .off { current = .recording; clip = nil } }
     }
 
-    @objc public func saveClip(distance: Int, score: Int, newBest: Bool, day: String) {
-        guard buffering else { return }
-        set(.exporting)
-        let raw = FileManager.default.temporaryDirectory.appendingPathComponent("cs-replay-raw.mp4")
-        try? FileManager.default.removeItem(at: raw)
-        RPScreenRecorder.shared().exportClip(to: raw, duration: 15) { error in
-            if let error {
-                NSLog("[CuckooStack] Replay: export failed (%@)", error.localizedDescription)
-                self.set(.failed)
-                return
-            }
-            Task {
-                // the end card is a bonus: if composing fails, share the plain clip
-                var url = await self.compose(raw, distance: distance, newBest: newBest, day: day)
-                if url == nil, let size = (try? FileManager.default.attributesOfItem(atPath: raw.path))?[.size] as? Int, size > 10_000 { url = raw }
-                self.lock.locked { self.clip = url }
-                self.set(url != nil ? .ready : .failed)
-            }
+    @objc public func beginExport() { set(.exporting) }
+    @objc public func exportFailed() { set(.failed) }
+
+    /// `raw`: the recorder's clip (video only); `audio`: the game's own recording of the same seconds (a WAV)
+    @objc public func compose(raw: String, audio: String?, distance: Int, newBest: Bool, label: String) {
+        let rawURL = URL(fileURLWithPath: raw)
+        Task {
+            // the end card is a bonus: if composing fails, share the plain clip
+            var url = await self.compose(rawURL, audio: audio.map { URL(fileURLWithPath: $0) }, distance: distance, newBest: newBest, label: label)
+            if url == nil, let size = (try? FileManager.default.attributesOfItem(atPath: raw))?[.size] as? Int, size > 10_000 { url = rawURL }
+            self.lock.locked { self.clip = url }
+            self.set(url != nil ? .ready : .failed)
         }
     }
 
     // MARK: composition: watermark + end card, scaled to 720 px wide
-    private func compose(_ src: URL, distance: Int, newBest: Bool, day: String) async -> URL? {
+    private func compose(_ src: URL, audio gameAudio: URL?, distance: Int, newBest: Bool, label: String) async -> URL? {
         let asset = AVURLAsset(url: src)
         do {
-            let duration = try await asset.load(.duration)
             guard let video = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            let vr = try await video.load(.timeRange)
+            let duration = vr.duration
             let natural = try await video.load(.naturalSize)
             let transform = try await video.load(.preferredTransform)
             let comp = AVMutableComposition()
             guard let cv = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
-            try cv.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
-            for a in try await asset.loadTracks(withMediaType: .audio) {
-                let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-                try ca?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: a, at: .zero)
-            }
+            try cv.insertTimeRange(vr, of: video, at: .zero)
+            // the end card: the last frame held for 1.8 s under it (an empty range at the end is dropped on export,
+            // which cut the card off)
             let card = CMTime(seconds: 1.8, preferredTimescale: 600)
-            cv.insertEmptyTimeRange(CMTimeRange(start: duration, duration: card))
+            let frame = CMTime(value: 1, timescale: 30)
+            try cv.insertTimeRange(CMTimeRange(start: CMTimeSubtract(vr.end, frame), duration: frame), of: video, at: duration)
+            cv.scaleTimeRange(CMTimeRange(start: duration, duration: frame), toDuration: card)
             let total = CMTimeAdd(duration, card)
+            // sound: the game's own recording, both ending at the crash (the clip's own audio, if any, as a fallback)
+            var audioDone = false
+            let audioAsset = gameAudio.map { AVURLAsset(url: $0) } // kept alive: a track whose asset is gone can't be inserted
+            if let audioAsset, let ga = try? await audioAsset.loadTracks(withMediaType: .audio).first,
+               let ar = try? await ga.load(.timeRange), ar.duration > .zero,
+               let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                if ar.duration >= duration { // the tail that lines up with the clip
+                    try ca.insertTimeRange(CMTimeRange(start: CMTimeSubtract(ar.end, duration), duration: duration), of: ga, at: .zero)
+                } else {                     // replays turned on mid-run: shorter, so it ends with the clip
+                    try ca.insertTimeRange(ar, of: ga, at: CMTimeSubtract(duration, ar.duration))
+                }
+                audioDone = true
+            }
+            if !audioDone {
+                for a in try await asset.loadTracks(withMediaType: .audio) {
+                    let r = try await a.load(.timeRange)
+                    let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                    try ca?.insertTimeRange(r, of: a, at: CMTimeSubtract(r.start, vr.start))
+                }
+            }
 
             let oriented = natural.applying(transform)
             let srcSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
@@ -457,7 +442,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             layer.setTransform(transform.concatenating(CGAffineTransform(scaleX: scale, y: scale)), at: .zero)
             instruction.layerInstructions = [layer]
             vc.instructions = [instruction]
-            vc.animationTool = overlay(size: size, clipSeconds: duration.seconds, distance: distance, newBest: newBest, day: day)
+            vc.animationTool = overlay(size: size, clipSeconds: duration.seconds, distance: distance, newBest: newBest, label: label)
 
             let out = FileManager.default.temporaryDirectory.appendingPathComponent("Cuckoo Stack \(distance)m.mp4")
             try? FileManager.default.removeItem(at: out)
@@ -466,6 +451,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             export.outputFileType = .mp4
             export.videoComposition = vc
             export.shouldOptimizeForNetworkUse = true
+            export.timeRange = CMTimeRange(start: .zero, duration: total)
             await export.export()
             return export.status == .completed ? out : nil
         } catch {
@@ -490,7 +476,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         return t
     }
 
-    private func overlay(size: CGSize, clipSeconds: Double, distance: Int, newBest: Bool, day: String) -> AVVideoCompositionCoreAnimationTool {
+    private func overlay(size: CGSize, clipSeconds: Double, distance: Int, newBest: Bool, label: String) -> AVVideoCompositionCoreAnimationTool {
         let pink = UIColor(red: 1, green: 0.17, blue: 0.84, alpha: 1), cyan = UIColor(red: 0.16, green: 0.91, blue: 1, alpha: 1)
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: size)
@@ -508,12 +494,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         card.backgroundColor = UIColor(red: 0.03, green: 0.02, blue: 0.06, alpha: 1).cgColor
         card.opacity = 0
         let mid = size.height / 2
-        card.addSublayer(text(newBest ? "NEW BEST!" : "DAILY RUN", size: 34, color: cyan, weight: .heavy, y: mid - 230, width: size.width, glow: cyan))
+        card.addSublayer(text(newBest ? "NEW BEST!" : label, size: 34, color: cyan, weight: .heavy, y: mid - 230, width: size.width, glow: cyan))
         card.addSublayer(text("\(distance) m", size: 120, color: .white, weight: .black, y: mid - 170, width: size.width, glow: pink))
         card.addSublayer(text("Can you beat it?", size: 48, color: .white, weight: .bold, y: mid + 10, width: size.width, glow: pink))
-        card.addSublayer(text(day, size: 30, color: cyan, weight: .semibold, y: mid + 90, width: size.width, glow: cyan))
-        card.addSublayer(text("Cuckoo Stack", size: 64, color: .white, weight: .black, y: mid + 200, width: size.width, glow: pink))
-        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 290, width: size.width, glow: cyan))
+        card.addSublayer(text("Cuckoo Stack", size: 64, color: .white, weight: .black, y: mid + 160, width: size.width, glow: pink))
+        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 250, width: size.width, glow: cyan))
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -527,13 +512,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
 
     // MARK: share
-    /// With a clip: the video plus the caption. Without one (no recording, or it failed): the caption and link alone.
-    @objc public func share(caption: String, url: String) {
-        let clip = lock.locked({ current == .ready ? self.clip : nil })
+    /// The run's video, nothing else (the game only offers this once the clip is ready).
+    @objc public func shareVideo() {
+        guard let clip = lock.locked({ current == .ready ? self.clip : nil }) else { return }
         DispatchQueue.main.async {
-            var items: [Any] = ["\(caption) \(url)"]
-            if let clip { items.insert(clip, at: 0) }
-            let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            let sheet = UIActivityViewController(activityItems: [clip], applicationActivities: nil)
             sheet.completionWithItemsHandler = { type, completed, _, _ in
                 if completed { self.lock.locked { self.sharedTarget = type?.rawValue ?? "unknown" } }
             }
