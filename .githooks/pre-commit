@@ -19,7 +19,7 @@ if ! cmake --build "$build" >/tmp/cuckoo-precommit-build.log 2>&1; then
 fi
 
 echo "pre-commit: running the unit tests..."
-if ! ctest --test-dir "$build" --output-on-failure; then
+if ! ctest --test-dir "$build" --output-on-failure --timeout 120; then # a hung test fails instead of stalling the commit
     echo "pre-commit: tests failed; commit stopped"
     exit 1
 fi

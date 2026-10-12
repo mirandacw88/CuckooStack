@@ -25,4 +25,4 @@ jobs:
         run: cmake --build build -j "$(sysctl -n hw.ncpu)"
 
       - name: Unit tests
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --timeout 120
