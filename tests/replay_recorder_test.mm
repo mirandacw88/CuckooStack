@@ -5,6 +5,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
+#import <VideoToolbox/VideoToolbox.h>
 
 #include <cmath>
 #include <cstdio>
@@ -14,6 +15,24 @@
 
 namespace {
 int failures = 0;
+bool hardware = true; // a hardware H.264 encoder (every iPhone / iPad / Mac); CI's virtual Macs encode in software
+
+// Is there a hardware H.264 encoder? Without one (GitHub's virtual Macs) encoding is slow enough to drop frames, so
+// the checks on frame rate and clip length - the machine's speed, not the recorder's logic - are skipped there.
+bool hasHardwareEncoder() {
+    NSDictionary* spec = @{(id)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: @YES};
+    VTCompressionSessionRef s = nullptr;
+    const OSStatus st = VTCompressionSessionCreate(nullptr, 320, 568, kCMVideoCodecType_H264, (__bridge CFDictionaryRef)spec, nullptr, nullptr,
+                                                   nullptr, nullptr, &s);
+    if (s) { VTCompressionSessionInvalidate(s); CFRelease(s); }
+    return st == noErr;
+}
+void check(bool ok, const char* what);
+// speed-dependent checks: only meaningful with a hardware encoder
+void timed(bool ok, const char* what) {
+    if (hardware) check(ok, what);
+    else std::printf("skip  %s (software encoder: timing depends on the machine)\n", what);
+}
 void check(bool ok, const char* what) {
     std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
     if (!ok) ++failures;
@@ -75,6 +94,8 @@ Clip read(const std::string& path) {
 
 int main() {
     @autoreleasepool {
+        hardware = hasHardwareEncoder();
+        std::printf("H.264 encoder: %s\n", hardware ? "hardware" : "software only (speed checks skipped)");
         const std::string path = "replay_recorder_test.mp4";
         cs::IOSVideoRecorder r;
         if (!r.start(int(W), int(H))) {
@@ -96,15 +117,18 @@ int main() {
         settle();
         double len = r.writeLast(15.0, path);
         Clip c = read(path);
-        check(std::abs(len - 2.0) < 0.25, "gameplay only: 2 s of play, the pause cut out");
+        check(len > 0.5 && len < 2.4, "gameplay only: the 0.6 s pause is cut out of the clip");
+        timed(std::abs(len - 2.0) < 0.25, "gameplay only: exactly 2 s of play");
         // (Frame rate and gaps depend on the machine: CI's virtual Macs encode in software at ~15 fps and the recorder
         // skips frames rather than fall behind. So these check the logic: a cut-out pause would leave a 0.6 s hole.)
-        check(c.frames >= 20 && c.firstKey && c.rising, "the clip: at least 10 fps, starts on a keyframe, timestamps rise");
+        check(c.frames >= 2 && c.firstKey && c.rising, "the clip: starts on a keyframe, timestamps rise");
+        timed(c.frames >= 20, "the clip: at least 10 fps");
         check(c.maxGap < 0.45, "no hole where the pause was");
 
         // the last N seconds only
         len = r.writeLast(1.0, path);
-        check(len >= 1.0 && len <= 2.2, "the last second, from the keyframe before it");
+        check(len > 0 && len <= 2.2, "the last second, from the keyframe before it");
+        timed(len >= 1.0, "the last second: at least a full second");
 
         // a crash, then a revive: the crash is cut out
         r.setCapturing(true);
@@ -120,7 +144,8 @@ int main() {
         settle();
         len = r.writeLast(15.0, path);
         c = read(path);
-        check(std::abs(len - 3.3) < 0.3, "revive: the crash and the Continue panel are cut (2.5 s + 0.8 s of play)");
+        check(len > 0.5 && len < 3.8, "revive: the crash and the Continue panel are cut (it would be 4.5 s with them)");
+        timed(std::abs(len - 3.3) < 0.3, "revive: exactly 2.5 s + 0.8 s of play");
         check(c.rising && c.maxGap < 0.45, "revive: the clip carries straight on (the cut was 1.2 s)");
 
         // a new run: its clip doesn't reach into the last one
@@ -132,7 +157,8 @@ int main() {
         settle();
         len = r.writeLast(15.0, path);
         c = read(path);
-        check(std::abs(len - 1.0) < 0.2 && c.firstKey, "a new run: a fresh clip, from its own keyframe");
+        check(len > 0 && len < 1.3 && c.firstKey, "a new run: a fresh clip (not the old run's), from its own keyframe");
+        timed(std::abs(len - 1.0) < 0.2, "a new run: exactly its 1 s");
 
         // back from the background mid-run (frames stop while capture is on): a fresh session, and the clip still works
         r.setCapturing(true);
@@ -142,7 +168,8 @@ int main() {
         r.setCapturing(false);
         settle();
         len = r.writeLast(15.0, path);
-        check(len > 0.7 && len < 1.3, "after the background: the encoder restarts and records");
+        check(len > 0 && len < 1.3, "after the background: the encoder restarts and records");
+        timed(len > 0.7, "after the background: most of the second is recorded");
 
         r.stop();
         check(r.writeLast(15.0, path) == 0, "stopped: no clip");
