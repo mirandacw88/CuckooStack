@@ -133,21 +133,25 @@ int main() {
         check(len > 0 && len <= 2.2, "the last second, from the keyframe before it");
         timed(len >= 1.0, "the last second: at least a full second");
 
-        // a crash, then a revive: the crash is cut out
+        // a crash, then a revive: the crash is cut out. Measured against this machine: how long the clip was before,
+        // and how long each stretch really played (a slow encoder makes every push, so every play(), run long)
+        const double before = r.writeLast(15.0, path);
+        auto timedPlay = [&](double s) { const double t0 = CACurrentMediaTime(); play(r, s); return CACurrentMediaTime() - t0; };
         r.setCapturing(true);
-        play(r, 0.5);
+        double kept = timedPlay(0.5);
         r.markCrash();
-        play(r, 0.8);           // the crash's tail
+        const double tail = timedPlay(0.8); // the crash's tail
         r.setCapturing(false);  // the Continue panel
         usleep(400000);
         r.dropSinceMark();      // revived
         r.setCapturing(true);
-        play(r, 0.8);
+        kept += timedPlay(0.8);
         r.setCapturing(false);
         settle();
         len = r.writeLast(15.0, path);
         c = read(path);
-        check(len > 0.5 && len < 3.8, "revive: the crash and the Continue panel are cut (it would be 4.5 s with them)");
+        check(len > before && len - before < kept + tail / 2,
+              "revive: the crash and the Continue panel are cut (the clip grows by the play kept, not the crash's tail)");
         timed(std::abs(len - 3.3) < 0.3, "revive: exactly 2.5 s + 0.8 s of play");
         check(c.rising, "revive: timestamps keep rising across the cut");
         timed(c.maxGap < 0.45, "revive: the clip carries straight on (the cut was 1.2 s)");
