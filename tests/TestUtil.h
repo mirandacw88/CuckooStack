@@ -78,7 +78,7 @@ struct FakeStore : cs::IStore {
     bool pollEvent(cs::PurchaseEvent& e) override { if (queue.empty()) return false; e = queue.front(); queue.erase(queue.begin()); return true; }
 };
 
-// Share Replay as the game drives it: records every call (tests/replay_test.cpp, monetization_test.cpp)
+// Share Replay as the game drives it: records every call (Game_test.cpp, Monetization_test.cpp)
 struct FakeReplay final : cs::IReplay {
     cs::ReplayState st = cs::ReplayState::Recording;
     int saves = 0, crashes = 0, revives = 0, runStarts = 0, shares = 0, enables = 0;

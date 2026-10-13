@@ -112,5 +112,5 @@ int main() {
         check(g.wallet().coins() >= 0 && g.wallet().lifetimeEarned() >= 0, "run coins never negative");
         (void)t;
     }
-    return finish("economy");
+    return finish("Economy");
 }

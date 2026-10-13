@@ -1,5 +1,5 @@
 // Share Replay: choosing the clip out of a recorder's rolling window of encoded frames (Android's export; pure logic,
-// so tests/replay_test.cpp drives it on desktop). Times are microseconds on the recorder's clock.
+// so ReplayClip_test.cpp drives it on desktop). Times are microseconds on the recorder's clock.
 //
 // The window holds the run as it was captured, with holes: capture pauses (the Continue panel, menus) and revived
 // crashes are listed as `pauses` and cut out, so the clip plays continuously. The clip is the last `clipUs` of play

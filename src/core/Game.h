@@ -66,7 +66,7 @@ public:
     // A link opened the app (challenge links: <site>/c?d=YYYY-MM-DD&m=412&n=Sam, or cuckoostack://c?...).
     void openLink(const std::string& url);
 
-    // testing hooks (desktop --surge flag, tests/surge_test.cpp)
+    // testing hooks (desktop --surge flag, GameSurge_test.cpp)
     struct SurgeStatus { int chain; bool surging; float surgeT, graceT, partyK; int smashed; float speed; };
     SurgeStatus surgeStatus() const { return {chain_, surging_, surgeT_, graceT_, partyK_, smashed_, speed_}; }
     void debugStartSurge() { if (state_ == State::Play) { chain_ = 0; startSurge(); } }

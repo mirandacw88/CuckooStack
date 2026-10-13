@@ -2,7 +2,7 @@
 //  - the OVERDRIVE line under the title logo (HudStyle.h overdriveLook) and on the Share Replay end card
 //  - the rename to "Cuckoo Stack OVERDRIVE" (app names, settings footer, window, web pages, the iOS card)
 //  - "surge" shown to the player as "overdrive" (boost tile, timer, popup, mission), the boost names fitting their
-//    tiles (fitWidth), and the "Level Complete" banner's look (its placement and timing: campaign_test)
+//    tiles (fitWidth), and the "Level Complete" banner's look (its placement and timing: src/core/Campaign_test.cpp)
 #include "TestUtil.h"
 #include "core/Daily.h"
 #include "core/HudStyle.h"

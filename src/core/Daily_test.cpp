@@ -1,6 +1,7 @@
 // Streak, missions, daily drop, level and the age screen (Daily.h), with a clock moved by hand.
+// (Reminder planning: Reminders_test.cpp.)
 #include "TestUtil.h"
-#include "core/Reminders.h"
+#include "core/Daily.h"
 
 #include <set>
 
@@ -102,32 +103,6 @@ int main() {
         Game g3(s);
         check(g3.screen() != Game::Screen::AgeGate, "asked only once");
     }
-    {   // ---- reminders
-        FakeClock clock; // 2026-10-08 10:00
-        Tuning t;
-        ReminderState st;
-        check(planReminders(clock, t, st).empty(), "reminders off: nothing planned");
-        st.enabled = true; st.usualHour = 23; st.streak = 5; st.playedToday = false;
-        auto r = planReminders(clock, t, st);
-        bool oneADay = true, quiet = true;
-        std::set<int64_t> days;
-        for (const Reminder& x : r) {
-            oneADay &= days.insert(clock.localMidnight(x.at)).second;
-            const int h = clock.localHour(x.at);
-            quiet &= h >= t.notifQuietEnd && h < t.notifQuietStart;
-        }
-        check(!r.empty() && oneADay, "at most one reminder a day");
-        check(quiet, "never in quiet hours (a 23:00 player gets theirs before 21:00)");
-        check(r.front().at == clock.localMidnight(clock.now()) + t.notifStreakHour * 3600, "streak about to end: a reminder this evening");
-        st.playedToday = true;
-        check(planReminders(clock, t, st).front().at > clock.localMidnight(clock.now()) + 86400 - 1, "played today: no streak warning");
-        st.ignored = 3;
-        auto b = planReminders(clock, t, st);
-        check(b.size() == 2, "3 ignored in a row: only every third day");
-        clock.t = clock.localMidnight(clock.now()) + 20 * 3600; // 20:00, after the streak hour
-        st.ignored = 0; st.playedToday = false;
-        check(planReminders(clock, t, st).front().at >= clock.localMidnight(clock.now()) + 86400, "too late today: nothing tonight");
-    }
     {   // ---- challenge links
         FakeStorage st = FakeStorage::ready();
         FakeClock clock;
@@ -156,5 +131,5 @@ int main() {
         g4.openLink("cuckoostack://c?l=1&m=50");
         check(g4.challengeMeters() == 0, "children: challenge links are ignored");
     }
-    return finish("daily");
+    return finish("Daily");
 }

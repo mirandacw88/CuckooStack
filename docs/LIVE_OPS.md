@@ -62,7 +62,7 @@ The order below is the order to do it in.
 
 ## 3. Store products
 
-All IDs and amounts come from [`config/store/products.json`](../config/store/products.json); `economy_test` checks it
+All IDs and amounts come from [`config/store/products.json`](../config/store/products.json); `src/core/Economy_test.cpp` checks it
 against the game. Create each product in **both** apps (staging and prod):
 
 | ID | App Store type | Play type | Price tier |

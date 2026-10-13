@@ -1,5 +1,5 @@
 {
-  "_comment": "In-app products: the one list the game (src/core/Economy.h kProducts), the verifyPurchase Cloud Function (firebase/functions) and the store consoles must agree on. economy_test checks Economy.h against this file. Create the products in App Store Connect and Play Console with these ids, for BOTH apps (prod com.cuckoostack.aerospheregames and staging com.cuckoostack.aerospheregames.staging).",
+  "_comment": "In-app products: the one list the game (src/core/Economy.h kProducts), the verifyPurchase Cloud Function (firebase/functions) and the store consoles must agree on. src/core/Economy_test.cpp checks Economy.h against this file. Create the products in App Store Connect and Play Console with these ids, for BOTH apps (prod com.cuckoostack.aerospheregames and staging com.cuckoostack.aerospheregames.staging).",
   "products": [
     { "id": "coins_s",      "type": "consumable",     "coins": 300,  "usd": "0.99",  "name": "Coin Pack S" },
     { "id": "coins_m",      "type": "consumable",     "coins": 1000, "usd": "2.99",  "name": "Coin Pack M" },

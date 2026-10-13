@@ -114,5 +114,5 @@ int main() {
         dieQuickly(g); step(g, Game::kCrashTail + 0.5f); g.press();
         check(ads.interstitials == 1, "not again right after (3 runs / 90 s spacing)");
     }
-    return finish("monetization");
+    return finish("Monetization");
 }

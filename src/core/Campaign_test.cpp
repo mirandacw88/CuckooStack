@@ -1,7 +1,7 @@
 // Course levels (Campaign.h): seeded per level, a finish line, Level Cleared, retry on a crash.
 #include "TestUtil.h"
 #include "core/HudStyle.h"
-#include "../src/core/Campaign.h"
+#include "core/Campaign.h"
 
 using namespace cs;
 using test::check;
@@ -117,5 +117,5 @@ int main() {
         check(completeBanner(2.f, T).alpha == 1.f && completeBanner(T - 0.45f, T).alpha == 1.f, "banner: fully shown through the celebration");
         check(completeBanner(T - 0.1f, T).alpha < 0.3f && completeBanner(T, T).alpha == 0.f, "banner: fades out before the results");
     }
-    return test::finish("campaign");
+    return test::finish("Campaign");
 }
