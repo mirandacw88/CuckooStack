@@ -114,5 +114,18 @@ int main() {
         dieQuickly(g); step(g, Game::kCrashTail + 0.5f); g.press();
         check(ads.interstitials == 1, "not again right after (3 runs / 90 s spacing)");
     }
+    {   // ---- lifetime runs
+        FakeStorage st;
+        FakeClock clock;
+        Tuning t;
+        {
+            AdPolicy a(&st, &clock, t);
+            check(a.lifetimeRuns() == 0, "no runs yet");
+            for (int i = 0; i < 4; ++i) a.runFinished();
+            check(a.lifetimeRuns() == 4, "runs are counted");
+        }
+        AdPolicy again(&st, &clock, t);
+        check(again.lifetimeRuns() == 4, "...across launches (the new-player grace period relies on it)");
+    }
     return finish("Monetization");
 }

@@ -117,5 +117,18 @@ int main() {
         check(completeBanner(2.f, T).alpha == 1.f && completeBanner(T - 0.45f, T).alpha == 1.f, "banner: fully shown through the celebration");
         check(completeBanner(T - 0.1f, T).alpha < 0.3f && completeBanner(T, T).alpha == 0.f, "banner: fades out before the results");
     }
+    {   // ---- seeds, bests, reset
+        check(Campaign::seedOf(1) == Campaign::seedOf(1) && Campaign::seedOf(1) != Campaign::seedOf(2), "each level has its own fixed seed (the same for every player)");
+        check(Campaign::lengthOf(1) == 300 && Campaign::lengthOf(5) == 340, "levels grow 10 m longer each");
+        test::FakeStorage st;
+        Campaign c(&st);
+        check(c.recordRun(120) && !c.recordRun(80) && c.best() == 120 && c.recordRun(150) && c.best() == 150, "recordRun: true only for a new best");
+        c.attempt();
+        c.clear();
+        check(c.level() == 2 && c.best() == 0 && c.attempts() == 0 && c.cleared() == 1, "a clear: next level, fresh best and attempts");
+        c.debugReset();
+        Campaign again(&st);
+        check(again.level() == 1 && again.cleared() == 0 && again.best() == 0, "developer reset: back to level 1 (saved)");
+    }
     return test::finish("Campaign");
 }

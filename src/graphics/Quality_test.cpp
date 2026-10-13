@@ -89,10 +89,32 @@ void vsyncPacing() {
     check(grid(f) && f >= v0 && f <= v0 + int64_t(p) + 1, "vsync: the first frame starts on the next refresh");
 }
 
+// ---------------------------------------------------------------- heat: resolution and frame rate
+
+void thermal() {
+    using namespace quality;
+    check(renderScale(2.f, Thermal::Nominal) == 1.f && std::abs(renderScale(3.f, Thermal::Nominal) - 2.f / 3) < 1e-6f,
+          "render scale: 2 scene pixels per point (a 3x phone renders at 2/3)");
+    check(renderScale(1.f, Thermal::Nominal) == 1.f, "a 1x screen: full resolution, never upscaled past 1");
+    check(renderScale(8.f, Thermal::Nominal) == 0.5f, "a very dense screen: no lower than half");
+    float last = 2;
+    bool down = true;
+    for (Thermal t : {Thermal::Nominal, Thermal::Fair, Thermal::Serious, Thermal::Critical}) {
+        down = down && renderScale(3.f, t) < last;
+        last = renderScale(3.f, t);
+    }
+    check(down, "hotter: a lower resolution at every step");
+    check(renderScale(8.f, Thermal::Critical) == 0.5f * 0.8f, "never below 40% (half, then 0.8 when critical)");
+    check(thermalFactor(Thermal::Nominal) == 1.f && thermalFactor(Thermal::Critical) == 0.6f, "thermal factor: 1 -> 0.6");
+    check(targetFps(Thermal::Nominal) == 60 && targetFps(Thermal::Serious) == 60 && targetFps(Thermal::Critical) == 30,
+          "frame rate: 60, dropping to 30 only when critical");
+}
+
 } // namespace
 
 int main() {
     pacing();
     vsyncPacing();
+    thermal();
     return finish("Quality");
 }
