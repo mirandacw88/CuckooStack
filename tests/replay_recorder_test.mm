@@ -9,16 +9,18 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
 namespace {
 int failures = 0;
-bool hardware = true; // a hardware H.264 encoder (every iPhone / iPad / Mac); CI's virtual Macs encode in software
+bool hardware = true; // a real hardware H.264 encoder (every iPhone / iPad / Mac), not a CI machine
 
-// Is there a hardware H.264 encoder? Without one (GitHub's virtual Macs) encoding is slow enough to drop frames, so
-// the checks on frame rate and clip length - the machine's speed, not the recorder's logic - are skipped there.
+// Is there a hardware H.264 encoder? Without one encoding is slow enough to drop frames, so the checks on frame rate
+// and clip length - the machine's speed, not the recorder's logic - are skipped. CI machines (GitHub's virtual Macs:
+// the CI environment variable) skip them too: some offer a virtualised "hardware" encoder that still drops frames.
 bool hasHardwareEncoder() {
     NSDictionary* spec = @{(id)kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: @YES};
     VTCompressionSessionRef s = nullptr;
@@ -31,7 +33,7 @@ void check(bool ok, const char* what);
 // speed-dependent checks: only meaningful with a hardware encoder
 void timed(bool ok, const char* what) {
     if (hardware) check(ok, what);
-    else std::printf("skip  %s (software encoder: timing depends on the machine)\n", what);
+    else std::printf("skip  %s (timing depends on this machine's encoder)\n", what);
 }
 void check(bool ok, const char* what) {
     std::printf("%s  %s\n", ok ? "ok  " : "FAIL", what);
@@ -94,8 +96,9 @@ Clip read(const std::string& path) {
 
 int main() {
     @autoreleasepool {
-        hardware = hasHardwareEncoder();
-        std::printf("H.264 encoder: %s\n", hardware ? "hardware" : "software only (speed checks skipped)");
+        const bool ci = std::getenv("CI") != nullptr;
+        hardware = !ci && hasHardwareEncoder();
+        std::printf("H.264 encoder: %s\n", hardware ? "hardware" : ci ? "CI machine (speed checks skipped)" : "software only (speed checks skipped)");
         const std::string path = "replay_recorder_test.mp4";
         cs::IOSVideoRecorder r;
         if (!r.start(int(W), int(H))) {
