@@ -430,7 +430,7 @@ if(CS_PLATFORM STREQUAL "desktop")
   endfunction()
 
   foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
-            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage)
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud)
     cs_test(src/core/${f})
   endforeach()
   cs_test(src/core/audio/Music)

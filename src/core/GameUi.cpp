@@ -1407,7 +1407,6 @@ void Game::hudParentalGate() {
     y += 60;
     for (int i = 0; i < 4; ++i) {
         const glm::vec2 c{p.c.x + (i % 2 ? 1.f : -1.f) * 70, y + (i / 2) * 62 + 24};
-        nextHitLabel_ = "ans" + std::to_string(i);
         hudButton(std::to_string(gateChoices_[size_t(i)]), c, kViolet, p.k, false, [this, i] {
             const bool ok = i == gateAnswer_;
             auto then = std::move(gateThen_);

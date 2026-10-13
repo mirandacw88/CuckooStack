@@ -91,6 +91,10 @@ public:
     std::vector<uint8_t> endCard(int width, int height, const ReplayMeta& meta) const;
     // tests: tap the first visible button whose label starts with `label` (returns false if none)
     bool tapButton(const std::string& label);
+    // tests: the buttons on screen after the last update (label, centre, half size, in HUD points)
+    struct Button { std::string label; glm::vec2 c, half; };
+    glm::vec2 hudSize() const { return {viewW_, viewH_}; } // the HUD's own points (small screens are scaled to fit)
+    std::vector<Button> buttons() const { std::vector<Button> b; for (const auto& h : hits_) b.push_back({h.label, h.r.c, h.r.half}); return b; }
     // tests: every HUD string drawn by the last update (off unless switched on)
     struct HudString { std::string text; TextStyle style; float x, top, width; TextAlign align; };
     void debugRecordHud(bool on) { recordHud_ = on; hudStrings_.clear(); }

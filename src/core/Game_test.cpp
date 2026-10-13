@@ -5,7 +5,11 @@
 //  - the wall materials it emits (cyber cubes, neon crates: cool cyan edges, not amber)
 //  - lite mode (low-end devices): no reflection, rain or wind streaks; remembered for the next launch
 //  - the profiling frame summary, and no glow pad under the hen
+//  - the run loop: laying eggs from the 8-egg meter and its refill, climbing walls (perfects), crashing into a wall or
+//    a barrier, close calls, the score, sectors, a bot clearing level 1, mute, lifecycle, challenge links
 #include "TestUtil.h"
+#include "core/Campaign.h"
+#include "core/Level.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -282,9 +286,175 @@ void frameSummaryAndPad() {
     check(g.frameSummary().find(" lite") != std::string::npos, "summary: lite mode flagged");
 }
 
+// ---------------------------------------------------------------- the run loop
+
+float henX(const Game& g) { return g.hen().nodes[size_t(g.hen().root)].pos.x; }
+bool shown(const Game& g, const std::string& prefix) {
+    for (const auto& h : g.hudStrings()) if (h.text.rfind(prefix, 0) == 0) return true;
+    return false;
+}
+
+void eggsAndMeter() {
+    Env env;
+    Game g(env.svc());
+    g.resize(430, 900);
+    step(g, 0.3f);
+    check(g.state() == Game::State::Title, "the title screen first");
+    g.press();
+    check(g.state() == Game::State::Play && g.score() == 0, "a tap starts a run, score 0");
+    for (int i = 0; i < 12; ++i) g.press(); // a burst of taps: the meter holds 8 eggs
+    step(g, 0.4f);                         // eggs grow in over 0.2 s
+    const float full = g.henHeight();
+    check(std::abs(full - 8 * Uf) < 0.12f, "the meter holds 8 eggs: twelve taps lay eight (she rides the stack)");
+    g.press();
+    step(g, 0.1f);
+    check(std::abs(g.henHeight() - full) < 0.12f, "an empty meter: a tap lays nothing");
+    step(g, 0.9f); // about one egg refills (0.5 s each at the start, eased for a new player)
+    g.press();
+    step(g, 0.3f);
+    check(g.henHeight() > full + 0.4f, "the meter refills over time");
+}
+
+void crashIntoWall() {
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    Game g(env.svc());
+    g.press();
+    float lastX = 0;
+    for (int i = 0; i < 60 * 10 && g.state() == Game::State::Play; ++i) { lastX = henX(g); g.update(1.0 / 60.0); }
+    check(g.state() == Game::State::Dead, "no eggs: she runs into the first wall and crashes");
+    check(lastX > 9.f && lastX < 30.f, "...after the flat 16-crate run-up");
+    check(g.score() >= int(lastX) - 1 && g.score() <= int(lastX) + 1, "score: metres run (no bonus without eggs or balls)");
+}
+
+// A bot that reads the same course the game builds (Campaign seed) and stacks just enough eggs for the next wall.
+struct Bot {
+    Level course;
+    double extraUnderBarrier = 0; // eggs to add above the safe height under a barrier (to test close calls / barrier deaths)
+    float cooldown = 0;
+    explicit Bot(IStorage* st) { Campaign(st).applyTo(course); course.generateUntil(2000); }
+    void tick(Game& g, float dt) {
+        cooldown -= dt;
+        if (g.state() != Game::State::Play || cooldown > 0) return;
+        const double x = henX(g), top = g.henHeight();
+        double want = 0;
+        for (const Segment& s : course.segs) {
+            if (s.x1 <= x + 0.22) continue;
+            if (s.x0 > x + 6.5) break;
+            want = std::max(want, s.h * U);
+        }
+        for (const Segment& s : course.segs)
+            if (s.ceil && x + 0.25 >= s.x0 - 3 && x + 0.22 < s.x1) {
+                const double safe = std::floor((s.ceil * U - HEN_H - 0.02) / U + 1e-6) * U;
+                want = std::min(std::max(want, safe - U * 2), safe) + extraUnderBarrier * U;
+            }
+        if (top + 0.05 < want) { g.press(); cooldown = 0.08f; }
+    }
+};
+
+void botRun() {
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    Game g(env.svc());
+    g.resize(430, 900);
+    g.debugRecordHud(true);
+    Bot bot(&env.st);
+    g.press();
+    bool perfect = false, halfway = false, closeCall = false, scoreOk = true;
+    float maxX = 0;
+    for (int i = 0; i < 60 * 90 && g.state() == Game::State::Play; ++i) {
+        bot.tick(g, 1.f / 60);
+        g.update(1.0 / 60.0);
+        maxX = std::max(maxX, henX(g));
+        perfect = perfect || shown(g, "PERFECT");
+        halfway = halfway || shown(g, "HALFWAY");
+        closeCall = closeCall || shown(g, "CLOSE CALL +2");
+        scoreOk = scoreOk && g.score() >= int(std::floor(henX(g))) - 1;
+    }
+    check(g.state() == Game::State::Dead && g.lastRunCleared(), "a bot that stacks just enough clears level 1 (the course is fair)");
+    check(maxX >= 300.f, "...all 300 m");
+    check(perfect, "stacking exactly a wall's height: PERFECT");
+    check(halfway, "the halfway sector popup at 150 m");
+    check(closeCall, "passing just under a barrier: CLOSE CALL +2");
+    check(scoreOk, "score: at least the metres run, plus bonuses");
+    check(Campaign(&env.st).cleared() == 1, "the clear is saved");
+}
+
+void barriers() {
+    // one egg too many under a barrier: the head hits its underside
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    Game g(env.svc());
+    Bot bot(&env.st);
+    bot.extraUnderBarrier = 1;
+    g.press();
+    float before = 0;
+    for (int i = 0; i < 60 * 90 && g.state() == Game::State::Play; ++i) {
+        before = henX(g);
+        bot.tick(g, 1.f / 60);
+        g.update(1.0 / 60.0);
+    }
+    bool underBarrier = false;
+    for (const Segment& s : bot.course.segs) underBarrier = underBarrier || (s.ceil && before + 0.25 >= s.x0 - 0.2 && before + 0.22 < s.x1);
+    check(g.state() == Game::State::Dead && !g.lastRunCleared() && underBarrier, "stacked one egg too high: she crashes into the barrier");
+}
+
+void bestAndMute() {
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    {
+        Game g(env.svc());
+        test::dieQuickly(g);
+        check(Campaign(&env.st).best() > 5, "the level best is saved after a run");
+        check(!g.muted(), "music on by default");
+        g.toggleMute();
+        check(g.muted() && env.st.kv["cluckstack-music"] == "off", "mute: saved");
+    }
+    Game again(env.svc());
+    check(again.muted(), "mute survives a relaunch");
+    again.resize(430, 900);
+    again.setSafeInsets(47, 34);
+    step(again, 0.2f);
+    again.pressAt(430 - 38, 47 + 38); // the music button, top right
+    check(!again.muted() && again.state() == Game::State::Title, "tapping the music button toggles it (and doesn't start a run)");
+}
+
+void lifecycle() {
+    Env env;
+    FakeAnalytics an;
+    GameServices s = env.svc();
+    s.analytics = &an;
+    Game g(s);
+    check(an.count("session_start") == 1, "a launch starts a session");
+    g.onBackground();
+    check(an.count("session_end") == 1, "going to the background ends it");
+    g.onForeground();
+    check(an.count("session_start") == 2, "coming back starts a new one");
+}
+
+void challengeLinks() {
+    Env env;
+    Game g(env.svc());
+    for (const char* bad : {"", "garbage", "https://x/c", "https://x/c?l=abc&m=12", "https://x/c?l=1&m=-5", "https://x/c?l=1&m=999999999",
+                            "https://x/c?l=1&m=", "https://x/c?&&=&l", "cuckoostack://c?l=1&m=%ZZ"})
+        g.openLink(bad);
+    check(g.challengeMeters() == 0, "malformed or out-of-range challenge links are ignored");
+    g.openLink("https://x/c?l=1&m=412&n=Sam%3Bm%3D5%3Bday%3Dlevel%3A99");
+    check(g.challengeMeters() == 412, "a name with ';' and '=' in it...");
+    Game again(env.svc());
+    check(again.challengeMeters() == 412, "...can't rewrite the saved challenge (it's stored as k=v; pairs)");
+}
+
 } // namespace
 
 int main() {
+    eggsAndMeter();
+    crashIntoWall();
+    botRun();
+    barriers();
+    bestAndMute();
+    lifecycle();
+    challengeLinks();
     gameSide();
     streetReflection();
     wallMaterials();

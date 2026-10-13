@@ -181,7 +181,8 @@ void Game::openLink(const std::string& url) {
     const std::string day = "level:" + std::to_string(lvl);
     const int meters = std::atoi(queryParam(url, "m").c_str());
     std::string name = queryParam(url, "n").substr(0, 16);
-    for (char& c : name) if (static_cast<unsigned char>(c) < 32) c = ' ';
+    // control characters, and the saved record's separators (a name can't rewrite the stored challenge)
+    for (char& c : name) if (static_cast<unsigned char>(c) < 32 || c == ';' || c == '=') c = ' ';
     const bool expired = lvl <= 0 || lvl < campaign_.level(); // a level you've already cleared
     track("challenge_open", {{"expired", expired ? "1" : "0"}, {"meters", std::to_string(meters)}, {"level", std::to_string(lvl)}});
     if (meters <= 0 || meters > 100000) return;
@@ -480,7 +481,14 @@ void Game::parentalGate(std::function<void()> then) {
     const int ans = gateA_ * gateB_;
     gateAnswer_ = rng_.index(4);
     int k = 0;
-    for (int i = 0; i < 4; ++i) gateChoices_[size_t(i)] = i == gateAnswer_ ? ans : ans + (++k) * (rng_.next01() < 0.5f ? -1 : 1) * (3 + rng_.index(5));
+    for (int i = 0; i < 4; ++i) {
+        if (i == gateAnswer_) { gateChoices_[size_t(i)] = ans; continue; }
+        // a wrong answer near the right one, never repeating another choice (two identical buttons look broken)
+        int c = 0;
+        do c = ans + (++k) * (rng_.next01() < 0.5f ? -1 : 1) * (3 + rng_.index(5));
+        while (c <= 0 || c == ans || std::find(gateChoices_.begin(), gateChoices_.begin() + i, c) != gateChoices_.begin() + i);
+        gateChoices_[size_t(i)] = c;
+    }
     gateThen_ = std::move(then);
     openScreen(Screen::ParentalGate);
 }
