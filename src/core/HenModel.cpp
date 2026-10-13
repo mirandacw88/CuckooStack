@@ -20,6 +20,32 @@ extern const size_t hen_mesh_size;
 namespace cs {
 
 namespace {
+// Some exported models carry a few zero-length normals (degenerate faces in the source): normalising them gives NaN,
+// shading those vertices black. Rebuild them from the faces around the vertex (or point them away from the centre).
+void repairNormals(std::vector<HenModel::V>& verts, const std::vector<uint16_t>& indices) {
+    std::vector<size_t> bad;
+    for (size_t i = 0; i < verts.size(); ++i) {
+        const float len = glm::length(verts[i].normal);
+        if (!(len > 1e-4f)) bad.push_back(i);
+        else if (std::abs(len - 1.f) > 1e-3f) verts[i].normal /= len;
+    }
+    if (bad.empty()) return;
+    std::vector<glm::vec3> acc(verts.size(), glm::vec3(0.f));
+    for (size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const uint16_t a = indices[t], b = indices[t + 1], c = indices[t + 2];
+        const glm::vec3 fn = glm::cross(verts[b].pos - verts[a].pos, verts[c].pos - verts[a].pos);
+        acc[a] += fn; acc[b] += fn; acc[c] += fn;
+    }
+    glm::vec3 centre(0.f);
+    for (const HenModel::V& v : verts) centre += v.pos;
+    centre /= float(verts.size());
+    for (size_t i : bad) {
+        glm::vec3 n = acc[i];
+        if (!(glm::length(n) > 1e-12f)) n = verts[i].pos - centre;
+        verts[i].normal = glm::length(n) > 1e-12f ? glm::normalize(n) : glm::vec3(0.f, 1.f, 0.f);
+    }
+}
+
 // version 2: 12 floats per vertex (no uv); version 3: 14 (uv); version 4: 14 + the look (glow, metal, rough)
 HenModel load(const unsigned char* data, size_t size, MeshId firstMesh) {
     HenModel m;
@@ -60,6 +86,7 @@ HenModel load(const unsigned char* data, size_t size, MeshId firstMesh) {
         }
         for (uint16_t i : m.indices[r])
             if (i >= nv) { CS_LOGW("Hen model: index out of range"); return HenModel{}; }
+        repairNormals(m.verts[r], m.indices[r]);
         m.vertexCount += nv;
     }
     m.ok = true;
