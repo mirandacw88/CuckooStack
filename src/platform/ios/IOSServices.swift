@@ -444,7 +444,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
             vc.instructions = [instruction]
             vc.animationTool = overlay(size: size, clipSeconds: duration.seconds, distance: distance, newBest: newBest, label: label)
 
-            let out = FileManager.default.temporaryDirectory.appendingPathComponent("Cuckoo Stack \(distance)m.mp4")
+            let out = FileManager.default.temporaryDirectory.appendingPathComponent("Cuckoo Stack OVERDRIVE \(distance)m.mp4")
             try? FileManager.default.removeItem(at: out)
             guard let export = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetHighestQuality) else { return nil }
             export.outputURL = out
@@ -476,6 +476,23 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         return t
     }
 
+    // dark letters outlined in the blocks' neon blue, glowing (the logo's OVERDRIVE line)
+    private func outlined(_ s: String, size: CGFloat, fill: UIColor, outline: UIColor, y: CGFloat, width: CGFloat) -> CATextLayer {
+        let t = CATextLayer()
+        let font = UIFont.systemFont(ofSize: size, weight: .black)
+        t.string = NSAttributedString(string: s, attributes: [
+            .font: font, .foregroundColor: fill, .strokeColor: outline, .strokeWidth: -7, .kern: size * 0.16,
+        ])
+        t.alignmentMode = .center
+        t.contentsScale = 2
+        t.frame = CGRect(x: 0, y: y, width: width, height: size * 1.3)
+        t.shadowColor = outline.cgColor
+        t.shadowRadius = size * 0.3
+        t.shadowOpacity = 0.8
+        t.shadowOffset = .zero
+        return t
+    }
+
     private func overlay(size: CGSize, clipSeconds: Double, distance: Int, newBest: Bool, label: String) -> AVVideoCompositionCoreAnimationTool {
         let pink = UIColor(red: 1, green: 0.17, blue: 0.84, alpha: 1), cyan = UIColor(red: 0.16, green: 0.91, blue: 1, alpha: 1)
         let parent = CALayer()
@@ -485,7 +502,7 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         videoLayer.frame = parent.frame
         parent.addSublayer(videoLayer)
         // watermark through the clip
-        let mark = text("CUCKOO STACK", size: 26, color: .white, weight: .black, y: size.height - 70, width: size.width, glow: pink)
+        let mark = text("CUCKOO STACK OVERDRIVE", size: 26, color: .white, weight: .black, y: size.height - 70, width: size.width, glow: pink)
         mark.opacity = 0.85
         parent.addSublayer(mark)
         // end card: fades in as the clip ends
@@ -498,7 +515,8 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         card.addSublayer(text("\(distance) m", size: 120, color: .white, weight: .black, y: mid - 170, width: size.width, glow: pink))
         card.addSublayer(text("Can you beat it?", size: 48, color: .white, weight: .bold, y: mid + 10, width: size.width, glow: pink))
         card.addSublayer(text("Cuckoo Stack", size: 64, color: .white, weight: .black, y: mid + 160, width: size.width, glow: pink))
-        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 250, width: size.width, glow: cyan))
+        card.addSublayer(outlined("OVERDRIVE", size: 34, fill: UIColor(red: 0.03, green: 0.02, blue: 0.06, alpha: 1), outline: cyan, y: mid + 238, width: size.width))
+        card.addSublayer(text("Free on iOS & Android", size: 30, color: UIColor(white: 0.9, alpha: 1), weight: .semibold, y: mid + 300, width: size.width, glow: cyan))
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1

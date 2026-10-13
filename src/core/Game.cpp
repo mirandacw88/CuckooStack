@@ -1,4 +1,5 @@
 #include "Game.h"
+#include "HenIdle.h"
 
 #include <cstdio>
 #include "EndCard.h"
@@ -1309,7 +1310,6 @@ void Game::updatePlay(float dt, float rdt) {
         if (surging_) endSurge();
         graceT_ = 99.f;
         const float top = float(baseY_) + eggs_.size() * Uf;
-        popup("FINISH!", {float(x_) + 1.5f, top + 2.4f, 0}, PopKind::Surge);
         sfx(Sfx::SurgeStart); sfx(Sfx::Cheer); buzz(40); flashScreen(srgbColor("#f4ff5a"), 0.35f); chromaKick_ = std::max(chromaKick_, 0.9f);
         rings_.spawn({float(x_), top + 0.6f, 0.4f}, C().volt, 4.f, 0.8f, true);
         for (int i = 0; i < 8; ++i) launchFirework(i * 0.08f);
@@ -1424,6 +1424,26 @@ void Game::updatePlay(float dt, float rdt) {
     if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
 }
 
+// The title screen's idle loop (HenIdle.h) laid over the standing pose: jogging in place, a stretch, two jumps
+void Game::titleIdle(float dt) {
+    idleT_ += dt;
+    const idle::Pose p = idle::pose(idleT_);
+    Hen::Node& root = hen_.nodes[hen_.root];
+    Hen::Node& body = hen_.nodes[hen_.body];
+    root.pos.y += (p.air - idle::hipDrop(p)) * root.scale.y; // bent knees lower her; the feet stay on the ground
+    root.rot.z += p.lean;
+    body.pos.y += p.bodyY;
+    body.scale *= glm::vec3(1 - p.stretch * 0.5f, 1 + p.stretch, 1 - p.stretch * 0.5f);
+    for (int k = 0; k < 2; ++k) {
+        const float s = k == 0 ? -1.f : 1.f;
+        hen_.nodes[hen_.wings[k]].rot.x = s * (-0.02f - p.wing[k]);
+        hen_.nodes[hen_.legs[k]].rot.z = p.hip[k];
+        hen_.nodes[hen_.knees[k]].rot.z = p.knee[k];
+        hen_.nodes[hen_.feet[k]].rot.z = -(p.hip[k] + p.knee[k]);
+    }
+    hen_.nodes[hen_.tail].rot.z += p.tail;
+}
+
 // A flat stretch of ground (the same height 0.8 m either side) at least 1.5 m behind the crash, searching back
 glm::vec2 Game::showroomSpot() const {
     for (float x = float(x_) - 1.5f; x > float(x_) - 30.f; x -= 0.25f) {
@@ -1476,6 +1496,9 @@ void Game::updateHen(float dt) {
             head.rot.y *= 0.9f;
         }
         hen_.nodes[hen_.tail].rot.z = std::sin(time_ * (onSurface ? 14.f : 4.f)) * (onSurface ? 0.12f : 0.05f);
+        for (int k = 0; k < 2; ++k) hen_.nodes[hen_.knees[k]].rot.z = hen_.nodes[hen_.feet[k]].rot.z = 0.f;
+        if (state_ == State::Title && !show) titleIdle(dt);
+        else idleT_ = 0; // back on the title screen, she starts with a rest
         head.pos.y = 0.92f + beat_.pulse() * 0.045f;
         if (hen_.canShatter()) {
             // the 3D hen models are one round body: their "head" bone carries the whole upper half, so the procedural

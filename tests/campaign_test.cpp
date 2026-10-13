@@ -1,5 +1,6 @@
 // Course levels (Campaign.h): seeded per level, a finish line, Level Cleared, retry on a crash.
 #include "TestUtil.h"
+#include "core/HudStyle.h"
 #include "../src/core/Campaign.h"
 
 using namespace cs;
@@ -75,15 +76,46 @@ int main() {
         Env env;
         Game g(env.svc());
         const int coinsBefore = g.coins();
+        g.resize(430, 900);
         g.debugNearFinish();
         g.press();                 // starts 30 m before the finish line
         g.debugStartSurge();       // invulnerable through the last walls
-        for (int i = 0; i < 60 * 12 && g.state() == Game::State::Play; ++i) g.update(1.0 / 60.0);
+        bool shown = false, centred = true, aboveHen = true, fits = true;
+        for (int i = 0; i < 60 * 12 && g.state() == Game::State::Play; ++i) {
+            g.update(1.0 / 60.0);
+            const glm::vec4 b = g.levelCompleteBanner();
+            if (b.w <= 0) continue;
+            shown = true;
+            glm::vec2 hen;
+            centred = centred && std::abs(b.x - 215.f) <= 13.f; // the glitch jolts it a few px
+            // halfway between the progress bar and the top of the hen (within the glitch / pop wobble)
+            if (g.henTopOnScreen(hen)) {
+                const float mid = (g.progressBarBottom() + hen.y) / 2;
+                aboveHen = aboveHen && b.y + b.w / 2 < hen.y && b.y - b.w / 2 > g.progressBarBottom() && std::abs(b.y - mid) < 4.f;
+            }
+            fits = fits && b.z <= 430 - 32 && b.y - b.w / 2 > 0;
+        }
+        check(shown, "the finish line: \"Level Complete\" shows over the fireworks");
+        check(centred, "...centred on screen");
+        check(aboveHen, "...centred between the progress bar and the top of the hen");
+        check(fits, "...and fits on screen");
+        check(g.levelCompleteBanner().w == 0, "...and it's gone on the results");
         check(g.state() == Game::State::Dead && g.lastRunCleared(), "crossing the finish line ends the run as a clear");
         check(g.courseLevel() == 2 && g.levelAttempts() == 0, "the next level is level 2, with no attempts yet");
         check(g.coins() >= coinsBefore + 60, "clearing level 1 pays the clear bonus (50 + 10 per level)");
         Game again(env.svc());
         check(again.courseLevel() == 2, "the level is saved: a relaunch resumes on level 2");
+    }
+    {   // ---- the banner's animation
+        using namespace cs::hud;
+        const float T = Game::kFinishCelebration;
+        check(completeBanner(0.f, T).alpha == 0.f, "banner: not there the instant the line is crossed");
+        float peak = 0;
+        for (float t = 0.06f; t < 0.5f; t += 0.01f) peak = std::max(peak, completeBanner(t, T).scale);
+        check(peak > 1.02f && std::abs(completeBanner(0.6f, T).scale - 1.f) < 1e-4f, "banner: pops in (overshoots, settles)");
+        check(completeBanner(0.2f, T).dx != 0.f && completeBanner(1.f, T).dx == 0.f, "banner: glitches in, then holds still");
+        check(completeBanner(2.f, T).alpha == 1.f && completeBanner(T - 0.45f, T).alpha == 1.f, "banner: fully shown through the celebration");
+        check(completeBanner(T - 0.1f, T).alpha < 0.3f && completeBanner(T, T).alpha == 0.f, "banner: fades out before the results");
     }
     return test::finish("campaign");
 }

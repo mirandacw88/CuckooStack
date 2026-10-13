@@ -127,6 +127,8 @@ std::string savePath() {
 #ifndef NDEBUG
     // debug: `xcrun simctl launch <device> com.cuckoostack.aerospheregames --surge` starts a surge 4 m into every run
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--surge"]) _game->setDebugAutoSurge(true);
+    // ...and `--near-finish` starts the first run 30 m before the finish line (the celebration)
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--near-finish"]) _game->debugNearFinish();
 #endif
     _audio = std::make_unique<cs::IOSAudio>(_synth);
     _audio->start();
@@ -179,7 +181,7 @@ std::string savePath() {
 }
 
 - (void)showFatal:(NSString*)detail {
-    NSString* msg = [NSString stringWithFormat:@"Cuckoo Stack could not start its graphics engine.\n\n%@", detail];
+    NSString* msg = [NSString stringWithFormat:@"Cuckoo Stack OVERDRIVE could not start its graphics engine.\n\n%@", detail];
     UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Graphics unavailable" message:msg preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];

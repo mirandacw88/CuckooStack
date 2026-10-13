@@ -1,11 +1,12 @@
-# Every push and pull request: build the desktop target and run all the unit tests (the same as the local
-# pre-commit hook, .githooks/pre-commit). macOS, so the iOS video recorder's test (VideoToolbox) runs too.
+# Pull requests only: when one is opened, then on every push to it while it's open. Builds the desktop target and
+# runs all the unit tests (the same as the local pre-commit hook, .githooks/pre-commit). macOS, so the iOS video
+# recorder's test (VideoToolbox) runs too.
 # Shaders come precompiled (assets/shaders/generated) and Vulkan is loaded at runtime, so no Vulkan SDK is needed.
 name: Tests
 
 on:
-  push:
   pull_request:
+    types: [opened, synchronize] # synchronize: a new push to the open PR's branch
 
 concurrency:
   group: tests-${{ github.ref }}

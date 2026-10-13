@@ -5,6 +5,7 @@
 #include "Font.h"
 #include "Materials.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace cs::hud {
@@ -30,6 +31,52 @@ inline Up up(float t, float delay) { const float e = easeOut((t - delay) / 0.55f
 inline TextStyle style(FontId font, float size, glm::vec3 color, float letterSpacing = 0.f, bool upper = false, float lineHeight = 0.f) {
     TextStyle s;
     s.font = font; s.size = size; s.color = color; s.letterSpacing = letterSpacing; s.uppercase = upper; s.lineHeight = lineHeight;
+    return s;
+}
+
+// The logo's OVERDRIVE line, drawn in two passes. `over`: dark letters outlined in kNeon (the blocks' neon blue) by a
+// ring of hard shadows. `under`, drawn first and shifted by underDx: the "Cuckoo Stack" line's effect, a pink copy
+// left and a blue copy right with a pink glow. (A glow is painted with the letters themselves, on top of the hard
+// shadows, so in one pass it would tint the outline.) Half the logo's size.
+struct OverdriveLook { TextStyle under, over; float underDx; };
+inline OverdriveLook overdriveLook(float logoSize) {
+    OverdriveLook l;
+    l.over = style(FontId::Display, logoSize * 0.5f, kInk, 0.16f, true, 1.f);
+    const float r = std::max(1.5f, l.over.size * 0.065f);
+    for (int i = 0; i < 16; ++i) {
+        const float a = float(i) * 2.f * kPi / 16.f;
+        l.over.shadows.push_back({{r * std::cos(a), r * std::sin(a)}, 0.f, kNeon, 1.f});
+    }
+    const float split = r + logoSize / 24.f; // the logo's 3 px split (at 72 px), out past the outline
+    l.under = l.over;
+    l.under.color = kHot;
+    l.under.shadows = {hard(2 * split, kNeon), blur(logoSize * 0.47f, kHot, 0.45f)}; // the logo's blur(34) at 72 px
+    l.underDx = -split;
+    return l;
+}
+
+// The "Level Complete" banner over the finish-line fireworks, `t` seconds after crossing the line (the celebration
+// lasts `total`): it glitches in with a pop, jolts every 1.5 s like the logo, and fades just before the results.
+struct BannerAnim { float alpha, scale, dx; };
+inline BannerAnim completeBanner(float t, float total) {
+    BannerAnim b{0.f, 1.f, 0.f};
+    if (t < 0.06f) return b;
+    b.alpha = 1.f - seg(t, total - 0.45f, total);
+    b.scale = 0.6f + 0.4f * easeOutBack(seg(t, 0.06f, 0.5f), 2.4f);
+    if (t < 0.5f) {
+        const float g = (t - 0.06f) / 0.44f;
+        b.dx = g < 0.25f ? -12.f : g < 0.45f ? 9.f : g < 0.65f ? -5.f : g < 0.85f ? 2.f : 0.f;
+    } else {
+        const float c = std::fmod(t - 0.5f, 1.5f) / 1.5f;
+        b.dx = c >= 0.9f && c < 0.93f ? -5.f : c >= 0.93f && c < 0.96f ? 4.f : c >= 0.96f ? -2.f : 0.f;
+    }
+    return b;
+}
+
+// Fit one line of text into `room` px: tighter letter spacing first, then a smaller size (the boost tiles' names)
+inline TextStyle fitWidth(const TextLayout& tl, std::string_view text, TextStyle s, float room, float tightSpacing = 0.05f) {
+    if (tl.measure(text, s) > room) s.letterSpacing = std::min(s.letterSpacing, tightSpacing);
+    if (const float w = tl.measure(text, s); w > room) s.size *= room / w;
     return s;
 }
 

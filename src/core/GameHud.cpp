@@ -23,6 +23,7 @@ void Game::hudRect(glm::vec2 c, glm::vec2 size, glm::vec3 color, float alpha, Sh
 
 void Game::hudText(std::string_view text, const TextStyle& s, float x, float top, TextAlign align) {
     if (!fonts_.built()) return;
+    if (recordHud_) hudStrings_.push_back({std::string(text), s, x, top, text_->measure(s.uppercase ? toUpperAscii(text) : std::string(text), s), align});
     text_->drawLine(list_.hud, text, s, x, top, align, true);
     list_.hudKind.resize(list_.hud.size(), HudText);
 }
@@ -195,6 +196,12 @@ void Game::hudTitleHeader() {
         }
         h1.opacity = alpha;
         for (const auto& l : lines) { hudText(l, h1, W / 2 + dx, top); top += text_->lineBox(h1); }
+        // OVERDRIVE under it, with the same split, glow and glitches (HudStyle.h overdriveLook)
+        OverdriveLook od = overdriveLook(h1.size);
+        od.under.opacity = od.over.opacity = alpha;
+        hudText("OVERDRIVE", od.under, W / 2 + dx + od.underDx, top + 4);
+        hudText("OVERDRIVE", od.over, W / 2 + dx, top + 4);
+        top += text_->lineBox(od.over) + 4;
     }
     // live event banner (Remote Config event_coin_mult)
     if (tune_.eventCoinMult > 1.01f) {
@@ -212,6 +219,32 @@ void Game::hudTitleHeader() {
     }
 }
 
+
+// "Level Complete" over the finish-line fireworks: white with the logo's pink / blue split and pink glow, centred
+// across the screen and, vertically, halfway between the level progress bar and the top of the hen
+void Game::hudLevelComplete() {
+    const float W = viewW_;
+    const BannerAnim b = completeBanner(clearT_, kFinishCelebration);
+    TextStyle s = style(FontId::Display, clampf(W * 0.11f, 36, 64), kText, 0.02f, false, 0.95f);
+    s.shadows = {hard(-3, kHot), hard(3, kNeon), blur(34, kHot, 0.45f)};
+    s.opacity = b.alpha;
+    const auto lines = text_->wrap("Level Complete", s, W - 32, true); // at full size, so the pop-in doesn't re-wrap
+    s.size *= b.scale;
+    const float h = text_->lineBox(s) * float(lines.size());
+    glm::vec2 head;
+    const glm::vec3 hp = hen_.nodes[hen_.root].pos;
+    const float henTop = camera_.project(hp + glm::vec3(0.f, kHenTop, 0.f), head) ? head.y : viewH_ * 0.5f;
+    const float barBottom = barBottom_ > 0 ? barBottom_ : safeTop_ + 96.f;
+    float y = (barBottom + henTop) / 2 - h / 2;
+    y = std::max(y, barBottom + 6.f); // a short gap: never over the bar
+    completeBox_ = {W / 2 + b.dx, y + h / 2, 0.f, h};
+    for (const auto& l : lines) {
+        completeBox_.z = std::max(completeBox_.z, text_->measure(l, s));
+        hudText(l, s, W / 2 + b.dx, y);
+        y += text_->lineBox(s);
+    }
+    if (b.alpha <= 0.f) completeBox_ = glm::vec4(0.f);
+}
 
 // The game-over button row (shop / locker / missions / share) sits under "Tap to reboot".
 constexpr float OVER_BUTTON_ROW = 84.f;
@@ -334,6 +367,7 @@ void Game::worldMarkerLabel(double x, float opacity, std::string_view top, std::
 
 void Game::buildHud() {
     const float W = viewW_, H = viewH_;
+    hudStrings_.clear();
 
     // .scan: 1px lines every 3px over the whole page
     hudRect({W / 2, H / 2}, {W, H}, kText, 0.035f, Shape::Scanlines);
@@ -380,15 +414,16 @@ void Game::buildHud() {
         TextStyle corn = style(FontId::BodyBold, 13, kVolt, 0.18f, true);
         corn.shadows = {blur(10, kVolt, 0.6f)};
         if (surging_) {
-            // "SURGE · 3.2s" + a thin timer bar draining from full to empty (pink -> yellow -> cyan)
+            // "OVERDRIVE · 3.2s" + a thin timer bar draining from full to empty (pink -> yellow -> cyan)
             char buf[32];
-            std::snprintf(buf, sizeof buf, "Surge \u00b7 %.1fs", std::max(0.f, surgeT_));
+            std::snprintf(buf, sizeof buf, "Overdrive \u00b7 %.1fs", std::max(0.f, surgeT_));
             TextStyle sg = style(FontId::BodyBold, 13, kHot, 0.18f, true);
             sg.shadows = {blur(10, kHot, 0.8f)};
             hudText(buf, sg, W / 2, top + box + 4);
             constexpr float BW = 150.f, BH = 4.f;
             constexpr int SLICES = 30;
             const float barY = top + box + 4 + text_->lineBox(sg) + 6 + BH / 2;
+            barBottom_ = barY + BH / 2 + 2;
             hudRect({W / 2, barY}, {BW + 4, BH + 4}, css("#0a0818"), 0.7f);
             const float frac = clampf(surgeT_ / surge::TIME, 0.f, 1.f);
             const int filled = static_cast<int>(std::ceil(frac * SLICES));
@@ -405,6 +440,7 @@ void Game::buildHud() {
             if (level_.finish() > 0) {
                 constexpr float BW = 150.f, BH = 4.f;
                 const float barY = top + box + 4 + text_->lineBox(corn) + 6 + BH / 2;
+                barBottom_ = barY + 7; // the flag's pole hangs to here
                 const float frac = clampf(float(x_ / level_.finish()), 0.f, 1.f);
                 hudRect({W / 2, barY}, {BW + 4, BH + 4}, css("#0a0818"), 0.7f);
                 hudRect({W / 2, barY}, {BW, BH}, kMuted, 0.35f);                         // the track still to run
@@ -436,6 +472,9 @@ void Game::buildHud() {
             hudRect({c.x - MW / 2 + 5 + i * (CELL + GAP) + CELL / 2, c.y}, glm::vec2(CELL, 21) * sc, i < full ? kNeon : kNeon * 0.75f, 1, Shape::EggCell, fill);
         }
     }
+
+    if (fonts_.built() && state_ == State::Play && clearT_ >= 0) hudLevelComplete();
+    else completeBox_ = glm::vec4(0.f);
 
     hits_.clear();
     // overlays rise from the bottom third, where the thumb rests

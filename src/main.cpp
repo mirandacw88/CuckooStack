@@ -114,13 +114,13 @@ int main(int argc, char** argv) {
 
     // Share one loader between volk and GLFW (must happen before glfwInit).
     if (volkInitialize() != VK_SUCCESS) {
-        std::fprintf(stderr, "Cuckoo Stack needs a Vulkan driver (install the Vulkan SDK / MoltenVK on macOS).\n");
+        std::fprintf(stderr, "Cuckoo Stack OVERDRIVE needs a Vulkan driver (install the Vulkan SDK / MoltenVK on macOS).\n");
         return 1;
     }
     glfwInitVulkanLoader(vkGetInstanceProcAddr);
     if (!glfwInit() || !glfwVulkanSupported()) { std::fprintf(stderr, "GLFW could not initialise Vulkan.\n"); return 1; }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(430, 860, "Cuckoo Stack", nullptr, nullptr); // phone-shaped by default
+    GLFWwindow* window = glfwCreateWindow(430, 860, "Cuckoo Stack OVERDRIVE", nullptr, nullptr); // phone-shaped by default
     if (!window) { std::fprintf(stderr, "Window creation failed.\n"); glfwTerminate(); return 1; }
 
     GlfwSurface surface(window);

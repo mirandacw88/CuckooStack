@@ -15,7 +15,7 @@ class PlatformSurface;
 class VulkanContext {
 public:
     struct Desc {
-        const char* appName = "Cuckoo Stack";
+        const char* appName = "Cuckoo Stack OVERDRIVE";
         bool enableValidation = false;
     };
 

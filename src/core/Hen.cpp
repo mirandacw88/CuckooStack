@@ -63,14 +63,20 @@ Hen::Hen() {
     for (int k = 0; k < 2; ++k) {
         const float s = k == 0 ? -1.f : 1.f;
         const int lp = add(root, {0.04f, 0.24f, s * 0.12f});
-        // the shin runs from the foot (-0.22) up into the body (+0.2), so the leg stays joined to it while the body
-        // bobs (up to 0.06) and the leg swings
-        part(lp, MeshId::Cylinder, Mat::Chrome, {0, -0.01f, 0}, {}, {0.023f, 0.42f, 0.023f});
+        // the thigh runs from the knee (-0.11) up into the body (+0.2), so the leg stays joined to it while the body
+        // bobs (up to 0.06) and the leg swings; the shin hangs from the knee down to the foot (-0.22)
+        part(lp, MeshId::Cylinder, Mat::Chrome, {0, 0.045f, 0}, {}, {0.023f, 0.31f, 0.023f});
         S(lp, 0.034f, Mat::Cyan, {});
+        const int kn = add(lp, {0, -0.11f, 0});
+        S(kn, 0.026f, Mat::Chrome, {});
+        part(kn, MeshId::Cylinder, Mat::Chrome, {0, -0.055f, 0}, {}, {0.021f, 0.11f, 0.021f});
+        const int ft = add(kn, {0, -0.11f, 0});
         for (float a : {-0.45f, 0.f, 0.45f}) // toes
-            part(lp, MeshId::Cylinder, Mat::Chrome, {0.05f * std::cos(a), -0.22f, -0.05f * std::sin(a)}, {0, a, -kPi / 2},
+            part(ft, MeshId::Cylinder, Mat::Chrome, {0.05f * std::cos(a), 0, -0.05f * std::sin(a)}, {0, a, -kPi / 2},
                  {0.0125f, 0.13f, 0.0125f});
         legs[k] = lp;
+        knees[k] = kn;
+        feet[k] = ft;
     }
 
     // the model's bones are the animated nodes; remember where each sits in body space at rest
