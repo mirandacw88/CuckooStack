@@ -237,14 +237,17 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
 
     scenePass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, ctx.depthFormat);
     bloomPass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_FORMAT_UNDEFINED);
-    {   // binding 0: Frame UBO, 1: baked pattern textures (puddle mask), 2 / 3: the textured hen's albedo / normal map
-        const VkDescriptorSetLayoutBinding b[4] = {
+    {   // binding 0: Frame UBO, 1: baked pattern textures (puddle mask), 2 / 3: the textured hen's albedo / normal map,
+        // 4 / 5: the baked cyber cube face (surface, glow)
+        const VkDescriptorSetLayoutBinding b[6] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        ci.bindingCount = 4;
+        ci.bindingCount = 6;
         ci.pBindings = b;
         vkCreateDescriptorSetLayout(dev, &ci, nullptr, &frameSetLayout);
     }
@@ -270,6 +273,12 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     lit = buildPipeline(dev, cache_, d);
     d.cull = VK_CULL_MODE_NONE;
     litTwoSided = buildPipeline(dev, cache_, d);
+    // the wet street's reflection (Pass::Reflect): blended over the street; the shader puts its depth on the street
+    // surface, so whatever stands in front of the street there (bollards, the hen) still hides it
+    d.depthWrite = false; d.blend = Blend::Alpha;
+    d.fs = spv::lit_reflect_frag; d.fsSize = spv::lit_reflect_frag_size;
+    litReflect = buildPipeline(dev, cache_, d);
+    d.depthWrite = true; d.blend = Blend::Opaque;
 
     set(spv::unlit_vert, spv::unlit_vert_size, spv::unlit_frag, spv::unlit_frag_size);
     d.cull = VK_CULL_MODE_NONE; d.depthWrite = false; d.blend = Blend::Alpha;
@@ -296,7 +305,7 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     t.pass = scenePass; t.layout = textLayout;
     textWorld = buildPipeline(dev, cache_, t);
 
-    if (!sky || !lit || !litTwoSided || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld) return false;
+    if (!sky || !lit || !litTwoSided || !litReflect || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld) return false;
     return createPresentObjects(presentFormat);
 }
 
@@ -358,7 +367,7 @@ void VulkanPipeline::destroy() {
     if (!ctx_) return;
     VkDevice dev = ctx_->device;
     destroyPresentObjects();
-    for (VkPipeline* p : {&sky, &lit, &litTwoSided, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld}) {
+    for (VkPipeline* p : {&sky, &lit, &litTwoSided, &litReflect, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld}) {
         if (*p) vkDestroyPipeline(dev, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }

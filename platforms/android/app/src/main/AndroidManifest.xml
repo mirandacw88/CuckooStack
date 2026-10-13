@@ -20,11 +20,14 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.CuckooStack">
 
+        <!-- configChanges: the game draws everything itself (its own text, layout, fonts, colour), so it takes every
+             change in place rather than letting Android rework or restart its window mid-run (a SIM regaining signal
+             changes mcc / mnc, a language or text-size change would restart the screen and rebuild the graphics) -->
         <activity
             android:name=".CuckooActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode|mcc|mnc|locale|layoutDirection|fontScale|fontWeightAdjustment|touchscreen|colorMode|grammaticalGender"
             android:resizeableActivity="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -96,10 +96,19 @@ public:
     int courseLevel() const { return campaign_.level(); }
     int levelAttempts() const { return campaign_.attempts(); }
     bool lastRunCleared() const { return runCleared_; }
+    // low-end device (the platform's FramePacer): no street reflection, rain or wind streaks; the cyber cubes without
+    // animation
+    void setLite(bool on); // (remembered: the next launch starts lite on this device)
+    bool lite() const { return lite_; }
     float runSeconds() const { return run_.seconds; } // play time this run (revives included)
+    // tests: the hen's height above the street, and whether the street (not a wall) is right below her
+    float henHeight() const { return hen_.nodes[hen_.root].pos.y; }
+    bool streetBelowHen() const { return level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0; }
     bool replayTooShort() const { return replayTooShort_; }
     int coins() const { return wallet_.coins(); }
     void debugNearFinish() { debugNearFinish_ = true; }
+    // profiling (debug builds log it for slow frames): what this frame draws and what's happening
+    std::string frameSummary() const;
     int liveSmashDebris() const { int n = 0; for (const auto& b : smashPool_) n += b.life > 0; return n; }
 
 private:
@@ -234,7 +243,7 @@ private:
     float time_ = 0, rainAcc_ = 0, moteAcc_ = 0;
     int discoStep_ = 0; float discoLastPulse_ = 0, discoTimer_ = 0;
     double gateX_ = -1; bool gateVisible_ = false, gatePassed_ = false; float gateOpacity_ = 1;
-    float padOpacity_ = 0.85f, rdt_ = 0.016f;
+    float rdt_ = 0.016f;
     DayRecord day_;
 
     std::vector<Egg> eggs_;
@@ -322,6 +331,7 @@ private:
     bool pendingStart_ = false;               // the next run starts once the interstitial is dismissed
     bool continuePending_ = false;            // the Continue panel opens once the crash has played
     float deadRealT_ = 0;                     // real seconds since the crash (deadT_ runs in slow motion)
+    bool lite_ = false;                       // low-end device: lighter effects (setLite)
     bool runOver_ = false;                    // finishRun has run: no revive any more, the clip can be requested
     bool replayRequested_ = false;            // the run's clip was requested (or it was too short for one)
     bool replayTooShort_ = false;             // ... too short: the results say so

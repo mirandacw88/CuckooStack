@@ -18,6 +18,8 @@ public:
     explicit World(FastRandom& rng);
 
     void update(float dt, float time, float camX, float camY, float speed, bool playing);
+    // off in lite mode (low-end devices): the rain (900 see-through streaks of overdraw) and the wind streaks
+    void setRain(bool on) { rainOn_ = on; }
     void emit(RenderList& out, float camX, float camY, float time, float pulse, const glm::vec3& gradeLight, const TextLayout* text,
               float windowBoost = 0.f) const; // windowBoost: party mode, extra window emissive
 
@@ -40,6 +42,7 @@ private:
     std::vector<Car> cars_;
     std::vector<Streak> streaks_;
     std::vector<Drop> rain_;
+    bool rainOn_ = true;
     std::vector<Line> speed_;
     std::vector<glm::vec3> ventWorld_;
     float speedOpacity_ = 0.f;

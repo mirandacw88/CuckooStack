@@ -142,6 +142,39 @@ void gameSide() {
     }
 }
 
+// ---------------------------------------------------------------- the wet street's reflection
+
+size_t reflected(const Game& g) {
+    size_t n = 0;
+    for (const auto& v : g.renderList().buckets[size_t(Pass::Reflect)]) n += v.size();
+    return n;
+}
+
+void streetReflection() {
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    Game g(env.svc());
+    step(g, 0.5f);
+    check(reflected(g) > 0, "reflection: the hen standing on the street (title screen)");
+    g.press();
+    step(g, 0.1f);
+    g.debugStartSurge(); // invulnerable: she runs over walls, drops off them, lays eggs
+    int onStreet = 0, airborne = 0, overWall = 0, missing = 0, extra = 0;
+    for (int i = 0; i < 60 * 8 && g.state() == Game::State::Play; ++i) {
+        g.update(1.0 / 60.0);
+        if (i % 5 == 0) g.press();
+        const bool street = g.streetBelowHen(), shown = reflected(g) > 0;
+        if (street) { ++onStreet; if (g.henHeight() > 1.f) ++airborne; if (!shown) ++missing; }
+        else { ++overWall; if (shown) ++extra; }
+    }
+    check(onStreet > 0 && missing == 0, "reflection: always there while the street is below her");
+    check(airborne > 0, "...including high above it (dropping off a wall, on a stack of eggs)");
+    check(overWall == 0 || extra == 0, "reflection: none while she's over a wall (blocks aren't wet)");
+    test::dieQuickly(g);
+    step(g, 0.2f);
+    check(g.state() == Game::State::Dead && (!g.streetBelowHen() || reflected(g) > 0), "reflection: her crash and fall, over the street");
+}
+
 // ---------------------------------------------------------------- end card
 
 void endCard() {
@@ -295,6 +328,7 @@ void audioTap() {
 
 int main() {
     gameSide();
+    streetReflection();
     endCard();
     clipPlanner();
     audioTap();

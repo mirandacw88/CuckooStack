@@ -12,6 +12,7 @@
 #include <android/log.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include <sys/system_properties.h>
 #include <game-activity/GameActivity.h>
 #include <game-activity/native_app_glue/android_native_app_glue.h>
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdarg>
 #include <memory>
 #include <thread>
@@ -311,6 +313,65 @@ private:
     JavaBridge& bridge_;
 };
 
+// The display's vsync, from AChoreographer (looked up at runtime: API 24+, frameCallback64 on 29+): the timestamp of
+// the latest refresh and the refresh period. Frames are started on that grid, so at 30 fps on a 60 Hz panel every
+// frame spans exactly two refreshes (timing frames from our own clock instead drifts against the panel: some frames
+// land on one refresh, some on three - visible stutter).
+struct Vsync {
+    int64_t last = 0;            // ns, CLOCK_MONOTONIC (= steady_clock on Android)
+    double period = 1e9 / 60.0;  // ns, measured
+    void* choreographer = nullptr;
+    void (*post64)(void*, void (*)(int64_t, void*), void*) = nullptr;
+    void (*post)(void*, void (*)(long, void*), void*) = nullptr;
+    void start() {
+        auto getInstance = reinterpret_cast<void* (*)()>(dlsym(RTLD_DEFAULT, "AChoreographer_getInstance"));
+        post64 = reinterpret_cast<decltype(post64)>(dlsym(RTLD_DEFAULT, "AChoreographer_postFrameCallback64"));
+        post = reinterpret_cast<decltype(post)>(dlsym(RTLD_DEFAULT, "AChoreographer_postFrameCallback"));
+        choreographer = getInstance ? getInstance() : nullptr; // (on this thread's looper)
+        request();
+    }
+    void request() {
+        if (!choreographer) return;
+        if (post64) post64(choreographer, [](int64_t t, void* self) { static_cast<Vsync*>(self)->tick(t); }, this);
+        else if (post) post(choreographer, [](long t, void* self) { static_cast<Vsync*>(self)->tick(int64_t(t)); }, this);
+    }
+    void tick(int64_t t) {
+        if (last > 0 && t > last) { // refine the period from the gap (a whole number of refreshes)
+            const double d = double(t - last), n = std::round(d / period);
+            if (n >= 1 && n <= 8) period += (d / n - period) * 0.1;
+        }
+        last = t;
+        request(); // every refresh
+    }
+    bool ready() const { return last > 0; }
+};
+
+// ADPF performance hints (Android 12+, looked up at runtime): each frame the game thread reports how long its work
+// took against the frame budget, so the scheduler raises CPU clocks / moves it to faster cores as soon as frames run
+// long (e.g. while the system wakes background apps), instead of reacting late. No-op on older devices.
+struct PerfHint {
+    void* session = nullptr;
+    int64_t target = 0;
+    int (*update)(void*, int64_t) = nullptr;
+    int (*report)(void*, int64_t) = nullptr;
+    void (*close)(void*) = nullptr;
+    void start(int64_t targetNs) {
+        auto getManager = reinterpret_cast<void* (*)()>(dlsym(RTLD_DEFAULT, "APerformanceHint_getManager"));
+        auto create = reinterpret_cast<void* (*)(void*, const int32_t*, size_t, int64_t)>(dlsym(RTLD_DEFAULT, "APerformanceHint_createSession"));
+        update = reinterpret_cast<decltype(update)>(dlsym(RTLD_DEFAULT, "APerformanceHint_updateTargetWorkDuration"));
+        report = reinterpret_cast<decltype(report)>(dlsym(RTLD_DEFAULT, "APerformanceHint_reportActualWorkDuration"));
+        close = reinterpret_cast<decltype(close)>(dlsym(RTLD_DEFAULT, "APerformanceHint_closeSession"));
+        void* manager = getManager ? getManager() : nullptr;
+        const int32_t tid = int32_t(gettid());
+        session = manager && create && update && report ? create(manager, &tid, 1, targetNs) : nullptr;
+        target = targetNs;
+        __android_log_print(ANDROID_LOG_INFO, "CuckooStack", "Performance hints: %s", session ? "on" : "unavailable");
+    }
+    void setTarget(int64_t ns) { if (session && ns != target) { update(session, ns); target = ns; } }
+    void frame(int64_t workNs) { if (session && workNs > 0) report(session, workNs); }
+    ~PerfHint() { if (session && close) close(session); }
+};
+
 struct AppState {
     android_app* app = nullptr;
     cs::AndroidWindow window;
@@ -333,6 +394,10 @@ struct AppState {
     VkExtent2D lastLogical{0, 0};
     cs::quality::Thermal thermal = cs::quality::Thermal::Nominal;
     int targetFps = cs::quality::FPS;
+    cs::quality::FramePacer pacer; // 60, or an even 30 when this phone can't keep 60
+    Vsync vsync;
+    PerfHint perf;
+    std::chrono::steady_clock::time_point lastFrameEnd = std::chrono::steady_clock::now();
 };
 
 float density(android_app* app) {
@@ -357,16 +422,25 @@ cs::quality::Thermal thermalFromStatus(int status) {
 }
 
 // Ask the compositor for a lower display refresh where supported (API 30+), so the GPU isn't driven at 90/120 Hz.
+// The display's refresh rate for this window. FIXED_SOURCE: the content really is fps (a game locked to it), so the
+// display may switch to a matching mode (30 Hz for an even 30 fps; at 60 Hz, 30 fps frames from our own clock land
+// on 1, 2 or 3 refreshes and stutter). ALWAYS (API 31+): switch even if it costs a visible mode change.
 void requestFrameRate(ANativeWindow* window, int fps) {
+    if (!window) return;
+    using WithStrategy = int32_t (*)(ANativeWindow*, float, int8_t, int8_t);
     using SetFrameRate = int32_t (*)(ANativeWindow*, float, int8_t);
+    static auto withStrategy = reinterpret_cast<WithStrategy>(dlsym(RTLD_DEFAULT, "ANativeWindow_setFrameRateWithChangeStrategy"));
     static auto fn = reinterpret_cast<SetFrameRate>(dlsym(RTLD_DEFAULT, "ANativeWindow_setFrameRate"));
-    if (fn && window) fn(window, float(fps), 0 /* ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT */);
+    constexpr int8_t kFixedSource = 1, kAlways = 1; // ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, ..._CHANGE_FRAME_RATE_ALWAYS
+    if (withStrategy) withStrategy(window, float(fps), kFixedSource, kAlways);
+    else if (fn) fn(window, float(fps), kFixedSource);
 }
 
 void applyQuality(AppState& s) {
     s.renderer.setRenderScale(cs::quality::renderScale(s.java->callFloat("displayDensity"), s.thermal));
-    s.targetFps = cs::quality::targetFps(s.thermal);
+    s.targetFps = std::min(cs::quality::targetFps(s.thermal), s.pacer.fps());
     requestFrameRate(s.app->window, s.targetFps);
+    s.perf.setTarget(1'000'000'000LL / s.targetFps); // the frame budget
 }
 
 void onWindowReady(AppState& s) {
@@ -389,6 +463,9 @@ void onWindowReady(AppState& s) {
             s.java->fatal("Cuckoo Stack needs Vulkan graphics, which this device could not provide.\n\n" + error);
             return;
         }
+#ifndef NDEBUG
+        s.renderer.setGpuTiming(true); // debug: GPU ms per pass in the log every 2 s
+#endif
         s.rendererReady = true;
     } else if (!s.renderer.onSurfaceCreated(s.window)) {
         __android_log_print(ANDROID_LOG_ERROR, kTag, "Surface recreation failed; retrying on next frame");
@@ -478,6 +555,8 @@ extern "C" void android_main(android_app* app) {
     services.leaderboards = s.leaderboards.get();
     services.backend = s.backend.get();
     s.game = std::make_unique<cs::Game>(services);
+    s.pacer.remembered(s.game->lite()); // found low-end on an earlier launch: lite + 30 fps from the first frame
+    if (s.pacer.decided()) s.java->callVoid("splashReady", "()V");
     s.audio = std::make_unique<cs::AndroidAudio>(s.synth);
     s.audio->setTap([](void* ctx, const float* samples, int frames, int channels) { static_cast<cs::AndroidReplay*>(ctx)->pushAudio(samples, frames, channels); },
                     s.replay.get());
@@ -494,6 +573,9 @@ extern "C" void android_main(android_app* app) {
     auto prev = std::chrono::steady_clock::now();
     auto nextThermalCheck = prev;
     auto nextFrame = prev;
+    s.vsync.start();
+    s.perf.start(1'000'000'000LL / s.targetFps);
+    int64_t frameVsync = 0; // the refresh the last frame was started on
     while (!app->destroyRequested) {
         android_poll_source* source = nullptr;
         // block while paused; spin while animating (vsync pacing comes from FIFO present)
@@ -521,19 +603,78 @@ extern "C" void android_main(android_app* app) {
                 applyQuality(s);
             }
         }
-        // frame pacing: never render faster than the target, even on 90/120 Hz panels that ignore setFrameRate
-        const auto frameTime = std::chrono::microseconds(1000000 / s.targetFps);
-        nextFrame = std::max(nextFrame + frameTime, std::chrono::steady_clock::now() - frameTime);
-        std::this_thread::sleep_until(nextFrame - std::chrono::microseconds(1500)); // FIFO present absorbs the remainder
+        // frame pacing: never render faster than the target, even on 90/120 Hz panels that ignore setFrameRate. With
+        // the display's vsync, frames start on its refresh grid, every k-th refresh (60 Hz: k = 1 for 60 fps, 2 for
+        // 30), so each frame is on screen for the same number of refreshes; without it (very old devices), our clock.
+        if (s.vsync.ready()) {
+            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            frameVsync = cs::quality::nextFrameVsync(frameVsync, s.vsync.last, s.vsync.period, s.targetFps, nowNs); // (Quality.h)
+            std::this_thread::sleep_until(std::chrono::steady_clock::time_point(std::chrono::nanoseconds(frameVsync + 1000000))); // 1 ms after it
+        } else {
+            const auto frameTime = std::chrono::microseconds(1000000 / s.targetFps);
+            nextFrame = std::max(nextFrame + frameTime, std::chrono::steady_clock::now() - frameTime);
+            std::this_thread::sleep_until(nextFrame - std::chrono::microseconds(1500)); // FIFO present absorbs the remainder
+        }
         const auto now = std::chrono::steady_clock::now();
         if (const std::string link = s.java->callString("linkPoll"); !link.empty()) s.game->openLink(link);
+        const auto t0 = std::chrono::steady_clock::now();
         s.game->update(std::chrono::duration<double>(now - prev).count());
         prev = now;
+        const auto t1 = std::chrono::steady_clock::now();
         if (s.replay) { s.replay->setAudioRate(s.audio ? s.audio->sampleRate() : 48000); s.replay->frame(s.thermal >= cs::quality::Thermal::Critical); } // recording is light: only Critical stops it
         if (!s.renderer.render(s.game->renderList())) {
             s.failed = true;
             s.java->fatal("The graphics device stopped responding (VK_ERROR_DEVICE_LOST).");
         }
+        {   // pacing: an even 30 fps when this phone's GPU can't keep 60 (alternating 16 / 33 ms frames stutter)
+            const auto end = std::chrono::steady_clock::now();
+            const double busyMs = std::chrono::duration<double, std::milli>(end - t0).count();
+            s.perf.frame(std::chrono::duration_cast<std::chrono::nanoseconds>(end - t0).count()); // this frame's work
+            const double dt = std::chrono::duration<double>(end - s.lastFrameEnd).count();
+            s.lastFrameEnd = end;
+            const bool wasDecided = s.pacer.decided();
+            if (dt < 0.5 && s.pacer.frame(busyMs, dt)) { // (a long gap: back from the background, not a slow frame)
+                __android_log_print(ANDROID_LOG_INFO, kTag, "Low-end device: lite effects, %d fps", s.pacer.fps());
+                s.game->setLite(true);
+                applyQuality(s);
+            }
+            if (!wasDecided && s.pacer.decided()) s.java->callVoid("splashReady", "()V"); // the splash may go now
+        }
+#ifndef NDEBUG
+        { // debug: slow frames. A frame that took over 30 ms (normal: 5-10) logs what the last three frames drew: the GPU
+            // works a frame or two behind, so the heavy one is often before the frame that waited for it.
+            static std::string recent[3];
+            static int at = 0;
+            recent[at] = s.game->frameSummary();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (ms > 30.0) {
+                __android_log_print(ANDROID_LOG_WARN, kTag, "SLOW FRAME %.1f ms", ms);
+                for (int k = 2; k >= 0; --k)
+                    __android_log_print(ANDROID_LOG_WARN, kTag, "  frame -%d: %s", k, recent[(at + 3 - k) % 3].c_str());
+            }
+            at = (at + 1) % 3;
+            // ... and every frame's summary with its start time (CLOCK_MONOTONIC, the clock SurfaceFlinger's present
+            // timestamps use) to <files>/frames.log, to match against the display's hitches afterwards
+            static FILE* log = std::fopen((std::string(s.app->activity->internalDataPath) + "/frames.log").c_str(), "w");
+            if (log) {
+                std::fprintf(log, "%lld %.1f %s\n", (long long)std::chrono::duration_cast<std::chrono::nanoseconds>(t0.time_since_epoch()).count(), ms,
+                             recent[(at + 2) % 3].c_str());
+                static int lines = 0;
+                if (++lines % 30 == 0) std::fflush(log);
+            }
+        }
+        { // debug: CPU time per frame (game update / render submit incl. waiting for a free frame), every 2 s
+            static double up = 0, rn = 0, worst = 0; static int frames = 0;
+            static auto logAt = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            const auto t2 = std::chrono::steady_clock::now();
+            const double u = std::chrono::duration<double, std::milli>(t1 - t0).count(), r = std::chrono::duration<double, std::milli>(t2 - t1).count();
+            up += u; rn += r; worst = std::max(worst, u + r); ++frames;
+            if (t2 >= logAt) {
+                __android_log_print(ANDROID_LOG_INFO, kTag, "CPU ms/frame: update %.2f  render %.2f  worst %.2f  (%d frames)", up / frames, rn / frames, worst, frames);
+                up = rn = worst = 0; frames = 0; logAt = t2 + std::chrono::seconds(2);
+            }
+        }
+#endif
     }
     s.audio.reset();   // no more audio taps
     s.replay.reset();  // encoders + the recorder swapchain go before the renderer

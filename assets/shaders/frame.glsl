@@ -17,7 +17,7 @@ layout(set = 0, binding = 0, std140) uniform Frame {
     vec4 sunColor;    // rgb * intensity
     vec4 pointPos[3]; // w = cutoff distance
     vec4 pointColor[3];
-    vec4 misc;        // x = beat pulse
+    vec4 misc;        // x = beat pulse, y = 1: lite mode (low-end device)
 } F;
 
 vec3 skyGradient(vec3 d) {

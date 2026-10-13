@@ -174,7 +174,8 @@ void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height
     CVPixelBufferLockBaseAddress(pb, 0);
     auto* dst = static_cast<uint8_t*>(CVPixelBufferGetBaseAddress(pb));
     const size_t stride = CVPixelBufferGetBytesPerRow(pb), row = size_t(width) * 4;
-    for (uint32_t y = 0; y < height; ++y) std::memcpy(dst + y * stride, bgra + y * row, row);
+    if (stride == row) std::memcpy(dst, bgra, row * height); // one copy when the rows are packed alike
+    else for (uint32_t y = 0; y < height; ++y) std::memcpy(dst + y * stride, bgra + y * row, row);
     CVPixelBufferUnlockBaseAddress(pb, 0);
     NSDictionary* props = s.forceKey ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame: @YES} : nil;
     s.forceKey = false;
