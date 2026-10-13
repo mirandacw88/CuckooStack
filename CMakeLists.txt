@@ -429,7 +429,8 @@ if(CS_PLATFORM STREQUAL "desktop")
     add_test(NAME ${name} COMMAND ${name}_test WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   endfunction()
 
-  foreach(f Campaign Daily Economy EndCard Game GameSurge HenIdle Monetization Reminders RenderList ReplayClip)
+  foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry)
     cs_test(src/core/${f})
   endforeach()
   cs_test(src/core/audio/Music)

@@ -8,8 +8,15 @@ namespace cs {
 
 // Howard Hinnant's days_from_civil / civil_from_days (proleptic Gregorian)
 int64_t civilDay(const std::string& ymd) {
+    // exactly "YYYY-MM-DD": digits with dashes at 4 and 7 (sscanf alone would take "26-10-2026")
+    if (ymd.size() != 10 || ymd[4] != '-' || ymd[7] != '-') return kNoDay;
+    for (size_t i : {0, 1, 2, 3, 5, 6, 8, 9})
+        if (ymd[i] < '0' || ymd[i] > '9') return kNoDay;
     int y = 0, m = 0, d = 0;
-    if (ymd.size() != 10 || std::sscanf(ymd.c_str(), "%4d-%2d-%2d", &y, &m, &d) != 3 || m < 1 || m > 12 || d < 1 || d > 31) return kNoDay;
+    if (std::sscanf(ymd.c_str(), "%4d-%2d-%2d", &y, &m, &d) != 3 || m < 1 || m > 12 || d < 1) return kNoDay;
+    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    static constexpr int kDays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (d > kDays[m - 1] + (m == 2 && leap)) return kNoDay; // no Feb 30 rolling into March
     y -= m <= 2;
     const int64_t era = (y >= 0 ? y : y - 399) / 400;
     const unsigned yoe = unsigned(y - era * 400);
@@ -34,7 +41,7 @@ std::string civilDate(int64_t z) {
 }
 
 uint64_t hashString(const std::string& s) {
-    uint64_t h = 1469598103934665603ull;
+    uint64_t h = 14695981039346656037ull; // the FNV-1a 64-bit offset basis
     for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }
     return h;
 }

@@ -45,9 +45,36 @@ void mirroring() {
     check(list.buckets[size_t(Pass::Reflect)][size_t(MeshId::Egg)].empty(), "mirror: cleared with the frame");
 }
 
+void basics() {
+    check(sizeof(Instance) == 128 && sizeof(Particle) == 32, "GPU layouts: Instance 128 bytes, Particle 32");
+    RenderList list;
+    Instance& a = list.add(Pass::UnlitAdd, MeshId::Plane);
+    a.color = glm::vec4(1, 0, 0, 0.5f);
+    list.add(Pass::UnlitAdd, MeshId::Plane);
+    list.add(Pass::Lit, MeshId::Box);
+    check(list.get(Pass::UnlitAdd, MeshId::Plane).size() == 2 && list.get(Pass::Lit, MeshId::Box).size() == 1, "add: one bucket per pass and mesh");
+    check(list.get(Pass::UnlitAdd, MeshId::Plane)[0].color.a == 0.5f, "add: returns the new instance to fill in");
+    check(list.get(Pass::Lit, MeshId::Plane).empty() && list.get(Pass::UnlitAlpha, MeshId::Box).empty(), "other buckets stay empty");
+    list.hud.emplace_back(); list.hudKind.push_back(HudText);
+    list.particlesAdd.emplace_back(); list.particlesSmoke.emplace_back(); list.worldText.emplace_back(); list.heroVerts.emplace_back();
+    list.frame.lite = true;
+    list.clear();
+    bool empty = list.hud.empty() && list.hudKind.empty() && list.particlesAdd.empty() && list.particlesSmoke.empty() &&
+                 list.worldText.empty() && list.heroVerts.empty();
+    for (size_t p = 0; p < kPassCount; ++p)
+        for (size_t m = 0; m < kMeshCount; ++m) empty = empty && list.buckets[p][m].empty();
+    check(empty, "clear: every bucket, the HUD, particles, world text and the posed hen");
+    check(list.frame.lite, "clear: the frame parameters are left for the game to set");
+    const RenderList::LitMark m = list.litMark();
+    list.add(Pass::UnlitAlpha, MeshId::Egg);
+    list.reflectSince(m);
+    check(list.get(Pass::Reflect, MeshId::Egg).empty(), "only lit instances are reflected (not glows or particles)");
+}
+
 } // namespace
 
 int main() {
     mirroring();
+    basics();
     return finish("RenderList");
 }

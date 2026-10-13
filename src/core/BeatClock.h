@@ -24,7 +24,7 @@ public:
         tracked_ = true;
         bpm_ = bpm * rate;
         const double period = 60.0 / bpm, since = position - firstBeat;
-        if (since >= 0) lastKick_ = now_ - std::fmod(since, period) / std::max(0.05, rate);
+        if (since >= 0) { lastKick_ = now_ - std::fmod(since, period) / std::max(0.05, rate); kicked_ = true; }
     }
     void untrack() { tracked_ = false; }
 
@@ -36,12 +36,12 @@ public:
         while (nextT_ <= now_) {
             if (party_) {
                 const int s = partyStep_ % 16;
-                if (s % 4 == 0 || s == 15) lastKick_ = nextT_;
+                if (s % 4 == 0 || s == 15) { lastKick_ = nextT_; kicked_ = true; }
                 partyStep_++;
             } else {
                 const int s = step_ % 16, bar = (step_ / 16) % 32;
                 const bool buildDrop = bar >= 22 && bar < 24; // section C, bars 22-23
-                if (s % 4 == 0 && !buildDrop) lastKick_ = nextT_;
+                if (s % 4 == 0 && !buildDrop) { lastKick_ = nextT_; kicked_ = true; }
                 step_++;
             }
             nextT_ += sixteenth;
@@ -50,16 +50,16 @@ public:
 
     // music.pulse(): exp(-(now - lastKick) * 7), 0 once faded and stopped
     float pulse() const {
-        if (lastKick_ < 0) return 0.f;
+        if (!kicked_) return 0.f; // (a kick can be at a negative time: synced to a track right after launch)
         const double k = std::exp(-(now_ - lastKick_) * 7.0);
         if (k < 0.01 && !playing_) return 0.f;
         return static_cast<float>(k);
     }
 
 private:
-    bool playing_ = false, party_ = false, tracked_ = false;
+    bool playing_ = false, party_ = false, tracked_ = false, kicked_ = false;
     int step_ = 0, partyStep_ = 0;
-    double now_ = 0, nextT_ = 0, bpm_ = 126.0, lastKick_ = -1;
+    double now_ = 0, nextT_ = 0, bpm_ = 126.0, lastKick_ = 0;
 };
 
 } // namespace cs
