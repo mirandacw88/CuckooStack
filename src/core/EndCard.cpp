@@ -112,9 +112,12 @@ std::vector<uint8_t> renderEndCard(const FontAtlas& fonts, const HudImage& icons
     TextStyle name = style(FontId::Display, 76 * S, kText, 0.02f, false, 1.f);
     name.shadows = {hard(-3 * S, kHot), hard(3 * S, kNeon), blur(28 * S, kHot, 0.45f)};
     drawText(cv, fonts, tl, "Cuckoo Stack", name, W / 2.f, mid + 340 * S);
+    const OverdriveLook od = overdriveLook(name.size);
+    drawText(cv, fonts, tl, "OVERDRIVE", od.under, W / 2.f + od.underDx, mid + 422 * S);
+    drawText(cv, fonts, tl, "OVERDRIVE", od.over, W / 2.f, mid + 422 * S);
     TextStyle store = style(FontId::BodyBold, 30 * S, kText, 0.14f, true);
     store.opacity = 0.9f;
-    drawText(cv, fonts, tl, "Free on iOS & Android", store, W / 2.f, mid + 440 * S);
+    drawText(cv, fonts, tl, "Free on iOS & Android", store, W / 2.f, mid + 500 * S);
 
     std::vector<uint8_t> out(size_t(W) * H * 4);
     for (size_t i = 0; i < size_t(W) * H; ++i) {

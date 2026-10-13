@@ -71,7 +71,7 @@ android {
             dimension = "env"
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
-            resValue("string", "app_name", "Cuckoo Stack \u03b2")
+            resValue("string", "app_name", "Cuckoo Stack OVERDRIVE \u03b2")
             externalNativeBuild { cmake { arguments += "-DCS_ENV=staging" } }
             manifestPlaceholders["linkHost"] = "cuckoostack-staging.web.app" // challenge links (src/core/Links.h)
             manifestPlaceholders["linkScheme"] = "cuckoostack-staging"
@@ -80,7 +80,7 @@ android {
         }
         create("prod") {
             dimension = "env"
-            resValue("string", "app_name", "Cuckoo Stack")
+            resValue("string", "app_name", "Cuckoo Stack OVERDRIVE")
             externalNativeBuild { cmake { arguments += "-DCS_ENV=prod" } }
             manifestPlaceholders["linkHost"] = "cuckoostack-prod.web.app"
             manifestPlaceholders["linkScheme"] = "cuckoostack"

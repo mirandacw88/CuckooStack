@@ -460,7 +460,7 @@ void onWindowReady(AppState& s) {
             __android_log_print(ANDROID_LOG_FATAL, kTag, "Vulkan unavailable: %s", error.c_str());
             s.renderer.shutdown();
             s.failed = true;
-            s.java->fatal("Cuckoo Stack needs Vulkan graphics, which this device could not provide.\n\n" + error);
+            s.java->fatal("Cuckoo Stack OVERDRIVE needs Vulkan graphics, which this device could not provide.\n\n" + error);
             return;
         }
 #ifndef NDEBUG

@@ -39,7 +39,7 @@ public:
 
     // animated handles
     int root, body, head, tail;
-    int wings[2], legs[2];
+    int wings[2], legs[2], knees[2], feet[2]; // legs: the hips; the foot keeps the toes flat when the knee bends
     std::vector<Node> nodes;
 
     HenSkin skin;

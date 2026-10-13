@@ -91,6 +91,10 @@ public:
     std::vector<uint8_t> endCard(int width, int height, const ReplayMeta& meta) const;
     // tests: tap the first visible button whose label starts with `label` (returns false if none)
     bool tapButton(const std::string& label);
+    // tests: every HUD string drawn by the last update (off unless switched on)
+    struct HudString { std::string text; TextStyle style; float x, top, width; TextAlign align; };
+    void debugRecordHud(bool on) { recordHud_ = on; hudStrings_.clear(); }
+    const std::vector<HudString>& hudStrings() const { return hudStrings_; }
     int challengeMeters() const { return challenge_ ? challenge_->meters : 0; }
     // levels (tests, developer menu)
     int courseLevel() const { return campaign_.level(); }
@@ -102,6 +106,11 @@ public:
     bool lite() const { return lite_; }
     float runSeconds() const { return run_.seconds; } // play time this run (revives included)
     // tests: the hen's height above the street, and whether the street (not a wall) is right below her
+    const Hen& hen() const { return hen_; }
+    glm::vec4 levelCompleteBanner() const { return completeBox_; } // centre x, y, width, height; zero when hidden
+    static constexpr float kHenTop = 1.4f; // the top of the hen's comb above her feet (world m)
+    bool henTopOnScreen(glm::vec2& px) const { return camera_.project(hen_.nodes[hen_.root].pos + glm::vec3(0.f, kHenTop, 0.f), px); }
+    float progressBarBottom() const { return barBottom_; }
     float henHeight() const { return hen_.nodes[hen_.root].pos.y; }
     bool streetBelowHen() const { return level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0; }
     bool replayTooShort() const { return replayTooShort_; }
@@ -135,6 +144,7 @@ private:
     void die(bool ceiling);
     void updatePlay(float dt, float rdt);
     void updateHen(float dt);
+    void titleIdle(float dt);
     void updateDebris(float dt);
     void updateCamera(float rdt);
     void updateAmbient(float dt);
@@ -190,6 +200,7 @@ private:
     void hudTopBar();
     void hudTitleMenu(float& bottom);
     void hudTitleHeader();
+    void hudLevelComplete();
     void hudTitleNav(float rowY);
     glm::vec3 iconTint(Icon icon) const;
     void switchScreen(Screen s);
@@ -235,6 +246,7 @@ private:
     double x_ = 0, baseY_ = 0, vy_ = 0;
     float speed_ = 0, meter_ = MAXE;
     int bonus_ = 0, cornCount_ = 0, score_ = 0, best_ = 0, streak_ = 0, gradeIdx_ = 0, sector_ = 1, prevFull_ = MAXE, lastBonus_ = 0;
+    float idleT_ = 0; // time into the title screen's idle loop
     float hop_ = 0, hopV_ = 0, flap_ = 0, squash_ = 0, deadT_ = 0, runPhase_ = 0, lean_ = 0;
     float camX_ = 1.6f, camY_ = 1.2f, shake_ = 0, intro_ = 0, camKick_ = 0;
     float timeScale_ = 1, freeze_ = 0, chromaKick_ = 0, danger_ = 0;
@@ -298,6 +310,10 @@ private:
     Missions missions_;
     DailyDrop drop_;
     Campaign campaign_;
+    bool recordHud_ = false;
+    std::vector<HudString> hudStrings_;
+    float barBottom_ = 0;                 // the HUD's level progress bar (or overdrive timer): its bottom edge
+    glm::vec4 completeBox_{0.f};          // the "Level Complete" banner on screen: centre x, y, width, height (0: hidden)
     float clearT_ = -1;                   // seconds since crossing the finish line (-1: not crossed this run)
     bool runCleared_ = false;
     bool debugNearFinish_ = false;

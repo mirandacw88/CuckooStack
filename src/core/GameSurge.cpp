@@ -62,7 +62,7 @@ void Game::startSurge() {
     run_.surges++;
     missionProgress(missions_.record(MissionKind::Surges));
     const glm::vec3 hp = hen_.nodes[hen_.root].pos;
-    popup("SURGE!", hp + glm::vec3(0.6f, 1.9f, 0), PopKind::Surge);
+    popup("OVERDRIVE!", hp + glm::vec3(0.6f, 1.9f, 0), PopKind::Surge);
     flashScreen(srgbColor("#ff2bd6"), 0.32f);
     rings_.spawn(hp + glm::vec3(0, 0.6f, 0.3f), kPink(), 3.2f, 0.6f, true);
     rings_.spawn(hp + glm::vec3(0, 0.6f, 0.3f), kCyan(), 2.2f, 0.5f, true);

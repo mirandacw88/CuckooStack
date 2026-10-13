@@ -201,7 +201,7 @@ std::string Missions::describe(const Mission& m) {
     case MissionKind::Distance: return "Reach " + n + " m in one run";
     case MissionKind::Runs: return "Play " + n + " runs";
     case MissionKind::Perfects: return "Land " + n + " perfects";
-    case MissionKind::Surges: return m.target == 1 ? "Trigger a surge" : "Trigger " + n + " surges";
+    case MissionKind::Surges: return m.target == 1 ? "Trigger overdrive" : "Trigger overdrive " + n + " times";
     case MissionKind::CloseCalls: return "Survive " + n + " close calls";
     case MissionKind::Eggs: return "Lay " + n + " eggs";
     case MissionKind::BeatBest: return "Beat your best on a level";

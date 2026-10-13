@@ -289,7 +289,7 @@ void Game::hudTitleMenu(float& bottom) {
         const float cw = std::min(168.f, (W - 44) / 2), ch = 50;
         const float y = bottom - ch / 2;
         struct B { Boost b; Icon icon; const char* name; };
-        const B boosts[] = {{Boost::Surge, Icon::Rocket, "Surge start"}, {Boost::Overclock, Icon::EggBolt, "Overclock"}};
+        const B boosts[] = {{Boost::Surge, Icon::Rocket, "Overdrive start"}, {Boost::Overclock, Icon::EggBolt, "Overclock"}};
         const bool adOk = rewardReady(Placement::Boost);
         for (int i = 0; i < 2; ++i) {
             const Up a = up(t, 0.2f + i * 0.06f);
@@ -313,6 +313,7 @@ void Game::hudTitleMenu(float& bottom) {
             hudSprite(boosts[i].icon, {c.x - cw / 2 + 24, c.y}, 40 * (armed ? 1.f + 0.06f * std::sin(time_ * 6) : 1.f), 0, glm::vec3(1.f), al);
             TextStyle n = style(FontId::BodyBold, 12, kText, 0.12f, true);
             n.opacity = al;
+            n = fitWidth(*text_, toUpperAscii(boosts[i].name), n, cw - 48 - 10); // inside the tile, right of the icon
             hudText(boosts[i].name, n, c.x - cw / 2 + 48, c.y - 15, TextAlign::Left);
             if (armed) {
                 TextStyle on = style(FontId::BodyBold, 11, kGreen, 0.14f, true);
@@ -1177,9 +1178,9 @@ void Game::hudSettings() {
     TextStyle v = style(FontId::BodyBold, 11, kMuted, 0.14f, true);
     v.opacity = p.k;
 #if defined(CS_ENV_PROD)
-    hudText("Cuckoo Stack", v, p.c.x, y + 6);
+    hudText("Cuckoo Stack OVERDRIVE", v, p.c.x, y + 6);
 #else
-    hudText("Cuckoo Stack · staging", v, p.c.x, y + 6);
+    hudText("Cuckoo Stack OVERDRIVE · staging", v, p.c.x, y + 6);
 #endif
 }
 
@@ -1243,7 +1244,7 @@ void Game::hudDev() {
                 missionProgress(m.kind == MissionKind::Distance ? missions_.recordDistance(m.target) : missions_.record(m.kind, m.target));
         }});
         bs.push_back({"New missions", St::Plain, [this] { for (int i = 0; i < 3; ++i) missions_.reroll(i); }});
-        bs.push_back({boost_ == Boost::Surge ? "Surge start: armed" : "Free Surge Start", boost_ == Boost::Surge ? St::On : St::Plain,
+        bs.push_back({boost_ == Boost::Surge ? "Overdrive start: armed" : "Free Overdrive Start", boost_ == Boost::Surge ? St::On : St::Plain,
                       [this] { boost_ = Boost::Surge; }});
         bs.push_back({adPolicy_.removeAds() ? "Remove ads: on" : "Remove ads: off", adPolicy_.removeAds() ? St::On : St::Plain,
                       [this] { adPolicy_.setRemoveAds(!adPolicy_.removeAds()); }});
