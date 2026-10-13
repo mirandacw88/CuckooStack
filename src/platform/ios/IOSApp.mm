@@ -69,6 +69,8 @@ std::string savePath() {
     BOOL _ready;
     UIView* _splash; // opening splash, identical to LaunchScreen.storyboard; nil once dismissed
     CFTimeInterval _last;
+    cs::quality::FramePacer _pacer; // full effects at 60, or lite at an even 30 on a low-end device
+    BOOL _splashHeld;
 }
 
 - (void)loadView {
@@ -121,6 +123,7 @@ std::string savePath() {
     services.leaderboards = &_leaderboards;
     services.backend = &_backend;
     _game = std::make_unique<cs::Game>(services);
+    _pacer.remembered(_game->lite()); // found low-end on an earlier launch: lite + 30 fps from the first frame
 #ifndef NDEBUG
     // debug: `xcrun simctl launch <device> com.cuckoostack.aerospheregames --surge` starts a surge 4 m into every run
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--surge"]) _game->setDebugAutoSurge(true);
@@ -165,7 +168,12 @@ std::string savePath() {
         [self applyQuality];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(thermalChanged) name:NSProcessInfoThermalStateDidChangeNotification object:nil];
         // hold the logo a moment once the game is running underneath, then fade to the title screen
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self dismissSplash]; });
+        // at least 1.6 s, and until the game has measured this device (lite or not: tick), at most 4.5 s
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            self->_splashHeld = YES;
+            if (self->_pacer.decided()) [self dismissSplash];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self dismissSplash]; });
     }
     [self resume];
 }
@@ -203,6 +211,7 @@ std::string savePath() {
 
 - (void)tick:(CADisplayLink*)link {
     const CFTimeInterval now = link.timestamp;
+    const CFTimeInterval started = CACurrentMediaTime();
     if (!gPendingLink.empty()) { _game->openLink(gPendingLink); gPendingLink.clear(); }
     _game->update(now - _last);
     _last = now;
@@ -212,7 +221,16 @@ std::string savePath() {
         [self pause];
         _ready = NO;
         [self showFatal:@"The graphics device stopped responding."];
+        return;
     }
+    // pacing: an even 30 fps when this device's GPU can't keep 60 (alternating 16 / 33 ms frames stutter)
+    const bool wasDecided = _pacer.decided();
+    if (_pacer.frame((CACurrentMediaTime() - started) * 1000.0, link.targetTimestamp - link.timestamp)) { // (this frame's slot)
+        CS_LOGI("Low-end device: lite effects, %d fps", _pacer.fps());
+        _game->setLite(true);
+        [self applyFrameRate];
+    }
+    if (!wasDecided && _pacer.decided() && _splashHeld) [self dismissSplash]; // measured: the splash may go
 }
 
 // Heat / battery: internal resolution + frame-rate cap from the screen density and the device's thermal state.
@@ -226,7 +244,7 @@ std::string savePath() {
 }
 
 - (void)applyFrameRate {
-    const int fps = cs::quality::targetFps([self thermal]);
+    const int fps = std::min(cs::quality::targetFps([self thermal]), _pacer.fps());
     if (@available(iOS 15.0, *)) _link.preferredFrameRateRange = CAFrameRateRangeMake(fps / 2.f, fps, fps);
     else _link.preferredFramesPerSecond = fps;
 }

@@ -4,7 +4,7 @@
 # assets/shaders/compile_shaders.sh after editing a shader).
 
 set(CS_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
-set(CS_SHADERS sky.vert sky.frag lit.vert lit.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag)
+set(CS_SHADERS sky.vert sky.frag lit.vert lit.frag lit_reflect.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag)
 
 set(_hints "")
 if(DEFINED ENV{VULKAN_SDK})
@@ -34,7 +34,7 @@ if(CS_GLSLANG OR CS_GLSLC)
       OUTPUT ${cpp}
       COMMAND ${cmd}
       COMMAND ${CMAKE_COMMAND} -DINPUT=${spv} -DOUTPUT=${cpp} -DSYMBOL=${sym} -DSOURCE_NAME=${sh} -P ${CMAKE_CURRENT_LIST_DIR}/EmbedSpirv.cmake
-      DEPENDS ${CS_SHADER_DIR}/${sh} ${CS_SHADER_DIR}/frame.glsl ${CMAKE_CURRENT_LIST_DIR}/EmbedSpirv.cmake
+      DEPENDS ${CS_SHADER_DIR}/${sh} ${CS_SHADER_DIR}/frame.glsl ${CS_SHADER_DIR}/lit_common.glsl ${CMAKE_CURRENT_LIST_DIR}/EmbedSpirv.cmake
       COMMENT "SPIR-V 1.0: ${sh}"
       VERBATIM)
     list(APPEND CS_SHADER_SOURCES ${cpp})

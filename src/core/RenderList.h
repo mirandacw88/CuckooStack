@@ -70,7 +70,8 @@ struct Particle {
 static_assert(sizeof(Particle) == 32, "Particle must stay 32 bytes (GPU layout)");
 
 // LitTwoSided: lit without back-face culling (the hen's glass shards, open shells seen from both sides)
-enum class Pass : uint8_t { Lit = 0, UnlitAlpha = 1, UnlitAdd = 2, LitTwoSided = 3, Count };
+// Reflect: lit instances mirrored in the wet street (y -> -y), blended over it (fading with depth, strongest in puddles)
+enum class Pass : uint8_t { Lit = 0, UnlitAlpha = 1, UnlitAdd = 2, LitTwoSided = 3, Reflect = 4, Count };
 constexpr size_t kPassCount = static_cast<size_t>(Pass::Count);
 
 struct PointLight { glm::vec3 pos{0.f}; glm::vec3 color{0.f}; float intensity = 0.f; float distance = 0.f; };
@@ -78,6 +79,7 @@ struct PointLight { glm::vec3 pos{0.f}; glm::vec3 color{0.f}; float intensity = 
 struct FrameParams {
     glm::mat4 view{1.f}, proj{1.f};
     glm::vec3 cameraPos{0.f};
+    bool lite = false; // low-end device: lit.frag skips the cyber cubes' animation
     glm::vec3 fogColor{0.f}; float fogDensity = 0.016f;
     glm::vec3 skyTop{0.f}, skyMid{0.f}, skyBot{0.f}, skyHaze{0.f}; glm::vec3 moonDir{0, 1, 0};
     glm::vec3 hemiSky{0.f}, hemiGround{0.f}; float hemiIntensity = 0.f;
@@ -125,6 +127,31 @@ struct RenderList {
     }
     Instance& add(Pass p, MeshId m) {
         return buckets[static_cast<size_t>(p)][static_cast<size_t>(m)].emplace_back();
+    }
+    // the wet street's reflection: the lit instances (one- and two-sided, e.g. the crash's glass shards) added since
+    // `mark` are copied, mirrored about y = 0, into Pass::Reflect
+    using LitMark = std::array<std::array<size_t, kMeshCount>, 2>;
+    LitMark litMark() const {
+        LitMark m{};
+        for (size_t i = 0; i < kMeshCount; ++i) {
+            m[0][i] = buckets[static_cast<size_t>(Pass::Lit)][i].size();
+            m[1][i] = buckets[static_cast<size_t>(Pass::LitTwoSided)][i].size();
+        }
+        return m;
+    }
+    void reflectSince(const LitMark& mark) {
+        const glm::mat4 mirror = glm::scale(glm::mat4(1.f), glm::vec3(1.f, -1.f, 1.f));
+        auto& refl = buckets[static_cast<size_t>(Pass::Reflect)];
+        const Pass from[2] = {Pass::Lit, Pass::LitTwoSided};
+        for (int p = 0; p < 2; ++p) {
+            auto& src = buckets[static_cast<size_t>(from[p])];
+            for (size_t i = 0; i < kMeshCount; ++i)
+                for (size_t k = mark[p][i]; k < src[i].size(); ++k) {
+                    Instance r = src[i][k];
+                    r.model = mirror * r.model;
+                    refl[i].push_back(r);
+                }
+        }
     }
     const std::vector<Instance>& get(Pass p, MeshId m) const {
         return buckets[static_cast<size_t>(p)][static_cast<size_t>(m)];

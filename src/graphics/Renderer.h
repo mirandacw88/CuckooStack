@@ -117,6 +117,7 @@ private:
     VulkanImage hdr_, depth_, bloomA_, bloomB_;
     VulkanImage fontAtlas_;
     VulkanImage puddleMask_;              // baked asphalt puddles (BakedPatterns.cpp)
+    VulkanImage cyberSurface_, cyberGlow_; // the baked cyber cube face design (BakedPatterns.cpp, bindings 4, 5)
     VkSampler linearRepeat_ = VK_NULL_HANDLE;
     VkDescriptorSet textSet_ = VK_NULL_HANDLE;
     const FontAtlas* uploadedAtlas_ = nullptr;

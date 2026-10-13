@@ -26,11 +26,13 @@ import com.google.androidgamesdk.GameActivity;
 public class CuckooActivity extends GameActivity {
 
     /** Logo hold after launch before fading to the title screen (ms). */
-    private static final long SPLASH_HOLD_MS = 1900;
+    private static final long SPLASH_HOLD_MS = 1900;     // at least this long ...
+    private static final long SPLASH_MAX_MS = 4500;      // ... and until the game has measured this device (splashReady)
     private static final int SPLASH_FADE_MS = 400;
     private static final int SPLASH_MAX_WIDTH_DP = 520;
 
     private View splash;
+    private volatile boolean splashReady, splashHeld;
     private AdsManager ads;
     private FirebaseBridge firebase;
     private StoreManager store;
@@ -69,7 +71,13 @@ public class CuckooActivity extends GameActivity {
 
         addContentView(layer, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         splash = layer;
-        layer.postDelayed(this::dismissSplash, SPLASH_HOLD_MS);
+        layer.postDelayed(() -> { splashHeld = true; if (splashReady) dismissSplash(); }, SPLASH_HOLD_MS);
+        layer.postDelayed(this::dismissSplash, SPLASH_MAX_MS); // never longer, whatever happens
+    }
+
+    /** Native: the game has decided whether this is a low-end device (lite effects): the splash may go. */
+    public void splashReady() {
+        runOnUiThread(() -> { splashReady = true; if (splashHeld) dismissSplash(); });
     }
 
     private void dismissSplash() {

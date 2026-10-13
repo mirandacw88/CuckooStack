@@ -15,6 +15,8 @@
 
 namespace cs {
 
+static bool uploadRgbaMips(VulkanContext& ctx, VulkanImage& img, const uint8_t* px, int w, int h);
+
 namespace {
 
 constexpr size_t kMaxInstances = 20000; // per frame, all instanced passes + HUD
@@ -41,7 +43,7 @@ GpuFrame toGpu(const FrameParams& f) {
         g.pointPos[i] = glm::vec4(f.points[i].pos, f.points[i].distance);
         g.pointColor[i] = glm::vec4(f.points[i].color * f.points[i].intensity, 0);
     }
-    g.misc = glm::vec4(f.pulse, 0, 0, 0);
+    g.misc = glm::vec4(f.pulse, f.lite ? 1.f : 0.f, 0, 0);
     return g;
 }
 
@@ -107,9 +109,14 @@ bool Renderer::init(PlatformSurface& platform, bool enableValidation, std::strin
         if (!puddleMask_.create(ctx_.device, ctx_.allocator, {kPuddle, kPuddle}, VK_FORMAT_R8_UNORM,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT, false) ||
             !puddleMask_.upload(ctx_, mask.data(), mask.size())) { error = "Pattern texture upload failed"; return false; }
+        // the cyber cube's face design (bindings 4, 5): baked once, sampled instead of computed per pixel
+        constexpr int kCyber = 256;
+        const CyberCubeBake cyber = bakeCyberCube(kCyber);
+        if (!uploadRgbaMips(ctx_, cyberSurface_, cyber.surface.data(), 2 * kCyber, 2 * kCyber) ||
+            !uploadRgbaMips(ctx_, cyberGlow_, cyber.glow.data(), 2 * kCyber, 2 * kCyber)) { error = "Pattern texture upload failed"; return false; }
     }
 
-    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 + 3 * kFramesInFlight}};
+    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 + 5 * kFramesInFlight}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight + 6;
     pci.poolSizeCount = 2;
@@ -179,19 +186,20 @@ bool Renderer::createFrames() {
         wh.dstBinding = 2; wh.pImageInfo = &hi;
         VkWriteDescriptorSet wn = wp;
         wn.dstBinding = 3; wn.pImageInfo = &hi;
-        const VkWriteDescriptorSet all[4] = {w, wp, wh, wn};
-        vkUpdateDescriptorSets(ctx_.device, 4, all, 0, nullptr);
+        VkDescriptorImageInfo cs{linearMip_, cyberSurface_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo cg{linearMip_, cyberGlow_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w4 = wp, w5 = wp;
+        w4.dstBinding = 4; w4.pImageInfo = &cs;
+        w5.dstBinding = 5; w5.pImageInfo = &cg;
+        const VkWriteDescriptorSet all[6] = {w, wp, wh, wn, w4, w5};
+        vkUpdateDescriptorSets(ctx_.device, 6, all, 0, nullptr);
     }
     return true;
 }
 
-// A JPEG decoded into an RGBA image with a box-filtered mip chain.
-static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char* data, size_t size) {
-    int w = 0, h = 0, n = 0;
-    unsigned char* px = stbi_load_from_memory(data, int(size), &w, &h, &n, 4);
-    if (!px) return false;
+// An RGBA8 image with a box-filtered mip chain.
+static bool uploadRgbaMips(VulkanContext& ctx, VulkanImage& img, const uint8_t* px, int w, int h) {
     std::vector<std::vector<uint8_t>> levels{std::vector<uint8_t>(px, px + size_t(w) * h * 4)};
-    stbi_image_free(px);
     for (int lw = w, lh = h; lw > 1 && lh > 1 && levels.size() < 11;) {
         const std::vector<uint8_t>& src = levels.back();
         const int nw = lw / 2, nh = lh / 2;
@@ -212,6 +220,16 @@ static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char
     std::vector<VulkanImage::Level> lv;
     for (const auto& l : levels) lv.push_back({l.data(), l.size()});
     return img.uploadMips(ctx, lv.data(), uint32_t(lv.size()));
+}
+
+// A JPEG decoded into an RGBA image with a box-filtered mip chain.
+static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char* data, size_t size) {
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load_from_memory(data, int(size), &w, &h, &n, 4);
+    if (!px) return false;
+    const bool ok = uploadRgbaMips(ctx, img, px, w, h);
+    stbi_image_free(px);
+    return ok;
 }
 
 // The worn textured hen's albedo and normal map (HenModel), bound to every frame set (bindings 2, 3). Only one hen is
@@ -551,6 +569,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
         };
         drawPass(Pass::Lit, pipes_.lit);
         drawPass(Pass::LitTwoSided, pipes_.litTwoSided);
+        drawPass(Pass::Reflect, pipes_.litReflect); // (lit_reflect.frag)
         drawPass(Pass::UnlitAlpha, pipes_.unlitAlpha);
 
         if (worldTextCount && textReady) { // neon sign words, today's-best gate label
@@ -952,6 +971,7 @@ void Renderer::shutdown() {
     stopRecording();
     stopReadback();
     vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
+    cyberSurface_.destroy(); cyberGlow_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;
     if (linearClamp_) vkDestroySampler(ctx_.device, linearClamp_, nullptr);

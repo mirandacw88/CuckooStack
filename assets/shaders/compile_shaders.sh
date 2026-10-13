@@ -14,7 +14,7 @@ compile() { # src out
   else echo "no shader compiler: install the Vulkan SDK, or set GLSLANG / GLSLC"; exit 1; fi
 }
 mkdir -p "$DIR/generated" "$DIR/spv"
-for src in sky.vert sky.frag lit.vert lit.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag; do
+for src in sky.vert sky.frag lit.vert lit.frag lit_reflect.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag; do
   sym="${src//./_}"
   compile "$src" "$DIR/spv/$src.spv"
   cmake -DINPUT="$DIR/spv/$src.spv" -DOUTPUT="$DIR/generated/$sym.cpp" -DSYMBOL="$sym" -DSOURCE_NAME="$src" -P "$DIR/../../cmake/EmbedSpirv.cmake"

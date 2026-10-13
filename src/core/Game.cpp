@@ -1,4 +1,6 @@
 #include "Game.h"
+
+#include <cstdio>
 #include "EndCard.h"
 #include "Links.h"
 #include "Log.h"
@@ -75,6 +77,7 @@ Game::Game(const GameServices& services)
     const Grade& g = grade(0);
     fog_ = g.fog; skyMid_ = g.mid; skyBot_ = g.bot; skyHaze_ = g.haze; pinkLight_ = g.light;
     loadRecords();
+    if (profile_.flag("low_end")) setLite(true); // found low-end on an earlier launch: lite from the first frame
     svc_.audio->setMuted(muted_);
     if (!fonts_.build()) CS_LOGE("Font atlas could not be built; text disabled");
     text_ = std::make_unique<TextLayout>(fonts_);
@@ -324,6 +327,31 @@ void Game::pressAt(float px, float py) {
         if (hits_[i].r.hit(px, py)) { auto fn = hits_[i].fn; fn(); return; }
     if (screen_ != Screen::None) return; // modal: taps outside its controls do nothing
     press();
+}
+
+std::string Game::frameSummary() const {
+    const RenderList& l = list_;
+    auto count = [&](Pass p) { size_t n = 0; for (const auto& v : l.buckets[size_t(p)]) n += v.size(); return n; };
+    size_t cubes = 0, crates = 0;
+    for (const Instance& in : l.buckets[size_t(Pass::Lit)][size_t(MeshId::Box)]) {
+        const int pat = int(in.params.z + 0.5f);
+        cubes += pat == int(Pattern::Hazard);
+        crates += pat == int(Pattern::Container);
+    }
+    const char* st = state_ == State::Title ? "title" : state_ == State::Play ? "play" : "dead";
+    char b[320];
+    std::snprintf(b, sizeof b, "%s%s%s%s%s cubes %zu crates %zu lit %zu 2side %zu refl %zu alpha %zu add %zu | sparks %zu smoke %zu | "
+                  "debris %zu smash %d fireworks %zu hud %zu",
+                  st, surging_ ? " SURGE" : "", clearT_ >= 0 ? " FINISH" : "", screen_ != Screen::None ? " panel" : "", lite_ ? " lite" : "",
+                  cubes, crates, count(Pass::Lit), count(Pass::LitTwoSided), count(Pass::Reflect), count(Pass::UnlitAlpha), count(Pass::UnlitAdd),
+                  l.particlesAdd.size(), l.particlesSmoke.size(), debris_.size(), liveSmashDebris(), fireworks_.size(), l.hud.size());
+    return b;
+}
+
+void Game::setLite(bool on) {
+    lite_ = on;
+    world_.setRain(!on);
+    if (profile_.flag("low_end") != on) profile_.setFlag("low_end", on);
 }
 
 bool Game::tapButton(const std::string& label) {
@@ -1556,7 +1584,7 @@ void Game::updateCamera(float rdt) {
 
 void Game::updateAmbient(float dt) {
     // rain splashes, neon dust, vent steam
-    rainAcc_ += dt * 75;
+    rainAcc_ += lite_ ? 0.f : dt * 75; // (lite mode: no rain, no splashes)
     while (rainAcc_ > 1) {
         rainAcc_--;
         const float rx = camX_ + rng_.range(-8, 12), rz = rng_.range(-1.4f, 6.5f);
@@ -1587,9 +1615,9 @@ void Game::buildRenderList() {
     const float x = float(x_);
 
     // walls: crates and hazard bales, tinted per block
-    const glm::vec3 wallRim = hexColor("#ffb020");
+    const glm::vec3 wallRim = hexColor("#29e7ff"); // a cool cyan edge, with the neon trims (was amber)
     LitMaterial crate; crate.color = glm::vec3(1.f); crate.emissive = glm::vec3(1.4f + pz * 0.36f); crate.metalness = 0.45f; crate.roughness = 0.5f;
-    crate.rimColor = wallRim; crate.rimStrength = 0.55f; crate.rimPow = 3.f; crate.pattern = Pattern::Container;
+    crate.rimColor = wallRim; crate.rimStrength = 0.25f; crate.rimPow = 3.f; crate.pattern = Pattern::Container;
     LitMaterial hay = crate; hay.emissive = glm::vec3(1.3f + pz * 0.3f); hay.metalness = 0.2f; hay.roughness = 0.55f; hay.pattern = Pattern::Hazard;
     const glm::vec3 blockSize{Uf * 0.985f, Uf * 0.985f, DEPTH};
     for (const Level::Block& b : level_.blocks) {
@@ -1672,6 +1700,11 @@ void Game::buildRenderList() {
     // little (x1.3) so the oval, pointy-ended egg silhouette reads (alternating which end points forward). The neon
     // ring runs lengthwise around the shell, so the roll reads as a spinning stripe. Sized (x1.12) so the round side
     // fills its U-tall slot.
+    // the hen and her stack are mirrored in the wet street whenever it's the street below her: running on it, in the
+    // air above it (dropping off a wall, hopping) and falling to it after a crash (her shards too); not over a wall
+    // (blocks aren't wet). The title screen too.
+    const bool onStreet = !lite_ && level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0;
+    const auto stackMark = out.litMark();
     for (size_t i = 0; i < eggs_.size(); ++i) {
         const Egg& e = eggs_[i];
         const float sgn = i % 2 ? 1.f : -1.f;
@@ -1682,6 +1715,7 @@ void Game::buildRenderList() {
         out.add(Pass::Lit, MeshId::Egg) = makeLit(m, egg);
         out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(m * compose({}, {1.02f, 1.17f, 1.02f}), ringCol[e.ring]);
     }
+    if (onStreet) out.reflectSince(stackMark);
     LitMaterial shell; shell.color = hexColor("#d4dbe8"); shell.metalness = 1; shell.roughness = 0.24f;
     for (const Debris& d : debris_) {
         switch (d.kind) {
@@ -1700,15 +1734,10 @@ void Game::buildRenderList() {
             makeUnlit(compose(s.pos + glm::vec3(0, 0.01f * s.scale, 0), glm::vec3(0.12f, 0.048f, 0.12f) * s.scale), glow("#f4ff5a", 3), s.k);
     }
 
+    const auto henMark = out.litMark();
     hen_.emit(out);
+    if (onStreet) out.reflectSince(henMark);
 
-    // glow pad under the stack
-    {
-        const glm::vec3 hp = hen_.nodes[hen_.root].pos;
-        const float o = state_ == State::Dead ? (padOpacity_ = std::max(0.f, padOpacity_ - rdt_ * 2)) : (padOpacity_ = 0.85f + std::sin(time_ * 4) * 0.1f);
-        out.add(Pass::UnlitAdd, MeshId::Plane) =
-            makeUnlit(compose({state_ == State::Dead ? x : hp.x, float(baseY_) + 0.02f, 0}, {-kPi / 2, 0, 0}, {2.2f, 1.6f, 1}), glow("#29e7ff", 1.6f), o, Shape::RadialGlow);
-    }
     // today's-best gate
     // the finish line: two neon posts, a checkered banner across the top and a glowing line on the ground
     if (level_.finish() > 0 && std::abs(level_.finish() - camX_) < 40) {
@@ -1759,6 +1788,7 @@ void Game::buildRenderList() {
     // frame constants
     FrameParams& f = out.frame;
     f.view = camera_.view(); f.proj = camera_.proj(); f.cameraPos = camera_.position();
+    f.lite = lite_;
     f.fogColor = fog_; f.fogDensity = 0.016f;
     f.skyTop = hexColor("#03030c"); f.skyMid = skyMid_; f.skyBot = skyBot_; f.skyHaze = skyHaze_;
     f.moonDir = glm::normalize(glm::vec3(0.35f, 0.42f, -0.84f));

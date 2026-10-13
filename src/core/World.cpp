@@ -63,7 +63,7 @@ void World::update(float dt, float time, float camX, float camY, float speed, bo
     const float k = playing ? clampf((speed - 9.f) / 2.6f, 0.f, 1.f) : 0.f;
     speedOpacity_ += (k * 0.32f - speedOpacity_) * std::min(1.f, dt * 3.f);
     speedSegs_.clear();
-    if (speedOpacity_ > 0.01f)
+    if (speedOpacity_ > 0.01f && rainOn_) // (lite mode: no wind streaks either)
         for (Line& d : speed_) {
             d.x -= speed * 2.4f * dt;
             if (d.x < -14) { d.x += 28; d.y = rng_.range(-2, 5); }
@@ -72,6 +72,7 @@ void World::update(float dt, float time, float camX, float camY, float speed, bo
             speedSegs_.push_back({camX + d.x + len, camY + d.y, d.z});
         }
     for (Drop& d : rain_) {
+        if (!rainOn_) break;
         d.p.y -= 22 * dt; d.p.x -= 2.5f * dt;
         if (d.p.y < -2) d.p = {rng_.range(-12, 16), rng_.range(17, 21), rng_.range(-9, 10)};
     }
@@ -216,7 +217,7 @@ void World::emit(RenderList& out, float camX, float /*camY*/, float time, float 
         const glm::vec3 rainCol = hexColor("#a8dcff");
         const float tilt = -std::atan2(0.06f, 0.45f), len = std::sqrt(0.06f * 0.06f + 0.45f * 0.45f);
         for (const Drop& d : rain_)
-            out.add(Pass::UnlitAlpha, MeshId::Plane) =
+            if (rainOn_) out.add(Pass::UnlitAlpha, MeshId::Plane) =
                 makeUnlit(compose(rainOrigin_ + d.p + glm::vec3(0.03f, 0.225f, 0), {0, 0, tilt}, {0.014f, len, 1}), rainCol, 0.24f);
         const glm::vec3 lineCol = glow("#d8f6ff", 1.f);
         for (size_t i = 0; i + 1 < speedSegs_.size(); i += 2) {
