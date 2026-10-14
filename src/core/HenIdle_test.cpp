@@ -244,5 +244,5 @@ int main() {
     jumps();
     game();
     grounded();
-    return test::finish("hen idle");
+    return test::finish("HenIdle");
 }

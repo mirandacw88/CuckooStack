@@ -169,7 +169,7 @@ track is built in).
 Every tuning value is in `src/core/Surge.h`. The logic is in `src/core/GameSurge.cpp`, the party music in
 `Synth::schedulePartyStep`, and the party kick map in `BeatClock`.
 
-- **Tests**: `tests/surge_test.cpp` (ctest `surge`) drives the real `Game` and checks the acceptance rules:
+- **Tests**: `src/core/GameSurge_test.cpp` (ctest `GameSurge`) drives the real `Game` and checks the acceptance rules:
   invulnerability, smashing, ×1.35 speed, the 5 s timer plus 0.7 s grace, death afterwards, missed balls keeping
   the count, and a clean reset on restart.
 - **Debug trigger** (debug builds only), which starts a surge 4 m into every run:

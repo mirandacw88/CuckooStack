@@ -1,6 +1,7 @@
 // Android entry point (GameActivity + native_app_glue): lifecycle, touch input, storage, haptics and the
 // explicit diagnostic exit for devices whose Vulkan loader or driver cannot run the game.
 #include "AndroidAudio.h"
+#include "AndroidLogic.h"
 #include "AndroidReplay.h"
 #include "AndroidWindow.h"
 #include "../../core/FileStorage.h"
@@ -400,26 +401,17 @@ struct AppState {
     std::chrono::steady_clock::time_point lastFrameEnd = std::chrono::steady_clock::now();
 };
 
-float density(android_app* app) {
-    const int dpi = AConfiguration_getDensity(app->config);
-    return dpi > 0 ? float(dpi) / 160.f : 1.f;
-}
+float density(android_app* app) { return cs::android::densityFromDpi(AConfiguration_getDensity(app->config)); }
 
 void updateInsets(AppState& s) {
     ARect bars{}, cutout{};
     GameActivity_getWindowInsets(s.app->activity, GAMECOMMON_INSETS_TYPE_SYSTEM_BARS, &bars);
     GameActivity_getWindowInsets(s.app->activity, GAMECOMMON_INSETS_TYPE_DISPLAY_CUTOUT, &cutout);
-    const float d = density(s.app);
-    if (s.game) s.game->setSafeInsets(float(std::max(bars.top, cutout.top)) / d, float(std::max(bars.bottom, cutout.bottom)) / d);
+    const cs::android::Insets in = cs::android::insetsInPoints(bars.top, bars.bottom, cutout.top, cutout.bottom, density(s.app));
+    if (s.game) s.game->setSafeInsets(in.top, in.bottom);
 }
 
-// PowerManager thermal status (0 none, 1 light, 2 moderate, 3 severe, 4+ critical) -> quality level
-cs::quality::Thermal thermalFromStatus(int status) {
-    if (status >= 4) return cs::quality::Thermal::Critical;
-    if (status == 3) return cs::quality::Thermal::Serious;
-    if (status == 2) return cs::quality::Thermal::Fair;
-    return cs::quality::Thermal::Nominal;
-}
+using cs::android::thermalFromStatus; // (AndroidLogic.h)
 
 // Ask the compositor for a lower display refresh where supported (API 30+), so the GPU isn't driven at 90/120 Hz.
 // The display's refresh rate for this window. FIXED_SOURCE: the content really is fps (a game locked to it), so the

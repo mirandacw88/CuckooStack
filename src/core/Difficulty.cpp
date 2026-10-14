@@ -1,6 +1,8 @@
 #include "Difficulty.h"
 #include "Math.h"
 
+#include <cmath>
+#include <cstdlib>
 #include <sstream>
 
 namespace cs {
@@ -31,10 +33,23 @@ Dda::Dda(IStorage* storage) : storage_(storage) {
     if (!raw) return;
     std::istringstream in(*raw);
     std::string deaths;
-    in >> skill_ >> assist_ >> runs_ >> day_ >> zoneC_ >> zoneS_ >> deaths;
-    if (day_ == "-") day_.clear();
+    float skill = 0.f, assist = 0.f, zoneC = 0.f, zoneS = 0.f;
+    int runs = 0;
+    std::string day;
+    // a damaged save (hand-edited, cut short) starts over instead of crashing the game at every launch
+    if (!(in >> skill >> assist >> runs >> day >> zoneC >> zoneS)) return;
+    in >> deaths;
+    if (!std::isfinite(skill) || !std::isfinite(assist) || !std::isfinite(zoneC) || !std::isfinite(zoneS)) return;
+    skill_ = std::max(0.f, skill); assist_ = clampf(assist, -0.35f, 0.55f); runs_ = std::max(0, runs);
+    day_ = day == "-" ? std::string() : day;
+    zoneC_ = zoneC; zoneS_ = clampf(zoneS, 0.f, 1.f);
     std::istringstream d(deaths);
-    for (std::string tok; std::getline(d, tok, ',');) if (!tok.empty()) deaths_.push_back(std::stoi(tok));
+    for (std::string tok; std::getline(d, tok, ',');) {
+        char* end = nullptr;
+        const long v = std::strtol(tok.c_str(), &end, 10);
+        if (!tok.empty() && end && *end == '\0' && v >= 0 && v < 1000000) deaths_.push_back(int(v));
+    }
+    if (deaths_.size() > 8) deaths_.erase(deaths_.begin(), deaths_.end() - 8);
 }
 
 void Dda::save() const {

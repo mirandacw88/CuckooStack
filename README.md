@@ -26,7 +26,7 @@ src/platform/            PlatformSurface + Android (ANativeWindow) / iOS (CAMeta
 platforms/android/       Gradle project, manifest, CuckooActivity (GameActivity)
 platforms/ios/           Info.plist, launch screen, Xcode project generator
 third_party/             volk, Vulkan-Headers, VMA, glm (pinned; see VERSIONS.txt)
-tests/                   course-parity test against the web build
+tests/                   shared test fakes (TestUtil.h), cross-file tests, course / audio parity tools
 ```
 
 ## Build
@@ -119,9 +119,11 @@ reminders (13+, opt-in), challenge links and daily leaderboards.
 cd build && ctest
 ```
 
-Headless checks of the meta-game: ad rules, economy and purchases, streak, missions, daily drop, reminders, age
-screen and challenge links, plus the soundtrack and Share Replay (`tests/*_test.cpp`; on macOS also the iOS video
-recorder, `tests/replay_recorder_test.mm`).
+Headless checks, one program per tested file. **Each test sits next to the file it tests**: `src/core/Camera.cpp` is
+tested by `src/core/Camera_test.cpp` (ctest name `Camera`). Register a new one in `CMakeLists.txt` with
+`cs_test(src/core/Camera)`; the shared fakes are in `tests/TestUtil.h`. On macOS the iOS video recorder is tested
+too (`src/platform/ios/IOSVideoRecorder_test.mm`). Tests that span many files stay in `tests/`. The app builds
+list their sources by name, so test files never end up in the game.
 
 **Every commit runs them.** A pre-commit hook (`.githooks/pre-commit`) builds the desktop target and runs `ctest`;
 a failing build or test stops the commit. Turn it on once per clone:
@@ -130,7 +132,7 @@ a failing build or test stops the commit. Turn it on once per clone:
 git config core.hooksPath .githooks
 ```
 
-GitHub Actions runs the same build and tests on every push and pull request (`.github/workflows/tests.yml`, macOS).
+GitHub Actions runs the same build and tests when a pull request is opened and on every push to it (`.github/workflows/tests.yml`, macOS).
 
 ```bash
 tests/run_level_parity.sh

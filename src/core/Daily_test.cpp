@@ -1,6 +1,7 @@
 // Streak, missions, daily drop, level and the age screen (Daily.h), with a clock moved by hand.
+// (Reminder planning: Reminders_test.cpp.)
 #include "TestUtil.h"
-#include "core/Reminders.h"
+#include "core/Daily.h"
 
 #include <set>
 
@@ -102,32 +103,6 @@ int main() {
         Game g3(s);
         check(g3.screen() != Game::Screen::AgeGate, "asked only once");
     }
-    {   // ---- reminders
-        FakeClock clock; // 2026-10-08 10:00
-        Tuning t;
-        ReminderState st;
-        check(planReminders(clock, t, st).empty(), "reminders off: nothing planned");
-        st.enabled = true; st.usualHour = 23; st.streak = 5; st.playedToday = false;
-        auto r = planReminders(clock, t, st);
-        bool oneADay = true, quiet = true;
-        std::set<int64_t> days;
-        for (const Reminder& x : r) {
-            oneADay &= days.insert(clock.localMidnight(x.at)).second;
-            const int h = clock.localHour(x.at);
-            quiet &= h >= t.notifQuietEnd && h < t.notifQuietStart;
-        }
-        check(!r.empty() && oneADay, "at most one reminder a day");
-        check(quiet, "never in quiet hours (a 23:00 player gets theirs before 21:00)");
-        check(r.front().at == clock.localMidnight(clock.now()) + t.notifStreakHour * 3600, "streak about to end: a reminder this evening");
-        st.playedToday = true;
-        check(planReminders(clock, t, st).front().at > clock.localMidnight(clock.now()) + 86400 - 1, "played today: no streak warning");
-        st.ignored = 3;
-        auto b = planReminders(clock, t, st);
-        check(b.size() == 2, "3 ignored in a row: only every third day");
-        clock.t = clock.localMidnight(clock.now()) + 20 * 3600; // 20:00, after the streak hour
-        st.ignored = 0; st.playedToday = false;
-        check(planReminders(clock, t, st).front().at >= clock.localMidnight(clock.now()) + 86400, "too late today: nothing tonight");
-    }
     {   // ---- challenge links
         FakeStorage st = FakeStorage::ready();
         FakeClock clock;
@@ -156,5 +131,71 @@ int main() {
         g4.openLink("cuckoostack://c?l=1&m=50");
         check(g4.challengeMeters() == 0, "children: challenge links are ignored");
     }
-    return finish("daily");
+    {   // ---- progression: XP to the next level, several levels at once, persistence
+        FakeStorage st;
+        Tuning t;
+        Progression p(&st, t);
+        check(p.level() == 1 && p.xpToNext() == t.levelBaseXp && p.fraction() == 0.f, "level 1: base XP to the next");
+        check(p.add(0) == 0 && p.add(-5) == 0 && p.xp() == 0, "no XP for nothing (or negative)");
+        check(p.add(t.levelBaseXp / 2) == 0 && std::abs(p.fraction() - 0.5f) < 0.01f, "half way to level 2");
+        const int need = (t.levelBaseXp - t.levelBaseXp / 2) + (t.levelBaseXp + t.levelStepXp) + 10;
+        check(p.add(need) == 2 && p.level() == 3 && p.xp() == 10, "enough XP for two levels: both, with the rest carried");
+        check(p.xpToNext() == t.levelBaseXp + 2 * t.levelStepXp, "each level needs a step more XP");
+        Progression again(&st, t);
+        check(again.level() == 3 && again.xp() == 10, "level and XP survive a relaunch");
+        again.debugSetLevel(20);
+        check(again.level() == 20 && again.xp() == 0, "developer: jump to a level");
+    }
+    {   // ---- missions: all done, the bonus, every description
+        FakeStorage st;
+        FakeClock clock;
+        Missions m(&st, &clock);
+        check(!m.allDone() && !m.bonusClaimed(), "a new day's missions: none done");
+        for (const Mission& x : m.list()) {
+            if (x.kind == MissionKind::Distance) m.recordDistance(x.target); else m.record(x.kind, x.target);
+        }
+        check(m.allDone(), "all three done");
+        m.claimBonus();
+        Missions again(&st, &clock);
+        check(again.bonusClaimed() && again.allDone(), "the bonus claim survives a relaunch");
+        clock.nextDay();
+        again.refresh();
+        check(!again.bonusClaimed() && !again.allDone(), "a new day: new missions, bonus available again");
+        bool described = true;
+        for (int k = 0; k < int(MissionKind::Count); ++k)
+            for (int target : {1, 3}) {
+                const std::string d = Missions::describe({MissionKind(k), target});
+                described = described && !d.empty() && d.find("surge") == std::string::npos;
+            }
+        check(described, "every mission kind has a description (none say \"surge\")");
+    }
+    {   // ---- profile: sessions, install day, the usual hour, flags and counters
+        FakeStorage st;
+        FakeClock clock; // 10:00 on 2026-10-08
+        {
+            Profile p(&st, &clock);
+            check(p.sessions() == 0 && p.daysSinceInstall() == 0 && p.usualHour() == 19, "a new profile: no sessions, usual hour 19 by default");
+            p.sessionStarted();
+            clock.t += 9 * 3600; p.sessionStarted(); // 19:00
+            clock.nextDay(); p.sessionStarted();      // 19:00 the next day
+            check(p.sessions() == 3 && p.installDay() == civilDay("2026-10-08") && p.daysSinceInstall() == 1, "sessions counted from the install day");
+            check(p.usualHour() == 19, "the usual hour: when most sessions start");
+            p.setFlag("replays", true);
+            p.setCounter("starter_seen", 2);
+        }
+        Profile again(&st, &clock);
+        check(again.sessions() == 3 && again.flag("replays") && again.counter("starter_seen") == 2 && !again.flag("other"),
+              "sessions, flags and counters survive a relaunch");
+    }
+    {   // ---- streak: played today, the developer shortcut
+        FakeStorage st;
+        FakeClock clock;
+        Streak s(&st, &clock);
+        check(!s.playedToday(), "not played yet today");
+        s.played();
+        check(s.playedToday() && s.count() == 1, "played: counts today");
+        s.debugSet(5, 2);
+        check(s.status() == Streak::Status::Saveable, "developer: a 5-day streak that missed yesterday is saveable");
+    }
+    return finish("Daily");
 }

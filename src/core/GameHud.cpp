@@ -487,15 +487,19 @@ void Game::buildHud() {
         if (screen_ == Screen::Shop) {
             list_.hud.erase(list_.hud.begin() + hudMark, list_.hud.end());
             list_.hudKind.erase(list_.hudKind.begin() + hudMark, list_.hudKind.end());
-            hits_.erase(hits_.begin() + hitMark, hits_.end());
         }
+        // an open screen is modal: the overlay under it still shows (dimmed) but none of its buttons can be tapped
+        if (screen_ != Screen::None) hits_.erase(hits_.begin() + hitMark, hits_.end());
         // run boost badge (top-left, under the score) so the player sees what's active
         if (state_ == State::Play && runBoost_ != Boost::None && run_.seconds < 6.f) {
             const float a = 1.f - seg(run_.seconds, 4.5f, 6.f);
             const glm::vec2 c{16 + 20, safeTop_ + 16 + 22};
             hudSprite(runBoost_ == Boost::Surge ? Icon::Rocket : Icon::EggBolt, c, 40 * (1.f + 0.08f * std::sin(time_ * 6)), 0, glm::vec3(1.f), a);
         }
+        const size_t barMark = hits_.size();
         if (state_ != State::Play && screen_ != Screen::AgeGate) hudTopBar();
+        // ...nor the top bar under a dimmed panel (the full-screen shop and locker keep it)
+        if (screen_ != Screen::None && screen_ != Screen::Shop && screen_ != Screen::Locker) hits_.erase(hits_.begin() + barMark, hits_.end());
         if (screen_ != Screen::None) hudScreen();
         hudToasts(); // above panels, so news like "Beat Sam: 412 m" is never dimmed
         hudCoinFx();

@@ -1,4 +1,4 @@
-// Per-frame constants shared by every scene shader. Mirrors GpuFrame in Renderer.cpp (std140).
+// Per-frame constants shared by every scene shader. Mirrors GpuFrame in RendererLogic.h (std140; RendererLogic_test checks it).
 layout(set = 0, binding = 0, std140) uniform Frame {
     mat4 view;
     mat4 proj;

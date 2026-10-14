@@ -112,5 +112,18 @@ int main() {
         check(g.wallet().coins() >= 0 && g.wallet().lifetimeEarned() >= 0, "run coins never negative");
         (void)t;
     }
-    return finish("economy");
+    {   // ---- grants and affordability
+        FakeStorage st;
+        Wallet w(&st, nullptr);
+        check(w.canAfford(0) && !w.canAfford(1), "an empty wallet can afford nothing (but free)");
+        w.earn(150, "test");
+        check(w.canAfford(150) && !w.canAfford(151), "canAfford: up to the balance");
+        check(!w.owns("hen_gold"), "not owned yet");
+        w.grant("hen_gold");
+        w.grant("hen_gold");
+        check(w.owns("hen_gold") && w.coins() == 150, "grant: owned for free (twice is harmless)");
+        Wallet again(&st, nullptr);
+        check(again.owns("hen_gold") && again.coins() == 150, "grants and coins survive a relaunch");
+    }
+    return finish("Economy");
 }

@@ -1,7 +1,7 @@
 // The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop, restart vs revive; beat grid for the visuals;
 // the finish-line applause and firework bursts.
 #include "TestUtil.h"
-#include "../src/core/audio/Synth.h"
+#include "core/audio/Synth.h"
 
 #include <cmath>
 #include <vector>
@@ -23,7 +23,7 @@ double rms(const std::vector<float>& v) { double e = 0; for (float x : v) e += d
 int main() {
     const audio::TrackInfo* run = audio::musicTrackInfo(0);
     check(run && !audio::musicTrackInfo(1), "one track is built in");
-    if (!run) return test::finish("music");
+    if (!run) return test::finish("Music");
     check(std::abs(run->bpm - 155) < 0.5, "beat grid: 155 BPM");
 
     audio::Synth s(48000);
@@ -108,5 +108,5 @@ int main() {
     float peak = 0;
     for (float x : out) peak = std::max(peak, std::abs(x));
     check(rms(out) > 0.05 && peak < 1.f, "firework bursts are audible and don't clip");
-    return test::finish("music");
+    return test::finish("Music");
 }
