@@ -22,7 +22,7 @@ void Tuning::load(IRemoteConfig* rc) {
     in("free_coin_ads", freeCoinsPerDay); in("free_coin_cd", freeCoinsCooldown); in("reroll_ads", rerollAdsPerDay);
     in("featured_ads", featuredAdsNeeded); in("tryon_runs", tryOnRuns); in("double_min", doubleCoinsMin);
     in("xp_m", xpPerMeter); in("xp_mission", xpPerMission); in("lvl_base", levelBaseXp); in("lvl_step", levelStepXp);
-    fl("dda_newbie", newbieBoost); in("dda_newbie_runs", newbieRuns); in("droid_raids", droidRaids);
+    fl("dda_newbie", newbieBoost); in("dda_newbie_runs", newbieRuns); in("droid_raids", droidRaids); in("droid_level", droidFirstLevel);
     in("notif_quiet_start", notifQuietStart); in("notif_quiet_end", notifQuietEnd); in("notif_streak_hour", notifStreakHour);
     fl("event_coin_mult", eventCoinMult);
     eventCoinMult = std::clamp(eventCoinMult, 1.f, 5.f);

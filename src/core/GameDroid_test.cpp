@@ -9,6 +9,7 @@
 #include "core/Level.h"
 
 #include <cmath>
+#include <string>
 
 using namespace cs;
 using namespace test;
@@ -167,8 +168,12 @@ void raid(int shots) {
     Env env;
     env.ads.state = RewardedState::Unavailable;
     Game g(env.svc());
+    g.debugSeed(uint64_t(shots));
     Bot bot(&env.st);
     bot.spare = 3;
+    step(g, 0.2f);
+    const float titleScale = glm::length(glm::vec3(bucket(g, Pass::Lit, MeshId::DroidBody)[0].model[0]));
+    float raidScale = 0;
     g.press();
     for (int i = 0; i < 60 * 60 && !(g.state() == Game::State::Play && g.eggCount() > shots && !g.droidVisible() && henX(g) > 15); ++i) {
         bot.tick(g, 1.f / 60);
@@ -187,7 +192,7 @@ void raid(int shots) {
     int beamsBefore = 0;
     float thick = 0;
     glm::vec3 relPrev{0.f};
-    bool beamOnPrev = false, still = true, aimed = false, lastEgg = false, high = true, smooth = true, shadow = false;
+    bool inView = true, beamOnPrev = false, still = true, aimed = false, high = true, smooth = true, shadow = false;
     glm::vec3 prev = g.droidPosition();
     for (int i = 0; i < 60 * 4 && g.droidRaiding() && g.state() == Game::State::Play; ++i) {
         bot.tick(g, 1.f / 60);
@@ -196,17 +201,18 @@ void raid(int shots) {
         if (env.audio.count(Sfx::DroidLaser) > lasers) {
             lasers = env.audio.count(Sfx::DroidLaser);
             zapped += eggs - g.eggCount() >= 1;
-            lastEgg = lastEgg || g.eggCount() < 1;
         }
         if (!g.droidRaiding()) break;
         if (g.droidShotsFired() == shots) bot.spare = 0; // (done: back to just enough)
         const glm::vec3 p = g.droidPosition();
+        if (!bucket(g, Pass::Lit, MeshId::DroidBody).empty()) raidScale = glm::length(glm::vec3(bucket(g, Pass::Lit, MeshId::DroidBody)[0].model[0]));
         smooth = smooth && glm::length(p - prev) < 1.f; // (no jumps: under 60 m/s, even zipping off)
         prev = p;
         const int b = beams(g);
         if (b) { // while a beam is on, it holds still (relative to the hen, who keeps running)
             const glm::vec3 rel = p - glm::vec3(henX(g), 0, 0);
             if (beamOnPrev) still = still && glm::length(rel - relPrev) < 0.02f;
+            inView = inView && rel.x > 0.5f && rel.z > 0.3f; // (ahead of her and toward the camera: on screen)
             relPrev = rel;
         }
         beamOnPrev = b > 0;
@@ -221,10 +227,11 @@ void raid(int shots) {
     }
     check(smooth, "it flies on a smooth path");
     check(lasers == shots && zapped == shots, shots == 2 ? "two shots: two eggs gone" : "one shot: one egg gone");
-    check(!lastEgg, "...never her last egg");
     check(aimed, "before it fires, a sight line marks the egg it's aiming at");
     check(maxBeams >= 1 && flashes == shots, shots == 2 ? "...two lasers" : "...one laser");
     check(still, "...it holds still while it fires (the beam doesn't drift off its eye)");
+    check(inView, "...from a spot in view: above her, a little ahead and toward the camera");
+    check(std::abs(raidScale - titleScale) < 1e-3f, "it raids at the same size as on the title screen");
     check(thick > 0.5f, "...a big one: its glow over half a metre across");
     check(high, "it fires circling high over the hen");
     check(shadow, "its shadow follows it below");
@@ -232,6 +239,24 @@ void raid(int shots) {
     check(!g.droidRaiding() && !g.droidVisible() && g.state() == Game::State::Play, "then it zips off, and she runs on");
     for (int i = 0; i < 60 && g.state() == Game::State::Play; ++i) { bot.tick(g, 1.f / 60); g.update(1.0 / 60.0); }
     check(g.state() == Game::State::Play && bucket(g, Pass::Lit, MeshId::DroidBody).empty(), "...and it's not drawn any more");
+}
+
+void fromLevel5() {
+    // levels 1-4: no raids; from level 5: one (its introduction), from level 7: one or two
+    for (int level = 1; level <= 8; ++level) {
+        size_t most = 0, least = 9;
+        for (int run = 0; run < 12; ++run) {
+            Env env;
+            Campaign(&env.st).debugSetLevel(level);
+            Game g(env.svc());
+            g.debugSeed(uint64_t(run + 1));
+            g.press();
+            most = std::max(most, g.droidRaidPlan().size()); least = std::min(least, g.droidRaidPlan().size());
+        }
+        if (level < 5) check(most == 0, ("level " + std::to_string(level) + ": no droid raids").c_str());
+        else if (level < 7) check(least == 1 && most == 1, ("level " + std::to_string(level) + ": one raid").c_str());
+        else check(least >= 1 && most == 2, ("level " + std::to_string(level) + ": one or two raids").c_str());
+    }
 }
 
 void needsTwoEggs() {
@@ -246,30 +271,40 @@ void needsTwoEggs() {
     }
     // the bot's runs on level 1: the raids it plans fall due mid-course, the droid strikes only with 2 eggs or more,
     // and the course stays clearable
-    int raids = 0, cleared = 0;
+    int raids = 0, killed = 0, silent = 0;
     bool fair = true, midCourse = true;
     for (int run = 0; run < 6; ++run) {
         Env env;
         env.ads.state = RewardedState::Unavailable;
+        Campaign(&env.st).debugSetLevel(5); // (its first level)
         Game g(env.svc());
+        g.debugSeed(uint64_t(run + 1));
         Bot bot(&env.st);
         g.press();
-        for (double x : g.droidRaidPlan()) midCourse = midCourse && x > 40 && x < 270;
+        const double finish = bot.course.finish();
+        for (double x : g.droidRaidPlan()) midCourse = midCourse && x > 0.15 * finish && x < 0.9 * finish;
         bool was = false;
         int eggsBefore = 0;
+        float sinceZap = 99;
+        int zaps = 0, lasersAtRaid = 0;
         for (int i = 0; i < 60 * 90 && g.state() == Game::State::Play; ++i) {
             bot.tick(g, 1.f / 60);
             eggsBefore = g.eggCount();
             g.update(1.0 / 60.0);
-            if (g.droidRaiding() && !was) { ++raids; fair = fair && eggsBefore >= 2; }
+            if (g.droidRaiding() && !was) { ++raids; fair = fair && eggsBefore >= 2; lasersAtRaid = env.audio.count(Sfx::DroidLaser); }
+            if (!g.droidRaiding() && was && g.state() == Game::State::Play && !g.surgeStatus().surging)
+                silent += env.audio.count(Sfx::DroidLaser) == lasersAtRaid;
             was = g.droidRaiding();
+            sinceZap = env.audio.count(Sfx::DroidLaser) > zaps ? 0.f : sinceZap + 1.f / 60;
+            zaps = env.audio.count(Sfx::DroidLaser);
+            killed += g.state() != Game::State::Play && !g.lastRunCleared() && sinceZap < 0.8f; // (a crash right after a zap: its fault)
         }
-        cleared += g.lastRunCleared();
     }
     check(midCourse, "raids are planned mid-course (not at the start or the finish)");
     check(raids >= 3, "the droid raids the bot's runs");
     check(fair, "...only ever with 2 eggs or more under the hen");
-    check(cleared == 6, "...and the bot still clears level 1 every time (it can re-stack what's zapped)");
+    check(silent == 0, "...and it fires every time it comes (it waits for a safe moment, it doesn't give up)");
+    check(killed == 0, "...and a zap never costs her the run (there's time to re-stack what it takes)");
 }
 
 void comesFromAllAround() {
@@ -278,6 +313,7 @@ void comesFromAllAround() {
     for (int seed = 0; seed < 24; ++seed) {
         Env env;
         Game g(env.svc());
+        g.debugSeed(uint64_t(seed + 1));
         g.press();
         step(g, 0.2f + 0.02f * seed);
         stackUp(g, 3);
@@ -297,6 +333,7 @@ int main() {
     lockerHidesIt();
     raid(1);
     raid(2);
+    fromLevel5();
     needsTwoEggs();
     comesFromAllAround();
     return finish("GameDroid");

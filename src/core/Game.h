@@ -156,7 +156,8 @@ private:
     // its raids on the stack in a run (GameDroid.cpp)
     struct DroidRaid {
         bool on = false, charged = false;
-        float t = 0, orbitT = 0, theta0 = 0, leaving = -1, topY = 0; // orbitT: its circling clock (paused to shoot); topY: the stack top it circles over, eased
+        // orbitT: its circling clock (paused to shoot); topY: the stack top it circles over, eased; lock: 0 circling .. 1 at its firing spot
+        float t = 0, orbitT = 0, theta0 = 0, leaving = -1, topY = 0, lock = 0;
         int shots = 1, fired = 0;
         float fireAt[2] = {0, 0}, beamT[2] = {-1, -1};
         glm::vec3 spawn{0.f}, leaveFrom{0.f}, leaveDir{1.f, 0.f, 0.f}, beamTo[2]{}; // relative to the hen (beamTo: to her x)
@@ -438,6 +439,7 @@ public:
     int droidShotsFired() const { return raid_.fired; }
     const std::vector<double>& droidRaidPlan() const { return raidPlan_; }
     void debugDroidRaid(int shots); // developer menu / tests: a raid now (in a run)
+    void debugSeed(uint64_t seed) { rng_ = FastRandom(seed * 2654435761ull + 1); } // tests: a repeatable run (before press())
     // developer menu: the bot plays (GameBot.cpp)
     struct BotOptions { bool on = false, loop = false, sloppy = false; int spare = 0; };
     BotOptions botOptions() const { return {bot_.on, bot_.loop, bot_.sloppy, bot_.spare}; }

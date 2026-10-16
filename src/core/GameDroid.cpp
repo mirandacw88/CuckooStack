@@ -4,7 +4,7 @@
 // In a run it raids the stack: at a random point of the level, when the hen carries 2 eggs or more, it warps in from
 // any direction, circles high over her while its laser charges, zaps the bottom egg (or two, one beam each), and
 // zips off. Fair by design: only when the meter can replace what it takes, never in OVERDRIVE or past the finish,
-// never her last egg (it circles until she's re-stacked), and not with a wall right at her feet.
+// and never with a wall coming up too soon to re-stack what it takes (it waits, then fires).
 #include "Game.h"
 #include "DroidModel.h"
 
@@ -27,10 +27,10 @@ constexpr float kRaidCharge = 0.55f;  // ... when the laser starts charging
 constexpr float kRaidShot = 1.2f;     // ... first shot (the second 0.3 s later)
 constexpr float kRaidHold = 6.f;      // a shot still held (her last egg, a wall at her feet) by now is called off
 constexpr float kRaidLeave = 0.8f;    // seconds to zip off screen
-constexpr float kRaidHigh = 2.7f;     // circling this high over the hen's stack top
-constexpr float kRaidR = 1.5f, kRaidSpin = 2.4f; // the circle's radius and turn rate (rad/s)
+constexpr float kRaidHigh = 2.7f;     // circling this high over the hen's stack top (clear of her, at full size)
+const glm::vec3 kFireSpot{1.5f, 2.4f, 0.9f}; // where it holds to shoot (over the stack top): above her, a little ahead and toward the camera, always in view
+constexpr float kRaidR = 1.6f, kRaidSpin = 2.2f; // the circle's radius and turn rate (rad/s)
 constexpr float kBeamLife = 0.5f;     // a laser beam: snaps on, holds, then thins out and fades
-constexpr float kRaidScale = 1.1f;    // smaller than on the title: it's busy over the hen's head
 
 // a cheap flicker in 0.75..1.25: two detuned sines (the Blender flames' noise modifier, by eye)
 float flicker(float t, float seed) {
@@ -52,6 +52,7 @@ Game::DroidPose Game::droidPose() const {
     if (raid_.on) {
         const glm::vec3 h = raidAnchor();
         glm::vec3 off = raidOrbit(raid_.orbitT);
+        if (raid_.lock > 0) { const float l = raid_.lock * raid_.lock * (3 - 2 * raid_.lock); off = glm::mix(off, kFireSpot, l); } // gliding to its firing spot
         float k = 1.f;
         if (raid_.t < kRaidEnter) { // flying in from where it warped in
             const float e = raid_.t / kRaidEnter, s = e * e * (3 - 2 * e);
@@ -68,7 +69,7 @@ Game::DroidPose Game::droidPose() const {
         const float pitch = std::asin(std::clamp(-look.y, -1.f, 1.f));
         look.y = 0;
         const glm::vec3 dir = glm::length(look) > 1e-4f ? glm::normalize(look) : glm::vec3(-1, 0, 0);
-        return {pos, dir, 0.25f * std::sin(raid_.t * 3.f), k, pitch, kRaidScale, false};
+        return {pos, dir, 0.25f * std::sin(raid_.t * 3.f), k, pitch, kScale, false}; // (the same size as on the title)
     }
     const glm::vec3 hp = hen_.nodes[hen_.root].pos;
     const float th = droidT_ * kOrbitSpeed;
@@ -100,8 +101,9 @@ bool Game::droidVisible() const {
     return state_ == State::Title || (droidExitT_ >= 0 && droidExitT_ < kExit);
 }
 
-// A run's raids: where along the level the droid tries to strike (one on the first levels, then one or two), spread
-// over its middle; an endless course gets one every 180-260 m
+// A run's raids: none before level 5 (Remote Config "droid_level"), then where along the level the droid tries to
+// strike (one on its first two levels, then one or two), spread over its middle; an endless course gets one every
+// 180-260 m
 void Game::planRaids() {
     raid_ = DroidRaid{};
     raidPlan_.clear();
@@ -112,13 +114,13 @@ void Game::planRaids() {
         for (double x = 20; x < 5000; x += 35) raidPlan_.push_back(x);
         return;
     }
-    if (!tune_.droidRaids) return;
+    if (!tune_.droidRaids || campaign_.level() < tune_.droidFirstLevel) return; // (it's introduced a few levels in)
     const double finish = level_.finish();
     if (finish <= 0) {
         for (double x = 180 + 80 * rng_.next01(); x < 5000; x += 180 + 80 * rng_.next01()) raidPlan_.push_back(x);
         return;
     }
-    const int n = campaign_.level() <= 2 ? 1 : (rng_.next01() < 0.5f ? 2 : 1);
+    const int n = campaign_.level() < tune_.droidFirstLevel + 2 ? 1 : (rng_.next01() < 0.5f ? 2 : 1); // (one raid on its first two levels)
     for (int i = 0; i < n; ++i) {
         // (each in its own part of the level, so two never come close together)
         const double lo = 0.18 + 0.67 * double(i) / n, hi = 0.18 + 0.67 * double(i + 1) / n;
@@ -183,8 +185,10 @@ void Game::updateDroid(float rdt) {
     raid_.t += rdt;
     // it holds still to shoot: from just before a shot until the beam has faded it stops circling (and doesn't sink
     // with the stack), so the beam stays put between its eye and the egg
+    // (it glides from its circle to its firing spot in the 0.45 s before a shot, and back after the beam's gone)
     bool firing = raid_.beamT[0] >= 0 || raid_.beamT[1] >= 0;
-    if (raid_.fired < raid_.shots && raid_.t >= raid_.fireAt[raid_.fired] - 0.3f) firing = true;
+    if (raid_.fired < raid_.shots && raid_.t >= raid_.fireAt[raid_.fired] - 0.45f) firing = true;
+    raid_.lock = std::clamp(raid_.lock + (firing && raid_.leaving < 0 ? rdt / 0.4f : -rdt / 0.5f), 0.f, 1.f);
     if (!firing || raid_.leaving >= 0) {
         raid_.orbitT += rdt;
         raid_.topY += (stackTop(baseY_, eggs_.size()) - raid_.topY) * std::min(1.f, rdt * 3.f);
@@ -197,18 +201,21 @@ void Game::updateDroid(float rdt) {
     }
     auto leave = [&] {
         raid_.leaving = 0;
-        raid_.leaveFrom = raidOrbit(raid_.orbitT);
+        raid_.leaveFrom = glm::mix(raidOrbit(raid_.orbitT), kFireSpot, raid_.lock * raid_.lock * (3 - 2 * raid_.lock));
         const float th = raid_.theta0 + kRaidSpin * raid_.orbitT;
         raid_.leaveDir = glm::normalize(glm::vec3(-std::sin(th), 0.7f, 1.2f * std::cos(th)) + glm::vec3(0.4f, 0, 0));
     };
     if (state_ != State::Play || smashing() || clearT_ >= 0) { leave(); return; } // a crash, OVERDRIVE, the finish: off it goes
     if (!raid_.charged && raid_.t >= kRaidCharge) { raid_.charged = true; sfx(Sfx::DroidCharge); }
     if (raid_.fired < raid_.shots && raid_.t >= raid_.fireAt[raid_.fired]) {
-        // hold fire while she's down to her last egg (it never takes that: it circles until she's re-stacked), or
-        // with a wall right at her feet (no time at all to replace the egg)
-        bool wallAhead = eggs_.size() < 2;
-        for (double d = 0.22; d < 0.7; d += 0.15)
-            wallAhead = wallAhead || level_.heightAt(x_ + d) * U > baseY_ + 0.05;
+        // hold fire if it would leave her short for a wall coming up too soon to re-stack: within a third of a second
+        // (0.8 s if it takes her last egg: she has more to lay back). With eggs to spare it fires even right before a
+        // wall. Otherwise it waits, then fires
+        bool wallAhead = eggs_.empty();
+        const double reach = std::max(1.0, double(speed_) * (eggs_.size() < 2 ? 0.8 : 0.35));
+        const double after = baseY_ + double(eggs_.size() - (eggs_.empty() ? 0 : 1)) * U; // her stack top once it's zapped
+        for (double d = 0.22; d < reach && !wallAhead; d += 0.15)
+            wallAhead = level_.heightAt(x_ + d) * U > after + 0.05;
         if (wallAhead && raid_.t < kRaidHold) {
             raid_.fireAt[raid_.fired] = raid_.t + 0.05f;
             if (raid_.fired + 1 < raid_.shots) raid_.fireAt[raid_.fired + 1] = raid_.fireAt[raid_.fired] + 0.3f;
