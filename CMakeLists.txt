@@ -102,6 +102,18 @@ add_custom_command(OUTPUT ${_hen_cpp}
   COMMENT "Embedding the hen model"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hen_cpp})
+# the title screen's jet droid (scripts/models/export_droid.py, run in Blender): mesh + albedo + normal map
+foreach(_m droid.mesh droid.jpg droid_n.jpg)
+  string(REPLACE "." "_" _sym ${_m})
+  set(_in ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/${_m})
+  set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)
+  add_custom_command(OUTPUT ${_out}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${_in} -DOUTPUT=${_out} -DSYMBOL=${_sym} -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_in} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding the droid ${_m}"
+    VERBATIM)
+  list(APPEND CS_FONT_SOURCES ${_out})
+endforeach()
 # the soundtrack (assets/music, beat grids in src/core/audio/MusicTracks.inc via scripts/audio/analyze_music.py)
 foreach(_m midnight_city_sprint.mp3)
   string(REPLACE "." "_" _sym ${_m})
@@ -148,6 +160,7 @@ add_library(cs_core STATIC
   src/core/Campaign.cpp
   src/core/Daily.cpp
   src/core/Difficulty.cpp
+  src/core/DroidModel.cpp
   src/core/Economy.cpp
   src/core/HenModel.cpp
   src/core/EndCard.cpp
@@ -155,6 +168,7 @@ add_library(cs_core STATIC
   src/core/FileStorage.cpp
   src/core/Font.cpp
   src/core/Game.cpp
+  src/core/GameDroid.cpp src/core/GameBot.cpp
   src/core/GameHud.cpp
   src/core/GameSurge.cpp
   src/core/GameUi.cpp
@@ -430,7 +444,7 @@ if(CS_PLATFORM STREQUAL "desktop")
   endfunction()
 
   foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
-            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud)
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev)
     cs_test(src/core/${f})
   endforeach()
   foreach(f AudioParam Mp3 Music Synth)

@@ -477,6 +477,7 @@ void Game::buildHud() {
     else completeBox_ = glm::vec4(0.f);
 
     hits_.clear();
+    scroll_.active = false; // (a scrolling list re-registers its viewport as it's drawn)
     // overlays rise from the bottom third, where the thumb rests
     if (fonts_.built()) {
         // under the frosted-glass shop only the blurred city should show: the title / game-over overlay still runs

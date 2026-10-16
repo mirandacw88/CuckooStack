@@ -33,6 +33,8 @@ enum class MeshId : uint8_t {
     Plane,       // 1x1 in XY, facing +Z
     RingFlat,    // ring 0.86..1 in XY (shockwaves)
     Circle,      // r=1 disc in XY
+    // the title screen's jet droid (DroidModel.h), one mesh per part, in the droid's own space
+    DroidBody, DroidEye, DroidFanL, DroidFanR, DroidShroud, DroidBackplate, DroidFlame,
     // the hen model (HenModel.h), one mesh per colour region; skinned on the CPU every frame (RenderList::heroVerts)
     HenBody, HenAccent, HenLens, HenShade, HenBeak,
     HenOutfit0,  // outfits with their own textured hen model follow: HenOutfit0 + i (OutfitModels.inc)
@@ -43,7 +45,8 @@ static_assert(kMeshCount <= 255, "MeshId is a uint8_t");
 
 // Procedural surface patterns, evaluated in the lit fragment shader instead of uploading canvas textures.
 // HeroTexture: the textured hen model's albedo (frame set binding 2); warm bright texels glow by the emissive amount
-enum class Pattern : uint8_t { None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5, HeroTexture = 6 };
+// DroidTexture: the title droid's albedo + normal map (bindings 6, 7); its bright neon trims glow by the emissive amount
+enum class Pattern : uint8_t { None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5, HeroTexture = 6, DroidTexture = 7 };
 
 // Shape masks for the unlit shader (replaces the small canvas gradient textures).
 enum class Shape : uint8_t {

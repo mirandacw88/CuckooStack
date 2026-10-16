@@ -1225,6 +1225,13 @@ void Game::hudDev() {
     case 2: cosmetics(Slot::Trail); break;
     case 3: cosmetics(Slot::Crash); break;
     default: {
+        // the bot: it plays your runs (GameBot.cpp)
+        const BotOptions bo = botOptions();
+        auto bot = [this](auto change) { BotOptions o = botOptions(); change(o); debugSetBot(o); };
+        bs.push_back({bo.on ? "Bot plays: on" : "Bot plays: off", bo.on ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.on = !o.on; }); }});
+        bs.push_back({bo.loop ? "Bot keeps going: on" : "Bot keeps going: off", bo.loop ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.loop = !o.loop; }); }});
+        bs.push_back({bo.spare ? "Bot spare eggs: 2" : "Bot spare eggs: 0", bo.spare ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.spare = o.spare ? 0 : 2; }); }});
+        bs.push_back({bo.sloppy ? "Bot sloppy: on" : "Bot sloppy: off", bo.sloppy ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.sloppy = !o.sloppy; }); }});
         bs.push_back({"Rank +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
         bs.push_back({"Rank 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
         bs.push_back({"Rank 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
@@ -1234,6 +1241,8 @@ void Game::hudDev() {
         bs.push_back({"Reset levels", St::Plain, [this] { campaign_.debugReset(); }});
         bs.push_back({debugNearFinish_ ? "Near finish: armed" : "Next run: near finish", debugNearFinish_ ? St::On : St::Plain,
                       [this] { debugNearFinish_ = !debugNearFinish_; }});
+        bs.push_back({debugRaids_ ? "Droid raids: armed" : "Next run: droid raids", debugRaids_ ? St::On : St::Plain,
+                      [this] { debugRaids_ = !debugRaids_; }});
         bs.push_back({"Streak 7 days", St::Plain, [this] { dayStreak_.debugSet(7, 0); }});
         bs.push_back({"Streak missed 1 day", St::Plain, [this] { dayStreak_.debugSet(5, 2); }});
         bs.push_back({"Streak reset", St::Plain, [this] { dayStreak_.debugSet(0, 0); }});
@@ -1266,8 +1275,10 @@ void Game::hudDev() {
     }
     // ---- layout
     constexpr float tabH = 34, rowH = 40, gap = 8;
-    constexpr int kRows = 14; // the Game tab's; every tab gets the same height so the tabs never move under a finger
-    const float contentH = tabH + 14 + 22 + kRows * (rowH + gap);
+    constexpr int kRows = 14; // every tab gets at least this height so the tabs never move under a finger
+    const int rows = int(bs.size() + 1) / 2;
+    const float listH = 22 + std::max(kRows, rows) * (rowH + gap); // the note, then the buttons
+    const float contentH = tabH + 14 + listH;
     const Panel p = hudPanel("Staging only", "Developer", pw, contentH, kVolt, true);
     float y = p.top;
     const char* tabs[] = {"Coins", "Outfits", "Trails", "Crash", "Game"};
@@ -1284,21 +1295,45 @@ void Game::hudDev() {
         uiHit(c, {tw, tabH + 6}, [this, i] { devTab_ = i; });
     }
     y += tabH + 14;
+    // ---- the list scrolls under the tabs: drag (with a fling), or the mouse wheel; items fade out at the edges
+    const float viewTop = y - 4, viewBot = p.c.y + p.size.y / 2 - 46; // (clear of the panel's rounded bottom corners)
+    scroll_.active = true;
+    scroll_.view = {{p.c.x, (viewTop + viewBot) / 2}, {p.size.x / 2, (viewBot - viewTop) / 2}};
+    scroll_.max = std::max(0.f, 22 + rows * (rowH + gap) - (viewBot - viewTop) + 8); // (the real list, not the padding)
+    const float top = y - scroll_.y;
+    auto fade = [&](float cy, float h) { // 1 inside the viewport, to 0 as it slides past an edge
+        return std::clamp(std::min(cy - h / 2 - viewTop, viewBot - (cy + h / 2)) / (h * 0.6f) + 1.f, 0.f, 1.f);
+    };
     TextStyle n = style(FontId::Body, 12, kMuted, 0.02f);
-    n.opacity = p.k;
-    hudText(note, n, p.c.x, y);
-    y += 22;
+    n.opacity = p.k * fade(top + 8, 16);
+    if (n.opacity > 0.01f) hudText(note, n, p.c.x, top);
     const float bw = (inner - gap) / 2;
     for (size_t i = 0; i < bs.size(); ++i) {
-        const glm::vec2 c{p.c.x + (i % 2 ? 1.f : -1.f) * (bw / 2 + gap / 2), y + (i / 2) * (rowH + gap) + rowH / 2};
+        const glm::vec2 c{p.c.x + (i % 2 ? 1.f : -1.f) * (bw / 2 + gap / 2), top + 22 + (i / 2) * (rowH + gap) + rowH / 2};
+        const float f = fade(c.y, rowH);
+        if (f <= 0.01f) continue;
+        const float a = p.k * f;
+        const glm::vec2 size{bw * (0.92f + 0.08f * f), rowH * (0.92f + 0.08f * f)}; // (and shrinks a touch as it goes)
         const glm::vec3 col = bs[i].st == St::On ? kGreen : bs[i].st == St::Owned ? kNeon : bs[i].st == St::Locked ? kMuted : kVolt;
-        hudRect(c, {bw, rowH}, kDeep, 0.9f * p.k, Shape::PillOutline, 1.f);
-        hudRect(c, {bw, rowH}, col, (bs[i].st == St::On ? 1.f : 0.6f) * p.k, Shape::PillOutline, (bs[i].st == St::On ? 2.2f : 1.2f) / rowH);
+        hudRect(c, size, kDeep, 0.9f * a, Shape::PillOutline, 1.f);
+        hudRect(c, size, col, (bs[i].st == St::On ? 1.f : 0.6f) * a, Shape::PillOutline, (bs[i].st == St::On ? 2.2f : 1.2f) / size.y);
         TextStyle t = style(FontId::BodyBold, 12, bs[i].st == St::Locked ? kMuted : kText, 0.04f);
-        t.opacity = p.k;
+        t.opacity = a;
         hudText(bs[i].label, t, c.x, c.y - text_->lineBox(t) / 2);
         nextHitLabel_ = "dev:" + bs[i].label;
-        uiHit(c, {bw, rowH}, bs[i].fn);
+        if (f > 0.6f) uiHit(c, {bw, rowH}, bs[i].fn);
+    }
+    // the scrollbar: a thin rail on the right, its thumb sized to the visible share, brighter while moving
+    if (scroll_.max > 0) {
+        const float viewH = viewBot - viewTop, railH = viewH - 16, x = p.c.x + p.size.x / 2 - 7;
+        const float share = viewH / (viewH + scroll_.max);
+        const float over = scroll_.y < 0 ? -scroll_.y : std::max(0.f, scroll_.y - scroll_.max); // (squashes past an end)
+        const float thumbH = std::max(24.f, railH * share - over * 0.5f);
+        const float t = std::clamp(scroll_.y / scroll_.max, 0.f, 1.f);
+        const float cy = viewTop + 8 + thumbH / 2 + t * (railH - thumbH);
+        const bool moving = scroll_.held || std::abs(scroll_.v) > 1.f;
+        hudRect({x, viewTop + 8 + railH / 2}, {3, railH}, kVolt, 0.12f * p.k, Shape::PillOutline, 1.f);
+        hudRect({x, cy}, {moving ? 5.f : 4.f, thumbH}, kVolt, (moving ? 0.95f : 0.55f) * p.k, Shape::PillOutline, 1.f);
     }
 }
 

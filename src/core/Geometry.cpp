@@ -1,4 +1,5 @@
 #include "Geometry.h"
+#include "DroidModel.h"
 #include "HenModel.h"
 
 namespace cs::geo {
@@ -192,6 +193,13 @@ std::vector<MeshData> buildMeshLibrary() {
     at(MeshId::Plane) = geo::plane(1, 1);
     at(MeshId::RingFlat) = geo::ring(0.86f, 1.f, 64);
     at(MeshId::Circle) = geo::circle(1, 24);
+    // the title screen's jet droid, one mesh per part (DroidModel.h); empty if its asset is missing
+    if (const DroidModel& droid = droidModel(); droid.ok)
+        for (int p = 0; p < DroidModel::kParts; ++p) {
+            MeshData& m = at(MeshId(int(MeshId::DroidBody) + p));
+            for (const DroidModel::V& v : droid.parts[size_t(p)].verts) m.vertices.push_back({v.pos, v.normal, v.uv});
+            m.indices.assign(droid.parts[size_t(p)].indices.begin(), droid.parts[size_t(p)].indices.end());
+        }
     // the hen model in its rest pose (the renderer streams the posed vertices over these every frame)
     for (int id = 0; id <= kOutfitModelCount; ++id) {
         const HenModel& hen = henModel(HenModelId(id));

@@ -271,8 +271,11 @@ void Game::start() {
     const int streakBefore = dayStreak_.count();
     dayStreak_.played();
     if (dayStreak_.count() != streakBefore) track("streak_update", {{"count", std::to_string(dayStreak_.count())}});
+    const bool fromTitle = state_ == State::Title;
     reset();
     state_ = State::Play;
+    if (fromTitle) beginDroidExit(); // the title droid peels off and boosts away
+    planRaids(); // this run's droid raids on the stack
     beat_.start(); svc_.audio->musicStart(true); // a new run: the song from the top
     day_.attempts++; saveDay(); campaign_.attempt(); placeGate();
     if (debugNearFinish_) { // developer menu: test the finish quickly
@@ -325,10 +328,63 @@ void Game::pressAt(float px, float py) {
     // mute button: 44x44 pt, top-right, 16 pt margin
     const float bx = viewW_ - 16 - 22, by = safeTop_ + 16 + 22;
     if (screen_ == Screen::None && std::abs(px - bx) < 26 && std::abs(py - by) < 26) { toggleMute(); return; }
+    if (screen_ != Screen::None && scroll_.active && scroll_.view.hit(px, py)) { // on a scrolling list: wait (tap or drag?)
+        // (a touch on a list still moving, coasting or springing back, only stops it, like a native list)
+        scroll_.caught = std::abs(scroll_.v) > 40.f || scroll_.y < -2.f || scroll_.y > scroll_.max + 2.f;
+        scroll_.held = true; scroll_.dragging = false; scroll_.down = scroll_.last = {px, py}; scroll_.lastT = screenT_; scroll_.v = 0;
+        return;
+    }
+    hitAt(px, py);
+}
+
+void Game::hitAt(float px, float py) {
     for (size_t i = hits_.size(); i-- > 0;)
         if (hits_[i].r.hit(px, py)) { auto fn = hits_[i].fn; fn(); return; }
     if (screen_ != Screen::None) return; // modal: taps outside its controls do nothing
     press();
+}
+
+void Game::dragTo(float px, float py) {
+    px /= uiScale_; py /= uiScale_;
+    if (!scroll_.held) return;
+    if (!scroll_.dragging && std::abs(py - scroll_.down.y) > 8.f) scroll_.dragging = true; // past the slop: a drag
+    if (!scroll_.dragging) return;
+    const float dy = scroll_.last.y - py;
+    // past either end it gives, at a third of the finger's travel (rubber band)
+    const bool out = (scroll_.y < 0 && dy < 0) || (scroll_.y > scroll_.max && dy > 0);
+    scroll_.y += out ? dy / 3.f : dy;
+    const float dt = std::max(1e-3f, screenT_ - scroll_.lastT);
+    scroll_.v = glm::mix(scroll_.v, dy / dt, 0.6f);
+    scroll_.last = {px, py}; scroll_.lastT = screenT_;
+}
+
+void Game::release(float px, float py) {
+    px /= uiScale_; py /= uiScale_;
+    if (!scroll_.held) return;
+    scroll_.held = false;
+    if (!scroll_.dragging) { // a tap after all (unless it only caught the moving list)
+        scroll_.v = 0;
+        if (!scroll_.caught) hitAt(scroll_.down.x, scroll_.down.y);
+        return;
+    }
+    if (screenT_ - scroll_.lastT > 0.08f) scroll_.v = 0; // held still before letting go: no fling
+    scroll_.dragging = false;
+}
+
+void Game::scrollBy(float dy) {
+    if (screen_ == Screen::None || !scroll_.active) return;
+    scroll_.y = std::clamp(scroll_.y + dy, 0.f, scroll_.max);
+    scroll_.v = 0;
+}
+
+void Game::updateScroll(float rdt) {
+    if (scroll_.held) return;
+    scroll_.y += scroll_.v * rdt;
+    scroll_.v *= std::exp(-rdt * 3.5f); // the fling coasts to a stop
+    if (std::abs(scroll_.v) < 5.f) scroll_.v = 0;
+    // past an end: spring back
+    const float target = std::clamp(scroll_.y, 0.f, scroll_.max);
+    if (target != scroll_.y) { scroll_.v *= std::exp(-rdt * 20.f); scroll_.y += (target - scroll_.y) * std::min(1.f, rdt * 14.f); }
 }
 
 std::string Game::frameSummary() const {
@@ -373,6 +429,7 @@ void Game::openScreen(Screen s) {
     if (screen_ != Screen::None) screenStack_.push_back(screen_);
     screen_ = s;
     screenT_ = 0;
+    scroll_ = Scroll{};
     if (s == Screen::Shop) track("iap_view", {});
 }
 
@@ -382,6 +439,7 @@ void Game::closeScreen() {
     if (!screenStack_.empty()) screenStack_.pop_back();
     screenT_ = 0.35f; // the screen underneath doesn't replay its entrance
     primary_ = nullptr;
+    scroll_ = Scroll{};
 }
 
 void Game::queueScreen(Screen s) {
@@ -1107,6 +1165,7 @@ void Game::update(double rawDt) {
     timeScale_ += (1 - timeScale_) * std::min(1.f, rdt * (state_ == State::Dead ? 1.2f : 4.f));
     const float dt = rdt * (freeze_ > 0 ? 0.04f : timeScale_);
     time_ += dt;
+    updateBot(rdt); // (before the run moves on: it lays like a tap would)
 
     if (state_ == State::Play) updatePlay(dt, rdt);
     else danger_ += (0 - danger_) * std::min(1.f, dt * 6);
@@ -1211,6 +1270,8 @@ void Game::update(double rawDt) {
     // HUD timers
     flashT_ += rdt;
     if (state_ == State::Title) { titleT_ += rdt; privacyButton_ = svc_.ads->privacyOptionsRequired(); }
+    updateDroid(rdt);
+    updateScroll(rdt);
     if (state_ == State::Play) run_.seconds += rdt;
     screenT_ += rdt;
     rewardMsgT_ = std::max(0.f, rewardMsgT_ - rdt);
@@ -1768,6 +1829,7 @@ void Game::buildRenderList() {
     const auto henMark = out.litMark();
     hen_.emit(out);
     if (onStreet) out.reflectSince(henMark);
+    emitDroid(out, onStreet);
 
     // today's-best gate
     // the finish line: two neon posts, a checkered banner across the top and a glowing line on the ground

@@ -280,6 +280,18 @@ std::string savePath() {
     }
 }
 
+- (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+    if (_splash) return;
+    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->dragTo(float(p.x), float(p.y)); }
+}
+
+- (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+    if (_splash) return;
+    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->release(float(p.x), float(p.y)); }
+}
+
+- (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event { [self touchesEnded:touches withEvent:event]; }
+
 - (void)dealloc {
     [self pause];
     _replay.attach(nullptr);

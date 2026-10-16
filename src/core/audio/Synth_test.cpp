@@ -35,7 +35,7 @@ Stats render(Synth& s, double seconds) {
 
 void effects() {
     const Sfx all[] = {Sfx::Lay, Sfx::Crack, Sfx::Perfect, Sfx::Corn, Sfx::Land, Sfx::Squawk, Sfx::Empty, Sfx::Smash,
-                       Sfx::SurgeStart, Sfx::SurgeEnd, Sfx::LifeLost, Sfx::Firework};
+                       Sfx::SurgeStart, Sfx::SurgeEnd, Sfx::LifeLost, Sfx::Firework, Sfx::DroidWarp, Sfx::DroidCharge, Sfx::DroidLaser};
     bool sound = true, finite = true, clean = true;
     for (Sfx f : all)
         for (int variant : {0, 2}) {
