@@ -236,6 +236,25 @@ void Synth::sfx(Sfx s, int k) {
         tone(185, 92, 0.3f, Wave::Sine, 0.18f, 0.05f);
         break;
     case Sfx::SurgeEnd: tone(1500, 160, 0.5f, Wave::Sawtooth, 0.06f); tone(750, 80, 0.5f, Wave::Triangle, 0.08f); break;
+    case Sfx::DroidWarp: // a whooshing warp-in: a filtered rush under a quick rising sweep, and a jet hum settling
+        noise(0.45f, 0.6f, 1400, 0.f, Biquad::Type::Bandpass);
+        tone(260, 1500, 0.3f, Wave::Sine, 0.16f);
+        tone(1500, 520, 0.38f, Wave::Triangle, 0.1f, 0.22f);
+        tone(110, 140, 0.55f, Wave::Sawtooth, 0.05f, 0.1f);
+        break;
+    case Sfx::DroidCharge: // the laser charging: a whine climbing an octave and a half, with a shimmer on top
+        tone(380, 1350, 0.55f, Wave::Sawtooth, 0.07f);
+        tone(760, 2700, 0.55f, Wave::Sine, 0.06f);
+        for (int i = 0; i < 4; ++i) tone(2200 + 400 * float(i), 2200 + 400 * float(i), 0.05f, Wave::Square, 0.025f, 0.12f * float(i));
+        break;
+    case Sfx::DroidLaser: { // pew: a bright square zap diving down, a buzzy body, a crackle of static (k: the 2nd shot sits lower)
+        const float p = k ? 0.84f : 1.f;
+        tone(2600 * p, 260 * p, 0.22f, Wave::Square, 0.12f);
+        tone(1300 * p, 140 * p, 0.26f, Wave::Sawtooth, 0.09f);
+        tone(160 * p, 60 * p, 0.2f, Wave::Sine, 0.18f); // (a thump under it)
+        noise(0.1f, 0.4f, 5200);
+        break;
+    }
     }
 }
 

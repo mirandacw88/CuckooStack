@@ -188,11 +188,19 @@ int main(int argc, char** argv) {
         else if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
     });
     glfwSetMouseButtonCallback(window, [](GLFWwindow* w, int button, int action, int) {
-        if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS) return;
+        if (button != GLFW_MOUSE_BUTTON_LEFT) return;
         auto* a = static_cast<App*>(glfwGetWindowUserPointer(w));
         double x = 0, y = 0;
         glfwGetCursorPos(w, &x, &y); // window points, same units as the HUD
-        a->game->pressAt(float(x), float(y));
+        if (action == GLFW_PRESS) a->game->touch(cs::TouchPhase::Began, float(x), float(y));
+        else if (action == GLFW_RELEASE) a->game->touch(cs::TouchPhase::Ended, float(x), float(y));
+    });
+    glfwSetCursorPosCallback(window, [](GLFWwindow* w, double x, double y) { // a drag on a scrolling list
+        if (glfwGetMouseButton(w, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) return;
+        static_cast<App*>(glfwGetWindowUserPointer(w))->game->touch(cs::TouchPhase::Moved, float(x), float(y));
+    });
+    glfwSetScrollCallback(window, [](GLFWwindow* w, double, double dy) {
+        static_cast<App*>(glfwGetWindowUserPointer(w))->game->scrollBy(cs::wheelToScroll(dy));
     });
 
     auto prev = std::chrono::steady_clock::now();

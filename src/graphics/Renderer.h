@@ -118,6 +118,7 @@ private:
     VulkanImage fontAtlas_;
     VulkanImage puddleMask_;              // baked asphalt puddles (BakedPatterns.cpp)
     VulkanImage cyberSurface_, cyberGlow_; // the baked cyber cube face design (BakedPatterns.cpp, bindings 4, 5)
+    VulkanImage droidTexture_, droidNormal_; // the title droid's albedo / normal map (DroidModel.h, bindings 6, 7)
     VkSampler linearRepeat_ = VK_NULL_HANDLE;
     VkDescriptorSet textSet_ = VK_NULL_HANDLE;
     const FontAtlas* uploadedAtlas_ = nullptr;

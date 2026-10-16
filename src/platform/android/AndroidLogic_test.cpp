@@ -7,7 +7,23 @@ using namespace cs;
 using namespace cs::android;
 using namespace test;
 
+void touches() {
+    using cs::TouchPhase;
+    using cs::android::touchFromMotion;
+    // <android/input.h>: DOWN 0, UP 1, MOVE 2, CANCEL 3, POINTER_DOWN 5, POINTER_UP 6; pointer index in bits 8..15
+    auto is = [](cs::android::MotionTouch t, TouchPhase p, int pointer) { return t.any && t.phase == p && t.pointer == pointer; };
+    check(is(touchFromMotion(0, 1), TouchPhase::Began, 0), "touch: the first finger down presses");
+    check(is(touchFromMotion(2, 1), TouchPhase::Moved, 0), "...moving it drags");
+    check(is(touchFromMotion(1, 1), TouchPhase::Ended, 0), "...lifting it releases");
+    check(is(touchFromMotion(3, 1), TouchPhase::Cancelled, 0), "...a cancelled gesture releases too");
+    check(is(touchFromMotion(5 | (1 << 8), 2), TouchPhase::Began, 1), "a second finger down presses, at its own index");
+    check(!touchFromMotion(6 | (1 << 8), 2).any, "a second finger lifting: nothing (the first still holds)");
+    check(!touchFromMotion(5 | (3 << 8), 2).any, "a pointer index past the event's pointers: ignored (never read out of bounds)");
+    check(!touchFromMotion(0, 0).any && !touchFromMotion(7, 1).any, "no pointers, or another action (hover ...): ignored");
+}
+
 int main() {
+    touches();
     check(densityFromDpi(160) == 1.f && densityFromDpi(480) == 3.f && densityFromDpi(420) == 2.625f, "density: dpi / 160 (mdpi = 1)");
     check(densityFromDpi(0) == 1.f && densityFromDpi(-5) == 1.f, "unknown density (0): 1, never a division by zero");
     const Insets a = insetsInPoints(72, 48, 0, 0, 3.f);

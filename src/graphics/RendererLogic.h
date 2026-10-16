@@ -9,6 +9,20 @@
 
 namespace cs::gpu {
 
+// The scene's descriptor set (set 0 of lit.frag / lit_reflect.frag, assets/shaders/lit_common.glsl): binding 0 the
+// Frame UBO, then one texture per binding: 1 the puddle mask, 2 / 3 the textured hen (albedo, normal map), 4 / 5 the
+// baked cyber cube face (surface, glow), 6 / 7 the jet droid (albedo, normal map)
+constexpr int kFrameSetBindings = 8;
+constexpr int kFrameSetSamplers = kFrameSetBindings - 1;
+constexpr int kDroidAlbedoBinding = 6, kDroidNormalBinding = 7;
+// the other sets' textures: composite 2, bloom prefilter / blur H / blur V 1 each, HUD text 1, HUD sprites 1
+constexpr int kStaticSetSamplers = 2 + 3 + 1 + 1;
+// the descriptor pool: every set's textures (one scene set per frame in flight)
+constexpr int descriptorPoolSamplers(int framesInFlight) { return kStaticSetSamplers + kFrameSetSamplers * framesInFlight; }
+// a texture binding never left empty: an image that failed to load (or a missing asset) binds a harmless stand-in
+// instead (the hen's and the droid's textures fall back to the puddle mask; the droid's normal map to its albedo)
+template <class View> View orStandIn(View view, View standIn) { return view ? view : standIn; }
+
 // std140 mirror of assets/shaders/frame.glsl (every member a mat4 or vec4, so no padding)
 struct GpuFrame {
     glm::mat4 view, proj, viewProj, invViewProj;

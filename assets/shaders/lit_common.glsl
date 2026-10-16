@@ -22,9 +22,11 @@ layout(set = 0, binding = 2) uniform sampler2D tHero;   // the textured hen mode
 layout(set = 0, binding = 3) uniform sampler2D tHeroN;  // its tangent-space normal map (sculpted detail)
 layout(set = 0, binding = 4) uniform sampler2D tCyber;     // the cyber cube face, baked (BakedPatterns.cpp): surface
 layout(set = 0, binding = 5) uniform sampler2D tCyberGlow; // ... and glow channels (tube, circuit, core ring, dot)
+layout(set = 0, binding = 6) uniform sampler2D tDroid;     // the title droid's albedo (DroidModel)
+layout(set = 0, binding = 7) uniform sampler2D tDroidN;    // its tangent-space normal map
 
 const float PI = 3.14159265;
-const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5, P_HERO = 6;
+const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5, P_HERO = 6, P_DROID = 7;
 
 vec3 lin(vec3 srgb) { return pow(srgb, vec3(2.2)); }
 // Dave Hoskins' "hash without sine": plain ALU, no sin (which is slow on mobile GPUs)
@@ -104,6 +106,22 @@ void main() {
             albedo *= tx;
             float heat = smoothstep(0.18, 0.55, dot(tx, vec3(0.6, 0.35, 0.05)));
             emissive = tx * heat * vEmissive.rgb;
+        } else if (pattern == P_DROID) {
+            // the title droid: the same normal-mapped albedo, from its own textures; its bright, saturated neon trims
+            // (pink, teal) glow rather than its warm tones
+            vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
+            vec2 duv1 = dFdx(vUv), duv2 = dFdy(vUv);
+            vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+            vec3 Tg = dp2perp * duv1.x + dp1perp * duv2.x, Bg = dp2perp * duv1.y + dp1perp * duv2.y;
+            float invmax = inversesqrt(max(max(dot(Tg, Tg), dot(Bg, Bg)), 1e-20));
+            vec3 nt = texture(tDroidN, vUv).xyz * 2.0 - 1.0;
+            N = normalize(mat3(Tg * invmax, Bg * invmax, N) * nt);
+            vec3 sx = texture(tDroid, vUv).rgb;
+            vec3 tx = lin(sx);
+            albedo *= tx;
+            float hi = max(sx.r, max(sx.g, sx.b)), lo = min(sx.r, min(sx.g, sx.b));
+            float neon = smoothstep(0.45, 0.8, hi) * smoothstep(0.25, 0.55, hi - lo);
+            emissive = tx * neon * vEmissive.rgb;
         } else if (pattern == P_CONTAINER) {
             // contMap / contEm: corrugated steel, dark frame, neon trim: cyan or magenta per crate (the cyber cubes'
             // pick, seed vEmissive.w), the outer edge line in the other colour

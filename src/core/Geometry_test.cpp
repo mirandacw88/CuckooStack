@@ -2,6 +2,7 @@
 // index counts, indices in range, unit normals, triangles wound counter-clockwise (their face normal agrees with the
 // vertex normals, so back-face culling keeps the right side), and the requested size. Then the mesh library.
 #include "TestUtil.h"
+#include "core/DroidModel.h"
 #include "core/Geometry.h"
 #include "core/HenModel.h"
 
@@ -78,6 +79,19 @@ void library() {
     const Stats egg = inspect(lib[size_t(MeshId::Egg)]);
     check(std::abs((egg.hi.y - egg.lo.y) - 0.6f * 0.49f * 2) < 1e-3f, "the egg: one egg unit (0.6 m) tall, near enough");
     check(inspect(lib[size_t(MeshId::Box)]).ccw && size3(inspect(lib[size_t(MeshId::Box)]), {1, 1, 1}), "the unit box");
+    // the jet droid: each part of its model (DroidModel.h) becomes its own mesh, every vertex and triangle carried over
+    const DroidModel& droid = droidModel();
+    bool same = droid.ok;
+    for (int part = 0; part < DroidModel::kParts && same; ++part) {
+        const MeshData& m = lib[size_t(int(MeshId::DroidBody) + part)];
+        const DroidModel::Mesh& src = droid.parts[size_t(part)];
+        same = m.vertices.size() == src.verts.size() && m.indices.size() == src.indices.size();
+        for (size_t v = 0; v < src.verts.size() && same; ++v)
+            same = m.vertices[v].pos == src.verts[v].pos && m.vertices[v].normal == src.verts[v].normal && m.vertices[v].uv == src.verts[v].uv;
+        for (size_t k = 0; k < src.indices.size() && same; ++k) same = m.indices[k] == src.indices[k]; // (no 16-bit truncation)
+    }
+    check(same, "the droid: one mesh per model part (body, eye, fans, shrouds, backplates, flame), vertices and triangles intact");
+    check(int(MeshId::DroidFlame) - int(MeshId::DroidBody) == DroidModel::kParts - 1, "...its MeshIds in the model's part order");
 }
 
 } // namespace

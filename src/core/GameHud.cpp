@@ -108,6 +108,20 @@ void Game::hudNineSlice(Icon frame, glm::vec2 c, glm::vec2 size, float corner, g
         }
 }
 
+void Game::hudImage(const HudImg& img, glm::vec2 c, glm::vec2 size, float alpha, glm::vec3 tint) {
+    hudAtlasQuad(hudImageUV(img, {0, 0, img.w, img.h}), c, size, 0, tint, alpha);
+}
+
+void Game::hudImage3(const HudImg& img, glm::vec2 c, glm::vec2 size, float alpha, glm::vec3 tint, float leftCap) {
+    std::array<HudQuad, 3> q;
+    for (int i = 0, n = hudImageThreeSlice(img, c, size, leftCap, q); i < n; ++i) hudAtlasQuad(q[i].uv, q[i].c, q[i].size, 0, tint, alpha);
+}
+
+void Game::hudImage9(const HudImg& img, glm::vec2 c, glm::vec2 size, glm::vec2 src, glm::vec2 dst, float alpha, glm::vec3 tint) {
+    std::array<HudQuad, 9> q;
+    for (int i = 0, n = hudImageNineSlice(img, c, size, src, dst, q); i < n; ++i) hudAtlasQuad(q[i].uv, q[i].c, q[i].size, 0, tint, alpha);
+}
+
 // The coin: an 8-frame spin. spin < 0 turns it slowly with time (a lazy wobble that rests face-on most of the time).
 void Game::hudCoin(glm::vec2 c, float size, float alpha, float spin) {
     float a = spin;
@@ -477,6 +491,7 @@ void Game::buildHud() {
     else completeBox_ = glm::vec4(0.f);
 
     hits_.clear();
+    scroll_.active = false; // (a scrolling list re-registers its viewport as it's drawn)
     // overlays rise from the bottom third, where the thumb rests
     if (fonts_.built()) {
         // under the frosted-glass shop only the blurred city should show: the title / game-over overlay still runs

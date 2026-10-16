@@ -1,6 +1,7 @@
 #include "Renderer.h"
 #include "RendererLogic.h"
 #include "BakedPatterns.h"
+#include "../core/DroidModel.h"
 #include "../core/Font.h"
 #include "../core/HenModel.h"
 #include "../core/HudImage.h"
@@ -17,6 +18,7 @@
 namespace cs {
 
 static bool uploadRgbaMips(VulkanContext& ctx, VulkanImage& img, const uint8_t* px, int w, int h);
+static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char* data, size_t size);
 
 namespace {
 
@@ -94,8 +96,14 @@ bool Renderer::init(PlatformSurface& platform, bool enableValidation, std::strin
         if (!uploadRgbaMips(ctx_, cyberSurface_, cyber.surface.data(), 2 * kCyber, 2 * kCyber) ||
             !uploadRgbaMips(ctx_, cyberGlow_, cyber.glow.data(), 2 * kCyber, 2 * kCyber)) { error = "Pattern texture upload failed"; return false; }
     }
+    // the title droid's textures (bindings 6, 7), uploaded once; without them (a missing asset) stand-ins keep the
+    // bindings valid and the droid isn't drawn
+    if (const DroidModel& droid = droidModel(); droid.ok) {
+        if (!uploadJpeg(ctx_, droidTexture_, droid.texture, droid.textureSize)) CS_LOGW("Droid texture upload failed");
+        else if (!droid.normalMap || !uploadJpeg(ctx_, droidNormal_, droid.normalMap, droid.normalMapSize)) CS_LOGW("Droid normal map upload failed");
+    }
 
-    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 + 5 * kFramesInFlight}};
+    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(gpu::descriptorPoolSamplers(kFramesInFlight))}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight + 6;
     pci.poolSizeCount = 2;
@@ -160,7 +168,7 @@ bool Renderer::createFrames() {
         wp.dstSet = f.frameSet; wp.dstBinding = 1; wp.descriptorCount = 1;
         wp.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wp.pImageInfo = &pi;
         // the hen texture (or, if it failed, the puddle mask as a harmless stand-in so the binding is always valid)
-        VkDescriptorImageInfo hi{linearMip_, heroTexture_.view() ? heroTexture_.view() : puddleMask_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo hi{linearMip_, gpu::orStandIn(heroTexture_.view(), puddleMask_.view()), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet wh = wp;
         wh.dstBinding = 2; wh.pImageInfo = &hi;
         VkWriteDescriptorSet wn = wp;
@@ -170,8 +178,13 @@ bool Renderer::createFrames() {
         VkWriteDescriptorSet w4 = wp, w5 = wp;
         w4.dstBinding = 4; w4.pImageInfo = &cs;
         w5.dstBinding = 5; w5.pImageInfo = &cg;
-        const VkWriteDescriptorSet all[6] = {w, wp, wh, wn, w4, w5};
-        vkUpdateDescriptorSets(ctx_.device, 6, all, 0, nullptr);
+        VkDescriptorImageInfo da{linearMip_, gpu::orStandIn(droidTexture_.view(), puddleMask_.view()), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo dn{linearMip_, gpu::orStandIn(droidNormal_.view(), da.imageView), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w6 = wp, w7 = wp;
+        w6.dstBinding = gpu::kDroidAlbedoBinding; w6.pImageInfo = &da;
+        w7.dstBinding = gpu::kDroidNormalBinding; w7.pImageInfo = &dn;
+        const VkWriteDescriptorSet all[gpu::kFrameSetBindings] = {w, wp, wh, wn, w4, w5, w6, w7};
+        vkUpdateDescriptorSets(ctx_.device, gpu::kFrameSetBindings, all, 0, nullptr);
     }
     return true;
 }
@@ -937,7 +950,7 @@ void Renderer::shutdown() {
     stopRecording();
     stopReadback();
     vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
-    cyberSurface_.destroy(); cyberGlow_.destroy();
+    cyberSurface_.destroy(); cyberGlow_.destroy(); droidTexture_.destroy(); droidNormal_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;
     if (linearClamp_) vkDestroySampler(ctx_.device, linearClamp_, nullptr);

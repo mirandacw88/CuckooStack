@@ -34,6 +34,7 @@ const IntKey kInts[] = {
     {"xp_m", &Tuning::xpPerMeter}, {"xp_mission", &Tuning::xpPerMission}, {"lvl_base", &Tuning::levelBaseXp},
     {"lvl_step", &Tuning::levelStepXp}, {"dda_newbie_runs", &Tuning::newbieRuns}, {"notif_quiet_start", &Tuning::notifQuietStart},
     {"notif_quiet_end", &Tuning::notifQuietEnd}, {"notif_streak_hour", &Tuning::notifStreakHour},
+    {"droid_raids", &Tuning::droidRaids}, {"droid_level", &Tuning::droidFirstLevel},
 };
 
 void defaults() {
@@ -49,6 +50,7 @@ void defaults() {
     for (const IntKey& k : kInts) same = same && t.*(k.field) == d.*(k.field);
     check(same, "remote config without our keys: defaults kept");
     check(d.dailyDrop[0] == 20 && d.dailyDrop[6] == 250 && d.metersPerCoin == 25 && d.boostCost == 150, "defaults as documented");
+    check(d.droidRaids == 1 && d.droidFirstLevel == 5, "the droid raids, from level 5 (droid_raids, droid_level)");
 }
 
 void overrides() {

@@ -1,4 +1,5 @@
 #include "VulkanPipeline.h"
+#include "RendererLogic.h"
 #include "ShaderBlobs.h"
 #include "VulkanContext.h"
 #include "../core/Geometry.h"
@@ -238,16 +239,18 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     scenePass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, ctx.depthFormat);
     bloomPass = makePass(dev, hdrFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_FORMAT_UNDEFINED);
     {   // binding 0: Frame UBO, 1: baked pattern textures (puddle mask), 2 / 3: the textured hen's albedo / normal map,
-        // 4 / 5: the baked cyber cube face (surface, glow)
-        const VkDescriptorSetLayoutBinding b[6] = {
+        // 4 / 5: the baked cyber cube face (surface, glow), 6 / 7: the title droid's albedo / normal map
+        const VkDescriptorSetLayoutBinding b[gpu::kFrameSetBindings] = {
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+            {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        ci.bindingCount = 6;
+        ci.bindingCount = gpu::kFrameSetBindings;
         ci.pBindings = b;
         vkCreateDescriptorSetLayout(dev, &ci, nullptr, &frameSetLayout);
     }

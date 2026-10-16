@@ -51,6 +51,8 @@ struct Tuning {
     // ---- difficulty
     float newbieBoost = 0.25f;     // "dda_newbie"      extra assist on a player's first runs, fading out
     int newbieRuns = 6;            // "dda_newbie_runs"
+    int droidRaids = 1;            // "droid_raids"     0 = the jet droid never raids the stack in a run
+    int droidFirstLevel = 5;       // "droid_level"     the first course level it raids on
 
     // ---- live events (set from the Firebase console: Remote Config, e.g. with a weekend condition)
     float eventCoinMult = 1.f;     // "event_coin_mult" coins from runs and missions x this (2 = a double-coins event)

@@ -11,6 +11,8 @@
 #include "Effects.h"
 #include "Font.h"
 #include "HudIcons.h"
+#include "HudImg.h"
+#include "Touch.h"
 #include "HudImage.h"
 #include "Hen.h"
 #include "Level.h"
@@ -149,6 +151,28 @@ private:
     void updatePlay(float dt, float rdt);
     void updateHen(float dt);
     void titleIdle(float dt);
+    // the title screen's jet droid (GameDroid.cpp): circles the hen, boosts away when a run starts
+    // pitch: + noses it down; faceCamera: turned partly toward the camera (the title's 3/4 view)
+    struct DroidPose { glm::vec3 pos, dir; float bank, k, pitch, scale; bool faceCamera; };
+    DroidPose droidPose() const;
+    // its raids on the stack in a run (GameDroid.cpp)
+    struct DroidRaid {
+        bool on = false, charged = false;
+        // orbitT: its circling clock (paused to shoot); topY: the stack top it circles over, eased; lock: 0 circling .. 1 at its firing spot
+        float t = 0, orbitT = 0, theta0 = 0, leaving = -1, topY = 0, lock = 0;
+        int shots = 1, fired = 0;
+        float fireAt[2] = {0, 0}, beamT[2] = {-1, -1};
+        glm::vec3 spawn{0.f}, leaveFrom{0.f}, leaveDir{1.f, 0.f, 0.f}, beamTo[2]{}; // relative to the hen (beamTo: to her x)
+    };
+    glm::vec3 raidOrbit(float t) const;
+    glm::vec3 raidAnchor() const;
+    void planRaids();
+    bool raidAllowed(int shots) const;
+    void startRaid(int shots);
+    void zapEgg(int shot);
+    void beginDroidExit();
+    void updateDroid(float rdt);
+    void emitDroid(RenderList& out, bool onStreet);
     void updateDebris(float dt);
     void updateCamera(float rdt);
     void updateAmbient(float dt);
@@ -300,6 +324,14 @@ private:
     float popT_[MAXE] = {};
     int finalScore_ = 0, finalDist_ = 0;
     float titleT_ = 0;
+    float droidT_ = 0, droidExitT_ = -1;      // the title droid's clock; seconds into its exit (-1: not leaving)
+    glm::vec3 droidExitFrom_{0.f}, droidExitDir_{1.f, 0.f, 0.f};
+    DroidRaid raid_;
+    struct Bot { bool on = false, loop = false, sloppy = false, short_ = false; int spare = 0; float cooldown = 0, restartT = 0; double rolledFor = -1; } bot_;
+    void updateBot(float rdt);
+    std::vector<double> raidPlan_;            // this run's raids: where along the course they fall due
+    size_t raidNext_ = 0;
+    bool debugRaids_ = false;                 // developer menu: the next run's droid raids come every ~35 m
     std::string overTag_, overNote_;
     float overButtonRowBottom_ = 0; // game-over: bottom edge (HUD points) of the free row below 'Tap to reboot'
     float overCoinsY_ = 0;          // game-over: where the run's coins row sits (coins fly from here)
@@ -321,6 +353,7 @@ private:
     float clearT_ = -1;                   // seconds since crossing the finish line (-1: not crossed this run)
     bool runCleared_ = false;
     bool debugNearFinish_ = false;
+    bool debugCrash_ = false;      // developer menu (Show continue): crash the run just started, to bring up the Continue offer
     bool titleMusic_ = false;             // the soundtrack has been started on the title screen        // developer menu: the next run starts 30 m before the finish line             // the last run ended at the finish line (Level Cleared screen)
     int clearCoins_ = 0;                  // coins for that clear
     void applyCosmetics();
@@ -380,6 +413,16 @@ private:
     std::function<void()> primary_;           // keyboard / space while a screen is open
     std::string nextHitLabel_;
     void uiHit(glm::vec2 c, glm::vec2 size, std::function<void()> fn);
+    // a scrolling list (one per screen): its viewport, set while drawing; y = how far it's scrolled (points), v = fling
+    // velocity; a press inside it waits: a tap fires on release, a drag scrolls
+    struct Scroll {
+        HitRect view; bool active = false;
+        float y = 0, v = 0, max = 0;
+        bool held = false, dragging = false, caught = false;
+        glm::vec2 down{0.f}, last{0.f}; float lastT = 0;
+    } scroll_;
+    void updateScroll(float rdt);
+    void hitAt(float px, float py);
     Slot lockerTab_ = Slot::Outfit;
     int devTab_ = 0;   // developer menu: 0 coins, 1 outfits, 2 trails, 3 crash fx, 4 game
     std::string lockerPreview_;               // outfit shown on the hen while browsing
@@ -392,6 +435,28 @@ private:
     // Locker showroom: the camera swings to a close 3/4 view of the hen, which jogs in place and turns slowly wearing
     // the previewed outfit (aura) and trail. Works from the title and from game over (the hen is reassembled).
     bool showroom() const { return screen_ == Screen::Locker || lockerK_ > 0.02f; }
+public:
+    bool droidVisible() const; // the droid is on screen: on the title (or leaving it), or raiding the stack
+    bool droidRaiding() const { return raid_.on; }
+    int eggCount() const { return int(eggs_.size()); }
+    int droidShotsFired() const { return raid_.fired; }
+    const std::vector<double>& droidRaidPlan() const { return raidPlan_; }
+    void debugDroidRaid(int shots); // developer menu / tests: a raid now (in a run)
+    void debugSeed(uint64_t seed) { rng_ = FastRandom(seed * 2654435761ull + 1); } // tests: a repeatable run (before press())
+    // developer menu: the bot plays (GameBot.cpp)
+    struct BotOptions { bool on = false, loop = false, sloppy = false; int spare = 0; };
+    BotOptions botOptions() const { return {bot_.on, bot_.loop, bot_.sloppy, bot_.spare}; }
+    void debugSetBot(const BotOptions& o) { bot_.on = o.on; bot_.loop = o.loop; bot_.sloppy = o.sloppy; bot_.spare = o.spare; }
+    // touch input beyond the tap (a press on a scrolling list becomes a tap on release, or a drag)
+    void dragTo(float xPts, float yPts);
+    void release(float xPts, float yPts);
+    // the platforms' single entry point for a finger (or the mouse button): Began presses, Moved drags, Ended
+    // releases; Cancelled releases too, but a tap held on a list doesn't fire (TouchPhase, Touch.h)
+    void touch(TouchPhase phase, float xPts, float yPts);
+    void scrollBy(float dyPts); // mouse wheel / trackpad (points, + = content moves up)
+    float devScroll() const { return scroll_.y; }
+    glm::vec3 droidPosition() const { return droidPose().pos; }
+private:
     // after a crash the hen is stood on a clear, flat patch of ground behind the wall it hit (showroomSpot)
     bool showPlaced_ = false;
     glm::vec2 showSpot_{0.f};
@@ -424,6 +489,12 @@ private:
     void hudAtlasQuad(glm::vec4 uv, glm::vec2 center, glm::vec2 size, float rot, glm::vec3 tint, float alpha);
     void hudFrost(glm::vec2 c, glm::vec2 size, float radius, float amount);
     void hudNineSlice(Icon frame, glm::vec2 center, glm::vec2 size, float corner, glm::vec3 tint, float alpha, float slice = 0.25f);
+    void hudImage(const HudImg& img, glm::vec2 center, glm::vec2 size, float alpha, glm::vec3 tint = glm::vec3(1.f));
+    // stretched sideways through its middle: the end caps (half its height each) keep their shape
+    // (leftCap: the left end's width in image pixels, when something there mustn't stretch; 0 = half its height)
+    void hudImage3(const HudImg& img, glm::vec2 center, glm::vec2 size, float alpha, glm::vec3 tint = glm::vec3(1.f), float leftCap = 0);
+    // 9-sliced: `src` = corner size in image pixels, `dst` = on screen
+    void hudImage9(const HudImg& img, glm::vec2 center, glm::vec2 size, glm::vec2 src, glm::vec2 dst, float alpha, glm::vec3 tint = glm::vec3(1.f));
     // pill button; `fn` (if any) runs when it's tapped. Returns its size.
     glm::vec2 hudButton(std::string_view label, glm::vec2 center, glm::vec3 color, float alpha, bool glow, std::function<void()> fn = {}, float scale = 1.f);
     bool privacyButton_ = false; // title-screen 'Privacy settings' (UMP), refreshed each frame on the title

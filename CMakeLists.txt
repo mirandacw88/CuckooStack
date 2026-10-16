@@ -102,6 +102,18 @@ add_custom_command(OUTPUT ${_hen_cpp}
   COMMENT "Embedding the hen model"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hen_cpp})
+# the title screen's jet droid (scripts/models/export_droid.py, run in Blender): mesh + albedo + normal map
+foreach(_m droid.mesh droid.jpg droid_n.jpg)
+  string(REPLACE "." "_" _sym ${_m})
+  set(_in ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/${_m})
+  set(_out ${CMAKE_CURRENT_BINARY_DIR}/fonts/${_sym}.cpp)
+  add_custom_command(OUTPUT ${_out}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${_in} -DOUTPUT=${_out} -DSYMBOL=${_sym} -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_in} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding the droid ${_m}"
+    VERBATIM)
+  list(APPEND CS_FONT_SOURCES ${_out})
+endforeach()
 # the soundtrack (assets/music, beat grids in src/core/audio/MusicTracks.inc via scripts/audio/analyze_music.py)
 foreach(_m midnight_city_sprint.mp3)
   string(REPLACE "." "_" _sym ${_m})
@@ -148,6 +160,7 @@ add_library(cs_core STATIC
   src/core/Campaign.cpp
   src/core/Daily.cpp
   src/core/Difficulty.cpp
+  src/core/DroidModel.cpp
   src/core/Economy.cpp
   src/core/HenModel.cpp
   src/core/EndCard.cpp
@@ -155,6 +168,7 @@ add_library(cs_core STATIC
   src/core/FileStorage.cpp
   src/core/Font.cpp
   src/core/Game.cpp
+  src/core/GameDroid.cpp src/core/GameBot.cpp
   src/core/GameHud.cpp
   src/core/GameSurge.cpp
   src/core/GameUi.cpp
@@ -430,9 +444,10 @@ if(CS_PLATFORM STREQUAL "desktop")
   endfunction()
 
   foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
-            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud)
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev HudImg)
     cs_test(src/core/${f})
   endforeach()
+  target_include_directories(HudImg_test SYSTEM PRIVATE ${TP}/stb) # (stb_image: the PNGs, to compare with the atlas)
   foreach(f AudioParam Mp3 Music Synth)
     cs_test(src/core/audio/${f})
   endforeach()
@@ -452,6 +467,12 @@ if(CS_PLATFORM STREQUAL "desktop")
   endif()
   add_executable(render_audio tests/render_audio.cpp)
   target_link_libraries(render_audio PRIVATE cs_core)
+  # the asset scripts (scripts/tests): the droid mesh format, and the Daily Drop sprites and HUD atlas reproducing the
+  # committed files (those image tests skip themselves without Pillow and numpy)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME scripts COMMAND ${Python3_EXECUTABLE} -W error::ResourceWarning -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/scripts/tests)
+  endif()
   find_program(NODE node)
   if(NODE)
     add_test(NAME level_parity COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_level_parity.sh)
