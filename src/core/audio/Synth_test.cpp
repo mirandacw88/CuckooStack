@@ -55,6 +55,28 @@ void effects() {
     check(render(quiet, 0.5).peak == 0, "nothing played: silence");
 }
 
+// zero crossings per second over a stretch of a mono render: rises and falls with the sound's pitch
+double crossingRate(Synth& s, double seconds) {
+    std::vector<float> buf(size_t(48000 * seconds) * 2);
+    s.render(buf.data(), int(buf.size() / 2), 2);
+    int crossings = 0;
+    for (size_t i = 2; i < buf.size(); i += 2) crossings += (buf[i - 2] < 0) != (buf[i] < 0);
+    return crossings / seconds;
+}
+
+void droidSounds() {
+    // the raid's sounds: as loud as the game's other effects (they have to carry over the music), and the second
+    // laser shot of a double sits lower than the first
+    auto rms = [](Sfx f, int k) { Synth s; render(s, 0.05); s.play(f, k); return render(s, 0.6).rms; };
+    const double crack = rms(Sfx::Crack, 0);
+    check(rms(Sfx::DroidWarp, 0) > 0.6 * crack && rms(Sfx::DroidCharge, 0) > 0.3 * crack && rms(Sfx::DroidLaser, 0) > 0.6 * crack,
+          "droid: the warp, charge and laser are about as loud as an egg cracking");
+    Synth a, b;
+    render(a, 0.05); render(b, 0.05);
+    a.play(Sfx::DroidLaser, 0); b.play(Sfx::DroidLaser, 1);
+    check(crossingRate(b, 0.12) < crossingRate(a, 0.12), "...the second shot of a double is lower-pitched");
+}
+
 void music() {
     Synth s;
     s.musicStart(true);
@@ -96,6 +118,7 @@ void deterministic() {
 
 int main() {
     effects();
+    droidSounds();
     music();
     deterministic();
     return finish("Synth");

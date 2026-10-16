@@ -9,6 +9,8 @@
 #include "core/Level.h"
 
 #include <cmath>
+#include <map>
+#include <optional>
 #include <string>
 
 using namespace cs;
@@ -259,6 +261,37 @@ void fromLevel5() {
     }
 }
 
+struct FakeRemote : IRemoteConfig {
+    std::map<std::string, double> v;
+    std::optional<double> number(const std::string& key) override {
+        const auto it = v.find(key);
+        return it == v.end() ? std::nullopt : std::optional<double>(it->second);
+    }
+};
+
+void remoteConfig() {
+    // Remote Config: droid_raids 0 switches the raids off; droid_level moves the level they start on
+    auto plans = [](std::map<std::string, double> keys, int level) {
+        size_t most = 0;
+        for (int run = 0; run < 8; ++run) {
+            Env env;
+            FakeRemote rc;
+            rc.v = keys;
+            Campaign(&env.st).debugSetLevel(level);
+            GameServices svc = env.svc();
+            svc.remoteConfig = &rc;
+            Game g(svc);
+            g.debugSeed(uint64_t(run + 1));
+            g.press();
+            most = std::max(most, g.droidRaidPlan().size());
+        }
+        return most;
+    };
+    check(plans({}, 6) > 0 && plans({{"droid_raids", 0}}, 6) == 0, "droid_raids 0: no raids (level 6 has them otherwise)");
+    check(plans({}, 3) == 0 && plans({{"droid_level", 3}}, 3) > 0 && plans({{"droid_level", 8}}, 6) == 0,
+          "droid_level: raids start on that level instead of 5");
+}
+
 void needsTwoEggs() {
     {
         Env env;
@@ -334,6 +367,7 @@ int main() {
     raid(1);
     raid(2);
     fromLevel5();
+    remoteConfig();
     needsTwoEggs();
     comesFromAllAround();
     return finish("GameDroid");

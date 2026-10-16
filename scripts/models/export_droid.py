@@ -23,9 +23,12 @@ import math
 import os
 import struct
 
-import bmesh
-import bpy
-import mathutils
+try:  # Blender's modules: only the export needs them (the mesh format below is tested without Blender,
+    import bmesh  # scripts/tests/test_export_droid.py)
+    import bpy
+    import mathutils
+except ImportError:
+    bmesh = bpy = mathutils = None
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")) if "__file__" in globals() else ""
 OUT_DIR = os.path.join(ROOT, "assets", "models")
@@ -241,6 +244,20 @@ def export():
 
     os.makedirs(out_dir(), exist_ok=True)
     path = os.path.join(out_dir(), "droid.mesh")
+    write_mesh(path, parts, anchors)
+
+    albedo, normal = texture_images(bpy.data.objects["geometry_0"].data.materials[0].name)
+    save_jpeg(albedo, os.path.join(out_dir(), "droid.jpg"))
+    if normal:
+        save_jpeg(normal, os.path.join(out_dir(), "droid_n.jpg"))
+    return {"parts": {p["name"]: [len(p["verts"]), len(p["idx"]) // 3] for p in parts},
+            "anchors": {a[0]: [round(c, 3) for c in a[1]] + [round(c, 3) for c in a[3]] for a in anchors},
+            "spin": [p["spin"] for p in parts if p["name"].startswith("fan")], "file": path}
+
+
+def write_mesh(path, parts, anchors):
+    """droid.mesh (the format at the top): parts as dicts (name, flags, color, metal, rough, glow, pivot, axis, spin,
+    verts of 8 floats, idx), anchors as (name, position, direction, size)."""
     with open(path, "wb") as f:
         f.write(b"CSDR" + struct.pack("<II", 1, len(parts)))
         for p in parts:
@@ -259,13 +276,51 @@ def export():
             f.write(struct.pack("<B", len(nb)) + nb)
             f.write(struct.pack("<10f", *pos, *d, *size))
 
-    albedo, normal = texture_images(bpy.data.objects["geometry_0"].data.materials[0].name)
-    save_jpeg(albedo, os.path.join(out_dir(), "droid.jpg"))
-    if normal:
-        save_jpeg(normal, os.path.join(out_dir(), "droid_n.jpg"))
-    return {"parts": {p["name"]: [len(p["verts"]), len(p["idx"]) // 3] for p in parts},
-            "anchors": {a[0]: [round(c, 3) for c in a[1]] + [round(c, 3) for c in a[3]] for a in anchors},
-            "spin": [p["spin"] for p in parts if p["name"].startswith("fan")], "file": path}
+
+def read_mesh(path):
+    """The inverse of write_mesh (for checking a file): (parts, anchors) in the same shapes."""
+    with open(path, "rb") as f:
+        data = f.read()
+    at = 0
+
+    def take(fmt):
+        nonlocal at
+        vals = struct.unpack_from(fmt, data, at)
+        at += struct.calcsize(fmt)
+        return vals
+
+    def name():
+        nonlocal at
+        (n,) = take("<B")
+        s = data[at:at + n].decode()
+        at += n
+        return s
+    if data[:4] != b"CSDR":
+        raise ValueError("not a droid mesh")
+    at = 4
+    version, count = take("<II")
+    if version != 1:
+        raise ValueError("unknown version %d" % version)
+    parts = []
+    for _ in range(count):
+        nm = name()
+        (flags,) = take("<I")
+        c = take("<6f")
+        q = take("<7f")
+        nv, ni = take("<II")
+        verts = [take("<8f") for _ in range(nv)]
+        idx = list(take("<%dI" % ni))
+        parts.append(dict(name=nm, flags=flags, color=c[:3], metal=c[3], rough=c[4], glow=c[5], pivot=q[:3], axis=q[3:6],
+                          spin=q[6], verts=verts, idx=idx))
+    (na,) = take("<I")
+    anchors = []
+    for _ in range(na):
+        nm = name()
+        f = take("<10f")
+        anchors.append((nm, f[:3], f[3:6], f[6:]))
+    if at != len(data):
+        raise ValueError("%d bytes left over" % (len(data) - at))
+    return parts, anchors
 
 
 if __name__ == "__main__":

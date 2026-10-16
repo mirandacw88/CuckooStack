@@ -1091,13 +1091,6 @@ void Game::hudMissions() {
 // Today's tile is green and breathes, tomorrow's purple, day 7's pink with the chest; claimed days dim with a tick.
 // Coins bob and glint, the chest hovers in sparkles, CLAIM pulses with a sheen and CLAIM X2 trails sparkles.
 namespace {
-const HudImg kDropFrame{Icon::DropFrame, 710, 178, 6};
-const HudImg kDropTileGreen{Icon::DropTileGreen, 233, 257, 4}; // (its glow reaches 12% past the others' edge)
-const HudImg kDropTilePurple{Icon::DropTilePurple, 207, 229, 4};
-const HudImg kDropTileBlue{Icon::DropTileBlue, 207, 229, 4};
-const HudImg kDropTilePink{Icon::DropTilePink, 207, 232, 4};
-const HudImg kDropClaim{Icon::DropClaim, 285, 123, 4};
-const HudImg kDropClaim2{Icon::DropClaim2, 319, 121, 4};
 float hash01(int k) { const float v = std::sin(float(k) * 127.1f + 311.7f) * 43758.5453f; return v - std::floor(v); }
 } // namespace
 

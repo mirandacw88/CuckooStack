@@ -276,21 +276,24 @@ std::string savePath() {
     if (_splash) { if (_ready) [self dismissSplash]; return; } // a tap skips the splash; it doesn't start a run
     for (UITouch* t in touches) {
         const CGPoint p = [t locationInView:self.view];
-        _game->pressAt(float(p.x), float(p.y));
+        _game->touch(cs::TouchPhase::Began, float(p.x), float(p.y));
     }
 }
 
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if (_splash) return;
-    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->dragTo(float(p.x), float(p.y)); }
+    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->touch(cs::TouchPhase::Moved, float(p.x), float(p.y)); }
 }
 
 - (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if (_splash) return;
-    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->release(float(p.x), float(p.y)); }
+    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->touch(cs::TouchPhase::Ended, float(p.x), float(p.y)); }
 }
 
-- (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event { [self touchesEnded:touches withEvent:event]; }
+- (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+    if (_splash) return;
+    for (UITouch* t in touches) { const CGPoint p = [t locationInView:self.view]; _game->touch(cs::TouchPhase::Cancelled, float(p.x), float(p.y)); }
+}
 
 - (void)dealloc {
     [self pause];

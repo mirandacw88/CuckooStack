@@ -108,44 +108,18 @@ void Game::hudNineSlice(Icon frame, glm::vec2 c, glm::vec2 size, float corner, g
         }
 }
 
-glm::vec4 Game::hudImgUV(const HudImg& img, glm::vec4 px) const {
-    // where the packer put it: scaled to fit its cell(s) inside the padding, centred (make_hud_icons.py paste_raster)
-    constexpr float F = 192.f;
-    const int i = int(img.icon), span = iconSpan(img.icon), rows = iconRowSpan(img.icon);
-    const float cw = F * span, ch = F * rows;
-    const float s = std::min((cw - 2 * img.pad) / img.w, (ch - 2 * img.pad) / img.h);
-    const float ox = (cw - img.w * s) / 2, oy = (ch - img.h * s) / 2;
-    const float u0 = float(i % kIconCols) / kIconCols, v0 = float(i / kIconCols) / kIconRows;
-    const float du = 1.f / (kIconCols * F), dv = 1.f / (kIconRows * F);
-    return {u0 + (ox + px.x * s) * du, v0 + (oy + px.y * s) * dv, u0 + (ox + px.z * s) * du, v0 + (oy + px.w * s) * dv};
-}
-
 void Game::hudImage(const HudImg& img, glm::vec2 c, glm::vec2 size, float alpha, glm::vec3 tint) {
-    hudAtlasQuad(hudImgUV(img, {0, 0, img.w, img.h}), c, size, 0, tint, alpha);
+    hudAtlasQuad(hudImageUV(img, {0, 0, img.w, img.h}), c, size, 0, tint, alpha);
 }
 
 void Game::hudImage3(const HudImg& img, glm::vec2 c, glm::vec2 size, float alpha, glm::vec3 tint, float leftCap) {
-    const float k = size.y / img.h; // image px -> screen, from the height
-    const float rSrc = img.h / 2, lSrc = leftCap > 0 ? leftCap : rSrc;
-    const float l = std::min(lSrc * k, size.x / 2), r = std::min(rSrc * k, size.x / 2);
-    const float x0 = c.x - size.x / 2, x1 = c.x + size.x / 2;
-    hudAtlasQuad(hudImgUV(img, {0, 0, lSrc, img.h}), {x0 + l / 2, c.y}, {l, size.y}, 0, tint, alpha);
-    if (size.x > l + r + 0.01f)
-        hudAtlasQuad(hudImgUV(img, {lSrc, 0, img.w - rSrc, img.h}), {(x0 + l + x1 - r) / 2, c.y}, {size.x - l - r, size.y}, 0, tint, alpha);
-    hudAtlasQuad(hudImgUV(img, {img.w - rSrc, 0, img.w, img.h}), {x1 - r / 2, c.y}, {r, size.y}, 0, tint, alpha);
+    std::array<HudQuad, 3> q;
+    for (int i = 0, n = hudImageThreeSlice(img, c, size, leftCap, q); i < n; ++i) hudAtlasQuad(q[i].uv, q[i].c, q[i].size, 0, tint, alpha);
 }
 
 void Game::hudImage9(const HudImg& img, glm::vec2 c, glm::vec2 size, glm::vec2 src, glm::vec2 dst, float alpha, glm::vec3 tint) {
-    const float us[4] = {0, src.x, img.w - src.x, img.w}, vs[4] = {0, src.y, img.h - src.y, img.h};
-    dst = glm::min(dst, size / 2.f);
-    const float xs[4] = {c.x - size.x / 2, c.x - size.x / 2 + dst.x, c.x + size.x / 2 - dst.x, c.x + size.x / 2};
-    const float ys[4] = {c.y - size.y / 2, c.y - size.y / 2 + dst.y, c.y + size.y / 2 - dst.y, c.y + size.y / 2};
-    for (int y = 0; y < 3; ++y)
-        for (int x = 0; x < 3; ++x) {
-            const float w = xs[x + 1] - xs[x], h = ys[y + 1] - ys[y];
-            if (w <= 0.01f || h <= 0.01f) continue;
-            hudAtlasQuad(hudImgUV(img, {us[x], vs[y], us[x + 1], vs[y + 1]}), {(xs[x] + xs[x + 1]) / 2, (ys[y] + ys[y + 1]) / 2}, {w, h}, 0, tint, alpha);
-        }
+    std::array<HudQuad, 9> q;
+    for (int i = 0, n = hudImageNineSlice(img, c, size, src, dst, q); i < n; ++i) hudAtlasQuad(q[i].uv, q[i].c, q[i].size, 0, tint, alpha);
 }
 
 // The coin: an 8-frame spin. spin < 0 turns it slowly with time (a lazy wobble that rests face-on most of the time).

@@ -504,17 +504,9 @@ void handleInput(AppState& s) {
     const float d = density(s.app);
     for (uint64_t i = 0; i < input->motionEventsCount; ++i) {
         const GameActivityMotionEvent& e = input->motionEvents[i];
-        const int action = e.action & AMOTION_EVENT_ACTION_MASK;
-        if (s.game && !s.failed && e.pointerCount > 0) { // a drag on a scrolling list, and letting go (the first finger)
-            const float x = GameActivityPointerAxes_getX(&e.pointers[0]) / d, y = GameActivityPointerAxes_getY(&e.pointers[0]) / d;
-            if (action == AMOTION_EVENT_ACTION_MOVE) { s.game->dragTo(x, y); continue; }
-            if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_CANCEL) { s.game->release(x, y); continue; }
-        }
-        if (action != AMOTION_EVENT_ACTION_DOWN && action != AMOTION_EVENT_ACTION_POINTER_DOWN) continue;
-        const int idx = action == AMOTION_EVENT_ACTION_POINTER_DOWN
-            ? (e.action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT : 0;
-        if (s.game && !s.failed)
-            s.game->pressAt(GameActivityPointerAxes_getX(&e.pointers[idx]) / d, GameActivityPointerAxes_getY(&e.pointers[idx]) / d);
+        const cs::android::MotionTouch t = cs::android::touchFromMotion(int(e.action), int(e.pointerCount)); // (AndroidLogic.h)
+        if (!t.any || !s.game || s.failed) continue;
+        s.game->touch(t.phase, GameActivityPointerAxes_getX(&e.pointers[t.pointer]) / d, GameActivityPointerAxes_getY(&e.pointers[t.pointer]) / d);
     }
     android_app_clear_motion_events(input);
     android_app_clear_key_events(input); // back button falls through to the system

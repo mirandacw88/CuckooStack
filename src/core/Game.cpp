@@ -344,6 +344,18 @@ void Game::hitAt(float px, float py) {
     press();
 }
 
+void Game::touch(TouchPhase phase, float px, float py) {
+    switch (phase) {
+    case TouchPhase::Began: pressAt(px, py); break;
+    case TouchPhase::Moved: dragTo(px, py); break;
+    case TouchPhase::Ended: release(px, py); break;
+    case TouchPhase::Cancelled: // the system took the gesture: let go of the list, but a held tap never fires
+        if (scroll_.held && !scroll_.dragging) { scroll_.held = false; scroll_.v = 0; }
+        else release(px, py);
+        break;
+    }
+}
+
 void Game::dragTo(float px, float py) {
     px /= uiScale_; py /= uiScale_;
     if (!scroll_.held) return;

@@ -11,6 +11,8 @@
 #include "Effects.h"
 #include "Font.h"
 #include "HudIcons.h"
+#include "HudImg.h"
+#include "Touch.h"
 #include "HudImage.h"
 #include "Hen.h"
 #include "Level.h"
@@ -29,10 +31,6 @@
 #include <vector>
 
 namespace cs {
-
-// An artist PNG packed into the HUD atlas by make_hud_icons.py's paste step: its pixel size and the cell padding it was
-// packed with locate it exactly in its cell(s), so it can be drawn edge to edge, or sliced (Game::hudImage*)
-struct HudImg { Icon icon; float w, h, pad; };
 
 class Game {
 public:
@@ -452,6 +450,9 @@ public:
     // touch input beyond the tap (a press on a scrolling list becomes a tap on release, or a drag)
     void dragTo(float xPts, float yPts);
     void release(float xPts, float yPts);
+    // the platforms' single entry point for a finger (or the mouse button): Began presses, Moved drags, Ended
+    // releases; Cancelled releases too, but a tap held on a list doesn't fire (TouchPhase, Touch.h)
+    void touch(TouchPhase phase, float xPts, float yPts);
     void scrollBy(float dyPts); // mouse wheel / trackpad (points, + = content moves up)
     float devScroll() const { return scroll_.y; }
     glm::vec3 droidPosition() const { return droidPose().pos; }
@@ -488,7 +489,6 @@ private:
     void hudAtlasQuad(glm::vec4 uv, glm::vec2 center, glm::vec2 size, float rot, glm::vec3 tint, float alpha);
     void hudFrost(glm::vec2 c, glm::vec2 size, float radius, float amount);
     void hudNineSlice(Icon frame, glm::vec2 center, glm::vec2 size, float corner, glm::vec3 tint, float alpha, float slice = 0.25f);
-    glm::vec4 hudImgUV(const HudImg& img, glm::vec4 px) const; // a rect of the image (its pixels) -> atlas UV
     void hudImage(const HudImg& img, glm::vec2 center, glm::vec2 size, float alpha, glm::vec3 tint = glm::vec3(1.f));
     // stretched sideways through its middle: the end caps (half its height each) keep their shape
     // (leftCap: the left end's width in image pixels, when something there mustn't stretch; 0 = half its height)

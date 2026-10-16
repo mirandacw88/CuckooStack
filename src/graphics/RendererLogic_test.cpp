@@ -93,7 +93,17 @@ void mips() {
 
 } // namespace
 
+void standIns() {
+    // a texture that failed to load binds a stand-in, so the descriptor is always valid
+    int puddle = 1, droid = 2;
+    int *none = nullptr;
+    check(gpu::orStandIn(&droid, &puddle) == &droid, "stand-ins: a loaded texture binds itself");
+    check(gpu::orStandIn(none, &puddle) == &puddle, "...one that failed (or a missing asset) binds the stand-in, never nothing");
+    check(gpu::orStandIn(none, gpu::orStandIn(none, &puddle)) == &puddle, "...the droid's normal map falls back to its albedo's binding, itself possibly the stand-in");
+}
+
 int main() {
+    standIns();
     layout();
     packing();
     mips();

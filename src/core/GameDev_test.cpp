@@ -137,6 +137,39 @@ void scrolls() {
     check(g.devScroll() == 0.f, "a new screen starts unscrolled");
 }
 
+void touchPhases() {
+    // Game::touch, the platforms' entry point (iOS touches, Android motion events, the desktop mouse)
+    Env env;
+    Game g(env.svc());
+    openGameTab(g);
+    const auto bot = button(g, "Bot plays");
+    const glm::vec2 p = bot->c * kScale;
+    g.touch(TouchPhase::Began, p.x, p.y);
+    g.touch(TouchPhase::Ended, p.x, p.y);
+    check(g.botOptions().on, "touch: Began then Ended on a button taps it");
+    g.touch(TouchPhase::Began, p.x, p.y);
+    for (int i = 1; i <= 10; ++i) { g.touch(TouchPhase::Moved, p.x, p.y - 30.f * i); g.update(1.0 / 60.0); }
+    g.touch(TouchPhase::Ended, p.x, p.y - 300.f);
+    check(g.devScroll() > 150.f && g.botOptions().on, "...Moved drags the list (and doesn't press the button under the finger)");
+    step(g, 1.5f);
+    const float settled = g.devScroll();
+    g.touch(TouchPhase::Began, p.x, 500.f * kScale);
+    for (int i = 1; i <= 4; ++i) { g.touch(TouchPhase::Moved, p.x, (500.f + 40.f * i) * kScale); g.update(1.0 / 60.0); }
+    g.touch(TouchPhase::Cancelled, p.x, 660.f * kScale);
+    step(g, 1.5f);
+    check(g.devScroll() < settled - 50.f, "...Cancelled lets go like Ended (the system took the gesture: no stuck finger)");
+    g.scrollBy(-100000);
+    step(g, 0.2f);
+    const auto again = button(g, "Bot plays");
+    g.touch(TouchPhase::Began, again->c.x * kScale, again->c.y * kScale);
+    g.touch(TouchPhase::Cancelled, again->c.x * kScale, again->c.y * kScale);
+    check(g.botOptions().on, "...and a cancelled touch on a button doesn't press it (an incoming call mid-tap)");
+    g.touch(TouchPhase::Began, again->c.x * kScale, again->c.y * kScale);
+    g.touch(TouchPhase::Ended, again->c.x * kScale, again->c.y * kScale);
+    check(!g.botOptions().on, "...the next tap works normally");
+    check(wheelToScroll(1.0) == -40.f && wheelToScroll(-2.0) == 80.f, "the mouse wheel: a notch up scrolls 40 points toward the top");
+}
+
 float henX(const Game& g) { return g.hen().nodes[size_t(g.hen().root)].pos.x; }
 
 void botPlays() {
@@ -167,6 +200,29 @@ void botSpareEggs() {
     check(most >= 3 && g.state() == Game::State::Play, "with spare eggs it carries more (and stays alive)");
 }
 
+void botSloppy() {
+    // sloppy: now and then one egg short for a wall. Same seeds: the careful bot clears every run, the sloppy one
+    // crashes in some (but not right away: it's only short sometimes)
+    int carefulClears = 0, sloppyClears = 0;
+    float sloppyFar = 0;
+    for (int seed = 1; seed <= 6; ++seed)
+        for (bool sloppy : {false, true}) {
+            Env env;
+            env.ads.state = RewardedState::Unavailable;
+            Game g(env.svc());
+            g.debugSeed(uint64_t(seed));
+            g.debugSetBot({true, false, sloppy, 0});
+            g.press();
+            float x = 0;
+            for (int i = 0; i < 60 * 90 && g.state() == Game::State::Play; ++i) { g.update(1.0 / 60.0); x = henX(g); }
+            (sloppy ? sloppyClears : carefulClears) += g.lastRunCleared();
+            if (sloppy) sloppyFar += x / 6;
+        }
+    check(carefulClears == 6, "the careful bot clears level 1 every time");
+    check(sloppyClears < 6, "sloppy: it comes up short and crashes in some runs");
+    check(sloppyFar > 40, "...but only now and then (it gets well into the level on average)");
+}
+
 void botKeepsGoing() {
     Env env;
     env.ads.state = RewardedState::Unavailable;
@@ -181,6 +237,41 @@ void botKeepsGoing() {
         prev = g.state();
     }
     check(runs >= 3, "keeps going: after a crash (or a clear) it starts the next run by itself");
+}
+
+void devButtons() {
+    {   // "Next run: droid raids": the next run's raids come every ~35 m from 20 m (on any level), once
+        Env env;
+        Game g(env.svc());
+        openGameTab(g);
+        check(g.tapButton("dev:Next run: droid raids") && (step(g, 0.1f), drew(g, "Droid raids: armed")), "Next run: droid raids: arms it");
+        g.tapButton("Close");
+        step(g, 0.3f);
+        g.press();
+        const std::vector<double> plan = g.droidRaidPlan();
+        check(g.state() == Game::State::Play && plan.size() > 3 && std::abs(plan[0] - 20) < 1e-6 && std::abs(plan[1] - plan[0] - 35) < 1e-6,
+              "...that run's raids come every 35 m from 20 m (level 1 has none otherwise)");
+        test::dieQuickly(g);
+        for (int i = 0; i < 60 * 8 && g.state() != Game::State::Play; ++i) {
+            if (g.screen() == Game::Screen::Continue) g.tapButton("No thanks"); // (a new run, not a revive)
+            else if (i % 30 == 0) g.press();
+            g.update(1.0 / 60.0);
+        }
+        check(g.state() == Game::State::Play && g.droidRaidPlan().empty(), "...for one run only");
+    }
+    {   // "Daily drop day 1": the drop back to day 1, claimable
+        Env env;
+        env.st.kv["cluckstack-drop"] = "claims=4;last=2026-10-08;"; // day 5, claimed today
+        Game g(env.svc());
+        openGameTab(g);
+        g.scrollBy(100000);
+        step(g, 0.1f);
+        check(g.tapButton("dev:Daily drop day 1"), "Daily drop day 1");
+        g.debugOpenScreen("drop");
+        step(g, 1.f);
+        const int before = g.coins();
+        check(g.tapButton("Claim") && (step(g, 0.3f), g.coins() == before + 20), "...the drop is claimable again, at day 1 (20 coins)");
+    }
 }
 
 void showScreens() {
@@ -224,7 +315,10 @@ int main() {
     scrolls();
     botPlays();
     botSpareEggs();
+    botSloppy();
     botKeepsGoing();
     showScreens();
+    devButtons();
+    touchPhases();
     return finish("GameDev");
 }
