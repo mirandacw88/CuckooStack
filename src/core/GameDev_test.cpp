@@ -57,6 +57,23 @@ void scrolls() {
     check(g.screen() == Game::Screen::Dev && button(g, "Bot plays") && button(g, "Rank +1"), "the developer menu's Game tab: the bot options first");
     check(!button(g, "Show age gate").has_value(), "...its last buttons are below the fold (not pressable)");
     check(drew(g, "Bot plays: off") && drew(g, "Bot keeps going") && drew(g, "Bot spare eggs") && drew(g, "Bot sloppy"), "...all four bot options");
+    // grouped in sections, each under its header: every button sits below its own section's header and above the next
+    const char* kSections[] = {"Bot", "Next run", "Level & rank", "Streak & daily drop", "Missions", "Ads & audience", "Show a screen"};
+    std::vector<float> heads;
+    for (const char* h : kSections) { // (1e9: past the fold, not drawn)
+        float y = 1e9f;
+        for (const auto& t : g.hudStrings()) if (t.text == h) y = t.top;
+        heads.push_back(y);
+    }
+    check(heads[0] < 1e8f && heads[1] < 1e8f && heads[0] < heads[1], "the Game tab is grouped: Bot, then Next run, ...");
+    auto under = [&](const std::string& button, int section) {
+        for (const auto& t : g.hudStrings())
+            if (t.text.rfind(button, 0) == 0)
+                return t.top > heads[size_t(section)] && (section + 1 >= int(heads.size()) || heads[size_t(section) + 1] > 1e8f || t.top < heads[size_t(section) + 1]);
+        return false;
+    };
+    check(under("Bot sloppy", 0) && under("Next run: droid raids", 1) && under("Free Overdrive Start", 1), "...each button under its own section");
+
 
     // a drag over a button scrolls the list and doesn't press it
     const auto rank = button(g, "Bot plays"); // (a drag that starts on a button)
@@ -166,6 +183,41 @@ void botKeepsGoing() {
     check(runs >= 3, "keeps going: after a crash (or a clear) it starts the next run by itself");
 }
 
+void showScreens() {
+    // every pop-up can be opened from the Game tab's "Show a screen" section (at the bottom of the list)
+    const std::pair<const char*, Game::Screen> kShow[] = {
+        {"Show rank-up", Game::Screen::LevelUp}, {"Show starter offer", Game::Screen::Starter}, {"Show streak save", Game::Screen::StreakSave},
+        {"Show daily drop", Game::Screen::DailyDrop}, {"Show age gate", Game::Screen::AgeGate}, {"Show notif primer", Game::Screen::NotifPrimer},
+        {"Show replay primer", Game::Screen::ReplayPrimer}, {"Show shop", Game::Screen::Shop}, {"Show locker", Game::Screen::Locker},
+        {"Show missions", Game::Screen::Missions}};
+    for (const auto& [label, screen] : kShow) {
+        Env env;
+        Game g(env.svc());
+        openGameTab(g);
+        g.scrollBy(100000);
+        step(g, 0.1f);
+        const bool tapped = g.tapButton(std::string("dev:") + label);
+        step(g, 0.3f);
+        check(tapped && g.screen() == screen, (std::string(label) + ": opens it").c_str());
+    }
+    {   // Continue belongs to a crash: the button starts a run and crashes it, and the offer comes up as in play
+        Env env;
+        Game g(env.svc()); // (an ad is ready, so a continue can be offered)
+        openGameTab(g);
+        g.scrollBy(100000);
+        step(g, 0.1f);
+        check(g.tapButton("dev:Show continue"), "Show continue");
+        step(g, 0.3f);
+        check(g.screen() == Game::Screen::None && g.state() == Game::State::Play, "...starts a run");
+        for (int i = 0; i < 60 * 4 && g.screen() != Game::Screen::Continue; ++i) g.update(1.0 / 60.0);
+        check(g.state() == Game::State::Dead && g.screen() == Game::Screen::Continue, "...crashes it, and the Continue offer comes up");
+        step(g, 0.5f);
+        const bool watched = g.tapButton("Watch ad");
+        for (int i = 0; i < 60 * 3 && g.state() != Game::State::Play; ++i) g.update(1.0 / 60.0);
+        check(watched && env.ads.rewardedShows == 1 && g.state() == Game::State::Play, "...whose buttons work as in play (an ad revives the run)");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -173,5 +225,6 @@ int main() {
     botPlays();
     botSpareEggs();
     botKeepsGoing();
+    showScreens();
     return finish("GameDev");
 }

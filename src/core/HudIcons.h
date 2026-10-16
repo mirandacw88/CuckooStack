@@ -3,7 +3,7 @@
 
 namespace cs {
 
-constexpr int kIconCols = 8, kIconRows = 17;
+constexpr int kIconCols = 8, kIconRows = 19;
 
 enum class Icon : int {
     Coin = 0,
@@ -51,19 +51,29 @@ enum class Icon : int {
     BtnGold = 62,
     BtnDark = 64,
     RibbonBest = 66,
-    OutfitClassic = 72,
-    OutfitMidnight = 74,
-    OutfitVapor = 76,
-    OutfitToxic = 78,
-    OutfitIce = 88,
-    OutfitLava = 90,
-    OutfitGold = 92,
-    OutfitChrome = 94,
-    OutfitTiger = 104,
-    OutfitHolo = 106,
-    OutfitSakura = 108,
-    OutfitGlitch = 110,
-    Pile9000 = 120,
+    DropCoin = 68,
+    DropChest = 69,
+    DropTv = 70,
+    DropTileGreen = 71,
+    DropTilePurple = 72,
+    DropTileBlue = 73,
+    DropTilePink = 74,
+    DropClaim = 75,
+    DropClaim2 = 77,
+    DropFrame = 80,
+    OutfitClassic = 88,
+    OutfitMidnight = 90,
+    OutfitVapor = 92,
+    OutfitToxic = 94,
+    OutfitIce = 104,
+    OutfitLava = 106,
+    OutfitGold = 108,
+    OutfitChrome = 110,
+    OutfitTiger = 120,
+    OutfitHolo = 122,
+    OutfitSakura = 124,
+    OutfitGlitch = 126,
+    Pile9000 = 136,
 };
 
 constexpr int kCoinFrames = 8;
@@ -82,6 +92,9 @@ constexpr int iconSpan(Icon i) {
     case Icon::BtnGold: return 2;
     case Icon::BtnDark: return 2;
     case Icon::RibbonBest: return 2;
+    case Icon::DropClaim: return 2;
+    case Icon::DropClaim2: return 2;
+    case Icon::DropFrame: return 4;
     case Icon::OutfitClassic: return 2;
     case Icon::OutfitMidnight: return 2;
     case Icon::OutfitVapor: return 2;

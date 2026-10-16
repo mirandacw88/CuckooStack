@@ -1166,6 +1166,7 @@ void Game::update(double rawDt) {
     const float dt = rdt * (freeze_ > 0 ? 0.04f : timeScale_);
     time_ += dt;
     updateBot(rdt); // (before the run moves on: it lays like a tap would)
+    if (debugCrash_ && state_ == State::Play && run_.seconds > 0.5f) { debugCrash_ = false; die(false); } // (Show continue)
 
     if (state_ == State::Play) updatePlay(dt, rdt);
     else danger_ += (0 - danger_) * std::min(1.f, dt * 6);

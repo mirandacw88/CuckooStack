@@ -1086,66 +1086,183 @@ void Game::hudMissions() {
 }
 
 // ---------------------------------------------------------------- daily drop (7-day ladder)
+// The Daily Drop: the artist's panel (assets/hud/source/daily_drop_mockup.jpg, sprites cut by
+// scripts/hud/extract_drop_sprites.py). Laid out in the mockup's pixels (its frame is 625 wide), scaled to the panel.
+// Today's tile is green and breathes, tomorrow's purple, day 7's pink with the chest; claimed days dim with a tick.
+// Coins bob and glint, the chest hovers in sparkles, CLAIM pulses with a sheen and CLAIM X2 trails sparkles.
+namespace {
+const HudImg kDropFrame{Icon::DropFrame, 710, 178, 6};
+const HudImg kDropTileGreen{Icon::DropTileGreen, 233, 257, 4}; // (its glow reaches 12% past the others' edge)
+const HudImg kDropTilePurple{Icon::DropTilePurple, 207, 229, 4};
+const HudImg kDropTileBlue{Icon::DropTileBlue, 207, 229, 4};
+const HudImg kDropTilePink{Icon::DropTilePink, 207, 232, 4};
+const HudImg kDropClaim{Icon::DropClaim, 285, 123, 4};
+const HudImg kDropClaim2{Icon::DropClaim2, 319, 121, 4};
+float hash01(int k) { const float v = std::sin(float(k) * 127.1f + 311.7f) * 43758.5453f; return v - std::floor(v); }
+} // namespace
+
 void Game::hudDailyDrop() {
-    const float W = viewW_;
-    const float pw = std::min(W - 24, 380.f);
-    const float gap = 8, cell = (pw - 32 - 3 * gap) / 4;
-    const float contentH = 2 * (cell * 1.1f) + gap + 24 + 60;
-    const Panel p = hudPanel("Daily drop", dropClaimed_ >= 0 ? "Collected!" : "Your reward", pw, contentH, kGreen, true);
-    const bool claimable = drop_.claimable();
-    const int next = drop_.dayIndex();             // the step claimable now (or tomorrow's, once claimed)
-    const int today = dropClaimed_ >= 0 ? dropClaimed_ : next;
-    const int week = drop_.claims() / 7;            // which lap of the ladder (for the "claimed" ticks)
-    (void)week;
-    float y = p.top;
+    const float W = viewW_, H = viewH_;
+    const float pw = std::min(W - 20, 390.f), M = pw / 625.f; // mockup px -> points
+    const float ph = std::min(642.f * M, H - safeTop_ - safeBottom_ - 16);
+    const float k = easeOut(screenT_ / 0.32f), pop = easeOutBack(screenT_ / 0.4f, 1.4f);
+    const glm::vec2 c{W / 2, std::clamp(H / 2 + 30.f * (1.f - pop), safeTop_ + 8 + ph / 2, H - safeBottom_ - 8 - ph / 2)};
+    const float top = c.y - ph / 2, left = c.x - pw / 2;
+    auto at = [&](float mx, float my) { return glm::vec2{left + mx * M, top + my * M}; }; // a point of the mockup
+    const bool claimable = drop_.claimable(), claimed = dropClaimed_ >= 0;
+    const int next = drop_.dayIndex();
+    const int today = claimed ? dropClaimed_ : next;
+    const float t = screenT_;
+
+    // ---- backdrop and the panel: the tech frame (9-sliced, its corner notches kept), a faint grid, a scan line
+    hudRect({W / 2, H / 2}, {W, H}, kInk, 0.74f * k);
+    hudRect(c, {pw * 1.04f, ph * 1.03f}, css("#3fd0ff"), 0.10f * k, Shape::RadialGlow);
+    const glm::vec2 fsize{pw, ph};
+    hudImage9(kDropFrame, c, fsize * (0.94f + 0.06f * pop), {200, 89}, glm::vec2(170.f, 76.f) * M, k); // (the mockup's thick bevel)
+    {
+        const float gx0 = left + 26 * M, gx1 = left + pw - 26 * M, gy0 = top + 26 * M, gy1 = top + ph - 26 * M;
+        for (float x = gx0 + 22 * M; x < gx1; x += 34 * M) hudRect({x, (gy0 + gy1) / 2}, {1.f, gy1 - gy0}, css("#3fd0ff"), 0.045f * k);
+        for (float y = gy0 + 22 * M; y < gy1; y += 34 * M) hudRect({(gx0 + gx1) / 2, y}, {gx1 - gx0, 1.f}, css("#3fd0ff"), 0.045f * k);
+        const float scan = gy0 + std::fmod(t * 60.f, gy1 - gy0); // a soft line sweeping down the glass
+        hudRect({(gx0 + gx1) / 2, scan}, {gx1 - gx0, 26 * M}, css("#3fd0ff"), 0.05f * k, Shape::RadialGlow);
+    }
+
+    // ---- the title: DAILY DROP (green, glowing) over "Your reward" / "Collected!" (chromatic split)
+    TextStyle tag = style(FontId::BodyBold, 22 * M, css("#5dffa8"), 0.22f, true);
+    tag.shadows = {blur(10, kGreen, 0.75f)};
+    tag.opacity = k;
+    hudText("Daily drop", tag, c.x, at(0, 52).y - text_->lineBox(tag) / 2);
+    TextStyle head = style(FontId::Display, 44 * M, kText, 0.f, false, 1.05f);
+    head.shadows = {hard(-2, kHot), hard(2, kNeon)};
+    head.opacity = k;
+    hudText(claimed ? "Collected!" : "Your reward", head, c.x, at(0, 108).y - text_->lineBox(head) / 2);
+
+    // ---- the seven days: four on top, three below
     for (int i = 0; i < 7; ++i) {
         const int row = i < 4 ? 0 : 1, col = i < 4 ? i : i - 4;
-        const float rowW = row == 0 ? 4 * cell + 3 * gap : 3 * cell + 2 * gap;
-        const float w = (i == 6) ? cell * 1.0f : cell;
-        const glm::vec2 c{p.c.x - rowW / 2 + cell / 2 + col * (cell + gap) + (i == 6 ? 0 : 0), y + row * (cell * 1.1f + gap) + cell * 0.55f};
-        const bool past = dropClaimed_ >= 0 ? i <= dropClaimed_ : i < next;
-        const bool isToday = i == today;
-        const Up a = up(screenT_, 0.05f + i * 0.04f);
-        const float al = p.k * a.alpha;
-        const float pop = isToday && dropClaimed_ >= 0 ? 1.f + 0.18f * std::max(0.f, 1.f - (screenT_ - dropT_) * 3.f) : 1.f;
-        hudTile({c.x, c.y + a.dy}, glm::vec2(w, cell * 1.1f) * pop, isToday ? kGreen : past ? kMuted : kViolet, al, isToday, {});
-        TextStyle d = style(FontId::BodyBold, 10, isToday ? kGreen : kMuted, 0.14f, true);
+        const glm::vec2 tc = at(312.5f + (row == 0 ? col - 1.5f : col - 1.f) * 142.f, row == 0 ? 230.f : 388.f);
+        const bool past = claimed ? i < dropClaimed_ : i < next, isToday = i == today, isDay7 = i == 6;
+        const bool tomorrow = i == (today + 1) % 7 && !isDay7 && !isToday && !past;
+        const Up a = up(t, 0.06f + i * 0.045f);
+        const float al = k * a.alpha;
+        glm::vec2 p{tc.x, tc.y + a.dy};
+        // today breathes (and pops when it's just been collected)
+        const float breathe = isToday && !claimed ? 1.f + 0.035f * std::sin(t * 3.4f) : 1.f;
+        const float stamp = isToday && claimed ? 1.f + 0.22f * std::max(0.f, 1.f - (t - dropT_) * 3.f) : 1.f;
+        const glm::vec2 size = glm::vec2(128.f, 140.f) * M * breathe * stamp;
+        if (isToday) hudRect(p, size * 1.7f, kGreen, (0.32f + 0.12f * std::sin(t * 3.4f)) * al, Shape::RadialGlow);
+        if (isDay7 && !past) hudRect(p, size * 1.6f, kHot, (0.22f + 0.08f * std::sin(t * 2.3f)) * al, Shape::RadialGlow);
+        const HudImg& tile = isToday && !isDay7 ? kDropTileGreen : isDay7 ? kDropTilePink : tomorrow ? kDropTilePurple : kDropTileBlue;
+        const float dim = past && !isToday ? 0.55f : 1.f;
+        hudImage(tile, p, &tile == &kDropTileGreen ? size * glm::vec2(233.f / 207.f, 257.f / 229.f) : size, al, glm::vec3(dim));
+        // its label, in the tile's own colour
+        const glm::vec3 lc = isToday ? css("#7dffb6") : isDay7 ? css("#ffd6f6") : tomorrow ? css("#d9b8ff") : css("#b5d4ff");
+        TextStyle d = style(FontId::BodyBold, 17 * M, lc * dim, 0.06f, true);
+        d.shadows = {blur(6, lc, 0.5f * dim)};
         d.opacity = al;
-        hudText("Day " + std::to_string(i + 1), d, c.x, c.y + a.dy - cell * 0.5f);
-        if (i == 6) hudSprite(past ? Icon::ChestOpen : Icon::ChestClosed, {c.x, c.y + a.dy}, cell * 0.72f, 0, glm::vec3(1.f), al);
-        else hudCoin({c.x, c.y + a.dy}, cell * 0.44f, al * (past && !isToday ? 0.5f : 1.f), isToday ? -1.f : 0.f);
-        TextStyle amt = style(FontId::Display, 12, past && !isToday ? kMuted : kGold);
+        hudText("Day " + std::to_string(i + 1), d, p.x, p.y - size.y * 0.5f + 12 * M);
+        // the prize: a coin that bobs and glints now and then, or day 7's chest hovering in sparkles
+        const float bob = std::sin(t * 2.6f + i * 0.9f) * 2.5f * M;
+        if (isDay7) {
+            const float hover = std::sin(t * 2.f) * 3.f * M;
+            hudSprite(Icon::DropChest, {p.x, p.y + 4 * M + hover}, 104 * M * (1.f + 0.03f * std::sin(t * 4.f)), 0.03f * std::sin(t * 1.7f), glm::vec3(dim), al);
+            if (!past)
+                for (int s2 = 0; s2 < 6; ++s2) {
+                    const float ph2 = std::fmod(t * 0.45f + hash01(s2) , 1.f);
+                    const glm::vec2 sp{p.x + (hash01(s2 + 9) - 0.5f) * 90 * M, p.y + 30 * M - ph2 * 70 * M};
+                    hudRect(sp, glm::vec2(9 * M * std::sin(ph2 * kPi)), css("#ffb8f2"), 0.9f * al * std::sin(ph2 * kPi), Shape::RadialGlow);
+                }
+        } else {
+            const glm::vec2 cc{p.x, p.y + 2 * M + bob};
+            hudSprite(Icon::DropCoin, cc, 58 * M, 0, glm::vec3(dim), al);
+            const float g = std::fmod(t * 0.5f + hash01(i) * 3.f, 3.f); // a glint every 3 s, staggered
+            if (g < 0.35f && !past) {
+                const float e = std::sin(g / 0.35f * kPi);
+                const glm::vec2 gp = cc + glm::vec2(-14, -14) * M;
+                hudRect(gp, {26 * M * e, 3.f}, glm::vec3(1.f), 0.9f * e * al, Shape::RadialGlow);
+                hudRect(gp, {3.f, 26 * M * e}, glm::vec3(1.f), 0.9f * e * al, Shape::RadialGlow);
+            }
+        }
+        TextStyle amt = style(FontId::Display, 22 * M, css("#ffe27a") * dim, 0.06f);
+        amt.shadows = {blur(6, kGold, 0.4f * dim)};
         amt.opacity = al;
-        hudText(grouped(tune_.dailyDrop[i]), amt, c.x, c.y + a.dy + cell * 0.26f);
-        if (past && !isToday) hudSprite(Icon::Check, {c.x + w / 2 - 10, c.y + a.dy - cell * 0.45f}, 22, 0, glm::vec3(1.f), al);
+        hudText(grouped(tune_.dailyDrop[i]), amt, p.x, p.y + size.y * 0.5f - 34 * M);
+        if (past && !isToday) hudSprite(Icon::Check, {p.x + size.x * 0.36f, p.y - size.y * 0.36f}, 34 * M, 0, glm::vec3(1.f), al);
+        if (isToday && claimed) { // the stamp: a tick that lands with the pop
+            const float e = easeOutBack(seg(t - dropT_, 0.05f, 0.35f), 2.2f);
+            hudSprite(Icon::Check, {p.x + size.x * 0.36f, p.y - size.y * 0.36f}, 40 * M * e, 0, glm::vec3(1.f), al);
+        }
     }
-    y += 2 * (cell * 1.1f) + gap + 24;
-    if (claimable) {
-        auto claim = [this, p](bool twice) {
+
+    // ---- the buttons: CLAIM (pulsing, a sheen sweeping across) and CLAIM X2 (TV icon baked in, sparkles rising)
+    const Up ba = up(t, 0.4f);
+    const float bk = k * ba.alpha;
+    const float by = at(0, 532).y + ba.dy;
+    auto green = [&](glm::vec2 bc, float bw, std::string_view label, std::function<void()> fn) {
+        const float pulse = 1.f + 0.035f * std::sin(t * 4.2f);
+        const glm::vec2 bs = glm::vec2(bw, 74 * M) * pulse;
+        hudRect(bc, bs * glm::vec2(1.25f, 1.9f), kGreen, 0.22f * bk, Shape::RadialGlow);
+        hudImage3(kDropClaim, bc, bs, bk);
+        const float sweep = std::fmod(t * 0.7f, 1.6f); // a sheen crossing every ~2.3 s
+        if (sweep < 1.f)
+            hudRect({bc.x - bs.x * 0.42f + sweep * bs.x * 0.84f, bc.y}, {16 * M, bs.y * 0.62f}, glm::vec3(1.f), 0.32f * bk * std::sin(sweep * kPi), Shape::RadialGlow, 0, 0.35f);
+        TextStyle tl = style(FontId::Display, 23 * M, css("#063a1e"), 0.06f, true);
+        tl.opacity = bk;
+        hudText(label, tl, bc.x, bc.y - text_->lineBox(tl) / 2 - 1);
+        uiHit(bc, bs, std::move(fn));
+    };
+    if (claimable && !claimed) {
+        auto claim = [this, c](bool twice) {
             const int step = drop_.claim();
             if (step < 0) return;
             dropClaimed_ = step;
             dropT_ = screenT_;
             dropCoins_ = tune_.dailyDrop[step] * (twice ? 2 : 1);
             wallet_.earn(dropCoins_, twice ? "daily_drop_x2" : "daily_drop");
-            flyCoins(p.c, dropCoins_, 14);
-            hudBurst(p.c, 40, {kGreen, kGold, kVolt}, 420.f, true);
+            flyCoins(c, dropCoins_, 14);
+            hudBurst(c, 40, {kGreen, kGold, kVolt}, 420.f, true);
             sfx(Sfx::SurgeStart); buzz(25);
             track("daily_drop", {{"step", std::to_string(step + 1)}, {"doubled", twice ? "1" : "0"}});
         };
         const bool adOk = rewardReady(Placement::DropDouble) && !profile_.child();
         if (adOk) {
-            const Icon ad = Icon::AdBadge;
+            nextHitLabel_ = "Claim";
+            green(at(169, 0) + glm::vec2(0, by - top), 170 * M, "Claim", [claim] { claim(false); });
+            // CLAIM X2
+            const glm::vec2 xc{at(427, 0).x, by};
+            // (stretched only right of its TV icon, which is part of the art; the label sits right of the icon)
+            const glm::vec2 xs = glm::vec2(228 * M, 76 * M) * (1.f + 0.02f * std::sin(t * 3.f + 1.f));
+            hudRect(xc, xs * glm::vec2(1.2f, 1.9f), kHot, (0.24f + 0.08f * std::sin(t * 3.f)) * bk, Shape::RadialGlow);
+            hudImage3(kDropClaim2, xc, xs, bk, glm::vec3(1.f), 112);
+            TextStyle xl = style(FontId::Display, 21 * M, kText, 0.03f, true);
+            xl.shadows = {blur(6, kHot, 0.6f)};
+            xl.opacity = bk;
+            hudText("Claim x2", xl, xc.x + xs.x * 0.15f, xc.y - text_->lineBox(xl) / 2 - 1);
+            for (int s2 = 0; s2 < 8; ++s2) { // sparkles drifting up off it
+                const float ph2 = std::fmod(t * 0.35f + hash01(s2 + 40), 1.f);
+                const glm::vec2 sp{xc.x + (hash01(s2 + 50) - 0.5f) * xs.x * 1.05f, xc.y - xs.y * 0.3f - ph2 * 60 * M};
+                hudRect(sp, glm::vec2(8 * M * std::sin(ph2 * kPi)), css("#ff8ef0"), 0.85f * bk * std::sin(ph2 * kPi), Shape::RadialGlow);
+            }
             nextHitLabel_ = "x2 drop";
-            hudActionButton("Claim x2", &ad, 0, {p.c.x + 70, y + 26}, kHot, p.k, true, [this, claim] { requestReward(Placement::DropDouble, [claim] { claim(true); }); }, 0.9f);
-            hudButton("Claim", {p.c.x - 90, y + 26}, kGreen, p.k, false, [claim] { claim(false); }, 0.9f);
+            uiHit(xc, xs, [this, claim] { requestReward(Placement::DropDouble, [claim] { claim(true); }); });
         } else {
-            hudButton("Claim", {p.c.x, y + 26}, kGreen, p.k, true, [claim] { claim(false); });
+            nextHitLabel_ = "Claim";
+            green({c.x, by}, 200 * M, "Claim", [claim] { claim(false); });
         }
         primary_ = [claim] { claim(false); };
     } else {
-        hudButton("Done", {p.c.x, y + 26}, kNeon, p.k, false, [this] { dropClaimed_ = -1; closeScreen(); });
+        nextHitLabel_ = "Done";
+        green({c.x, by}, 200 * M, "Done", [this] { dropClaimed_ = -1; closeScreen(); });
         primary_ = [this] { dropClaimed_ = -1; closeScreen(); };
+    }
+
+    // ---- close, on the frame's top-right corner
+    {
+        const glm::vec2 xc = at(595, 27);
+        const float e = easeOutBack(seg(t, 0.12f, 0.45f), 2.4f);
+        hudSprite(Icon::Close, xc, 62 * M * 1.25f * e * (1.f + 0.03f * std::sin(t * 3.1f)), 0.08f * std::sin(t * 2.3f), glm::vec3(1.f), k);
+        nextHitLabel_ = "Close";
+        uiHit(xc, {50, 50}, [this] { dropClaimed_ = -1; closeScreen(); });
     }
 }
 
@@ -1191,8 +1308,8 @@ void Game::hudDev() {
     const float W = viewW_;
     const float pw = std::min(W - 24, 400.f);
     const float inner = pw - 2 * 18;
-    // ---- what this tab shows: a list of (label, state, action) buttons, two per row
-    enum class St { Plain, On, Owned, Locked };
+    // ---- what this tab shows: a list of (label, state, action) buttons, two per row; a Header starts a new section
+    enum class St { Plain, On, Owned, Locked, Header };
     struct B { std::string label; St st; std::function<void()> fn; };
     std::vector<B> bs;
     std::string note;
@@ -1225,36 +1342,44 @@ void Game::hudDev() {
     case 2: cosmetics(Slot::Trail); break;
     case 3: cosmetics(Slot::Crash); break;
     default: {
+        auto section = [&](const char* name) { bs.push_back({name, St::Header, {}}); };
         // the bot: it plays your runs (GameBot.cpp)
+        section("Bot");
         const BotOptions bo = botOptions();
         auto bot = [this](auto change) { BotOptions o = botOptions(); change(o); debugSetBot(o); };
         bs.push_back({bo.on ? "Bot plays: on" : "Bot plays: off", bo.on ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.on = !o.on; }); }});
         bs.push_back({bo.loop ? "Bot keeps going: on" : "Bot keeps going: off", bo.loop ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.loop = !o.loop; }); }});
         bs.push_back({bo.spare ? "Bot spare eggs: 2" : "Bot spare eggs: 0", bo.spare ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.spare = o.spare ? 0 : 2; }); }});
         bs.push_back({bo.sloppy ? "Bot sloppy: on" : "Bot sloppy: off", bo.sloppy ? St::On : St::Plain, [bot] { bot([](BotOptions& o) { o.sloppy = !o.sloppy; }); }});
-        bs.push_back({"Rank +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
-        bs.push_back({"Rank 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
-        bs.push_back({"Rank 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
-        bs.push_back({"Course level -1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() - 1); }});
-        bs.push_back({"Course level +1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() + 1); }});
-        bs.push_back({"Jump to level 10", St::Plain, [this] { campaign_.debugSetLevel(10); }});
-        bs.push_back({"Reset levels", St::Plain, [this] { campaign_.debugReset(); }});
+        section("Next run");
         bs.push_back({debugNearFinish_ ? "Near finish: armed" : "Next run: near finish", debugNearFinish_ ? St::On : St::Plain,
                       [this] { debugNearFinish_ = !debugNearFinish_; }});
         bs.push_back({debugRaids_ ? "Droid raids: armed" : "Next run: droid raids", debugRaids_ ? St::On : St::Plain,
                       [this] { debugRaids_ = !debugRaids_; }});
+        bs.push_back({boost_ == Boost::Surge ? "Overdrive start: armed" : "Free Overdrive Start", boost_ == Boost::Surge ? St::On : St::Plain,
+                      [this] { boost_ = Boost::Surge; }});
+        section("Level & rank");
+        bs.push_back({"Course level -1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() - 1); }});
+        bs.push_back({"Course level +1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() + 1); }});
+        bs.push_back({"Jump to level 10", St::Plain, [this] { campaign_.debugSetLevel(10); }});
+        bs.push_back({"Reset levels", St::Plain, [this] { campaign_.debugReset(); }});
+        bs.push_back({"Rank +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
+        bs.push_back({"Rank 1", St::Plain, [this] { prog_.debugSetLevel(1); }});
+        bs.push_back({"Rank 15", St::Plain, [this] { prog_.debugSetLevel(14); levelGained(prog_.add(prog_.xpToNext())); }});
+        section("Streak & daily drop");
         bs.push_back({"Streak 7 days", St::Plain, [this] { dayStreak_.debugSet(7, 0); }});
         bs.push_back({"Streak missed 1 day", St::Plain, [this] { dayStreak_.debugSet(5, 2); }});
         bs.push_back({"Streak reset", St::Plain, [this] { dayStreak_.debugSet(0, 0); }});
         bs.push_back({"Daily drop again", St::Plain, [this] { drop_.debugSet(drop_.claims(), true); }});
+        bs.push_back({"Daily drop day 1", St::Plain, [this] { drop_.debugSet(0, true); }});
         bs.push_back({"Daily drop day 7", St::Plain, [this] { drop_.debugSet(6, true); }});
+        section("Missions");
         bs.push_back({"Complete missions", St::Plain, [this] {
             for (const Mission& m : missions_.list())
                 missionProgress(m.kind == MissionKind::Distance ? missions_.recordDistance(m.target) : missions_.record(m.kind, m.target));
         }});
         bs.push_back({"New missions", St::Plain, [this] { for (int i = 0; i < 3; ++i) missions_.reroll(i); }});
-        bs.push_back({boost_ == Boost::Surge ? "Overdrive start: armed" : "Free Overdrive Start", boost_ == Boost::Surge ? St::On : St::Plain,
-                      [this] { boost_ = Boost::Surge; }});
+        section("Ads & audience");
         bs.push_back({adPolicy_.removeAds() ? "Remove ads: on" : "Remove ads: off", adPolicy_.removeAds() ? St::On : St::Plain,
                       [this] { adPolicy_.setRemoveAds(!adPolicy_.removeAds()); }});
         bs.push_back({"Reset ad caps", St::Plain, [this] { adPolicy_.debugReset(false); showMessage("Ad caps cleared"); }});
@@ -1264,20 +1389,44 @@ void Game::hudDev() {
             profile_.setAudience(child ? Audience::Child : Audience::Teen);
             svc_.ads->setAudience(child);
         }});
+        section("Show a screen");
         const std::pair<const char*, Screen> screens[] = {{"Show rank-up", Screen::LevelUp}, {"Show starter offer", Screen::Starter},
                                                           {"Show streak save", Screen::StreakSave}, {"Show daily drop", Screen::DailyDrop},
-                                                          {"Show parental gate", Screen::ParentalGate}, {"Show age gate", Screen::AgeGate}};
+                                                          {"Show parental gate", Screen::ParentalGate}, {"Show age gate", Screen::AgeGate},
+                                                          {"Show notif primer", Screen::NotifPrimer}, {"Show replay primer", Screen::ReplayPrimer},
+                                                          {"Show shop", Screen::Shop}, {"Show locker", Screen::Locker}, {"Show missions", Screen::Missions}};
         for (const auto& [label, s] : screens) bs.push_back({label, St::Plain, [this, s = s] { switchScreen(s); }});
+        // the Continue offer belongs to a crash: start a run and crash it, so its buttons work as in play
+        bs.push_back({"Show continue", St::Plain, [this] {
+            screenStack_.clear(); screen_ = Screen::None; primary_ = nullptr;
+            if (state_ != State::Play) start();
+            debugCrash_ = true;
+        }});
         note = "Course level " + std::to_string(campaign_.level()) + " · rank " + std::to_string(prog_.level()) + " · streak " + std::to_string(dayStreak_.count()) + " · drop day " +
                std::to_string(drop_.dayIndex() + 1) + " · runs " + std::to_string(adPolicy_.lifetimeRuns());
         break;
     }
     }
     // ---- layout
-    constexpr float tabH = 34, rowH = 40, gap = 8;
+    constexpr float tabH = 34, rowH = 40, gap = 8, headH = 30;
     constexpr int kRows = 14; // every tab gets at least this height so the tabs never move under a finger
-    const int rows = int(bs.size() + 1) / 2;
-    const float listH = 22 + std::max(kRows, rows) * (rowH + gap); // the note, then the buttons
+    // where each item goes (its centre's y from the list top, and its column; -1 = a full-width section header)
+    std::vector<std::pair<float, int>> place;
+    float ly = 22; // (under the note)
+    int colNow = 0;
+    for (const B& b : bs) {
+        if (b.st == St::Header) {
+            if (colNow) { ly += rowH + gap; colNow = 0; } // (a section starts on its own row)
+            place.push_back({ly + (place.empty() ? 0.f : 6.f) + headH / 2, -1});
+            ly += headH + (place.size() > 1 ? 6.f : 0.f);
+            continue;
+        }
+        place.push_back({ly + rowH / 2, colNow});
+        if (++colNow == 2) { colNow = 0; ly += rowH + gap; }
+    }
+    if (colNow) ly += rowH + gap;
+    const float realH = ly;
+    const float listH = std::max(22 + kRows * (rowH + gap), realH); // the note, then the buttons
     const float contentH = tabH + 14 + listH;
     const Panel p = hudPanel("Staging only", "Developer", pw, contentH, kVolt, true);
     float y = p.top;
@@ -1299,7 +1448,7 @@ void Game::hudDev() {
     const float viewTop = y - 4, viewBot = p.c.y + p.size.y / 2 - 46; // (clear of the panel's rounded bottom corners)
     scroll_.active = true;
     scroll_.view = {{p.c.x, (viewTop + viewBot) / 2}, {p.size.x / 2, (viewBot - viewTop) / 2}};
-    scroll_.max = std::max(0.f, 22 + rows * (rowH + gap) - (viewBot - viewTop) + 8); // (the real list, not the padding)
+    scroll_.max = std::max(0.f, realH - (viewBot - viewTop) + 8); // (the real list, not the padding)
     const float top = y - scroll_.y;
     auto fade = [&](float cy, float h) { // 1 inside the viewport, to 0 as it slides past an edge
         return std::clamp(std::min(cy - h / 2 - viewTop, viewBot - (cy + h / 2)) / (h * 0.6f) + 1.f, 0.f, 1.f);
@@ -1309,7 +1458,19 @@ void Game::hudDev() {
     if (n.opacity > 0.01f) hudText(note, n, p.c.x, top);
     const float bw = (inner - gap) / 2;
     for (size_t i = 0; i < bs.size(); ++i) {
-        const glm::vec2 c{p.c.x + (i % 2 ? 1.f : -1.f) * (bw / 2 + gap / 2), top + 22 + (i / 2) * (rowH + gap) + rowH / 2};
+        if (place[i].second < 0) { // a section header: its name in volt caps, a line running out to the right edge
+            const float hy = top + place[i].first, f = fade(hy, headH);
+            if (f <= 0.01f) continue;
+            TextStyle h = style(FontId::BodyBold, 11, kVolt, 0.18f, true);
+            h.shadows = {blur(6, kVolt, 0.35f)};
+            h.opacity = p.k * f;
+            const float x0 = p.c.x - inner / 2 + 2;
+            hudText(bs[i].label, h, x0, hy - text_->lineBox(h) / 2, TextAlign::Left);
+            const float tw2 = text_->measure(bs[i].label, h) + 10;
+            hudRect({(x0 + tw2 + p.c.x + inner / 2) / 2, hy}, {p.c.x + inner / 2 - x0 - tw2, 1.f}, kVolt, 0.3f * p.k * f);
+            continue;
+        }
+        const glm::vec2 c{p.c.x + (place[i].second ? 1.f : -1.f) * (bw / 2 + gap / 2), top + place[i].first};
         const float f = fade(c.y, rowH);
         if (f <= 0.01f) continue;
         const float a = p.k * f;

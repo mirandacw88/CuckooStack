@@ -2,6 +2,7 @@
 // buttons on screen, closes, and does what its buttons say. Settings toggles, the parental gate in front of under-13
 // purchases (and its maths question), the boost tiles' coins / ad choice, and the staging-only developer menu.
 #include "TestUtil.h"
+#include "core/HudIcons.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -215,6 +216,100 @@ void boostTiles() {
     check(p.coins() == before - 150, "no ad: the boost costs 150 coins");
 }
 
+// the HUD atlas rect a sprite instance samples (its UV rect, in atlas cells)
+int spriteCell(const Instance& in) { return int(in.emissive.y * kIconRows + 1e-3f) * kIconCols + int(in.emissive.x * kIconCols + 1e-3f); }
+int sprites(const Game& g, Icon icon) { // instances drawn from that sprite's cell(s)
+    const int first = int(icon), last = first + iconSpan(icon) - 1;
+    int n = 0;
+    const RenderList& l = g.renderList();
+    for (size_t i = 0; i < l.hud.size(); ++i)
+        if (l.hudKind[i] == HudSprite) { const int c = spriteCell(l.hud[i]); n += c >= first && c <= last; }
+    return n;
+}
+
+void dailyDrop() {
+    // the artist's Daily Drop (assets/hud/source/daily_drop_mockup.jpg): its frame, seven day tiles in their states,
+    // coins and the day 7 chest, CLAIM and the ad's CLAIM X2
+    {
+        Env env;
+        env.st.kv["cluckstack-drop"] = "claims=0;last=2026-10-07;"; // day 1, claimable
+        Game g(env.svc());
+        g.resize(430, 932);
+        g.debugRecordHud(true);
+        step(g, 0.2f);
+        g.debugOpenScreen("drop");
+        step(g, 1.f);
+        check(g.screen() == Game::Screen::DailyDrop && drew(g, "Your reward"), "Daily Drop: opens on \"Your reward\"");
+        bool days = true;
+        for (int d = 1; d <= 7; ++d) days = days && drew(g, "Day " + std::to_string(d));
+        check(days && drew(g, "20") && drew(g, "250"), "...seven days, labelled, with their coins");
+        check(sprites(g, Icon::DropFrame) == 9, "...in the artist's tech frame (9-sliced)");
+        check(sprites(g, Icon::DropTileGreen) == 1 && sprites(g, Icon::DropTilePurple) == 1 && sprites(g, Icon::DropTileBlue) == 4 &&
+                  sprites(g, Icon::DropTilePink) == 1,
+              "...today green, tomorrow purple, day 7 pink, the rest blue");
+        check(sprites(g, Icon::DropCoin) == 6 && sprites(g, Icon::DropChest) == 1, "...a coin on days 1-6, the chest on day 7");
+        check(sprites(g, Icon::DropClaim) == 3 && sprites(g, Icon::DropClaim2) == 3, "...CLAIM and CLAIM X2 (3-sliced) side by side");
+        bool onScreen = true;
+        for (const auto& b : g.buttons())
+            onScreen = onScreen && b.c.x - b.half.x >= 0 && b.c.x + b.half.x <= 430 && b.c.y - b.half.y >= 0 && b.c.y + b.half.y <= 932;
+        check(onScreen, "...every button on screen");
+        // the tiles breathe and the coins bob: the frame differs a moment later
+        const std::vector<Instance> a = g.renderList().hud;
+        step(g, 0.3f);
+        bool moved = false;
+        const std::vector<Instance>& b = g.renderList().hud;
+        for (size_t i = 0; i < std::min(a.size(), b.size()) && !moved; ++i) moved = a[i].model != b[i].model;
+        check(moved, "...and it's animated");
+        const int before = g.coins();
+        check(g.tapButton("Claim"), "CLAIM");
+        step(g, 0.5f);
+        check(g.coins() == before + 20 && drew(g, "Collected!") && drew(g, "Done"), "...collects day 1's 20 coins: \"Collected!\", and Done");
+        check(sprites(g, Icon::Check) >= 1, "...its tile stamped with a tick");
+        check(g.tapButton("Done") && (step(g, 0.3f), g.screen() == Game::Screen::None), "Done closes it");
+    }
+    {   // CLAIM X2: through a rewarded ad, double the coins
+        Env env;
+        env.st.kv["cluckstack-drop"] = "claims=6;last=2026-10-07;"; // day 7
+        Game g(env.svc());
+        g.resize(430, 932);
+        g.debugRecordHud(true);
+        step(g, 0.2f);
+        g.debugOpenScreen("drop");
+        step(g, 1.f);
+        check(sprites(g, Icon::DropTileGreen) == 0 && sprites(g, Icon::DropTilePink) == 1, "day 7 is today: its tile stays pink (the chest's)");
+        const int before = g.coins();
+        check(g.tapButton("x2 drop"), "CLAIM X2");
+        step(g, 0.5f);
+        check(env.ads.rewardedShows == 1 && g.coins() == before + 500, "...plays the ad, then pays day 7's 250 twice");
+    }
+    {   // no ad ready: one CLAIM, centred
+        Env env;
+        env.ads.state = RewardedState::Unavailable;
+        env.st.kv["cluckstack-drop"] = "claims=0;last=2026-10-07;";
+        Game g(env.svc());
+        g.resize(430, 932);
+        step(g, 0.2f);
+        g.debugOpenScreen("drop");
+        step(g, 1.f);
+        glm::vec2 c{-1};
+        for (const auto& b : g.buttons()) if (b.label == "Claim") c = b.c;
+        check(sprites(g, Icon::DropClaim2) == 0 && std::abs(c.x - 215.f) < 1.f, "no ad ready: a single CLAIM, centred");
+    }
+    {   // the smallest phone: the panel fits
+        Env env;
+        env.st.kv["cluckstack-drop"] = "claims=0;last=2026-10-07;";
+        Game g(env.svc());
+        g.resize(320, 568);
+        step(g, 0.2f);
+        g.debugOpenScreen("drop");
+        step(g, 1.f);
+        bool onScreen = !g.buttons().empty();
+        for (const auto& b : g.buttons())
+            onScreen = onScreen && b.c.x + b.half.x <= 320.f / (568.f / 780.f < 0.8f ? 0.8f : 568.f / 780.f) + 1;
+        check(onScreen, "an iPhone SE: everything fits");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -223,5 +318,6 @@ int main() {
     settings();
     parentalGate();
     boostTiles();
+    dailyDrop();
     return finish("GameUi");
 }

@@ -30,6 +30,10 @@
 
 namespace cs {
 
+// An artist PNG packed into the HUD atlas by make_hud_icons.py's paste step: its pixel size and the cell padding it was
+// packed with locate it exactly in its cell(s), so it can be drawn edge to edge, or sliced (Game::hudImage*)
+struct HudImg { Icon icon; float w, h, pad; };
+
 class Game {
 public:
     // How long the end of a run plays before any panel (and before the replay clip ends): the crash's slow-motion
@@ -351,6 +355,7 @@ private:
     float clearT_ = -1;                   // seconds since crossing the finish line (-1: not crossed this run)
     bool runCleared_ = false;
     bool debugNearFinish_ = false;
+    bool debugCrash_ = false;      // developer menu (Show continue): crash the run just started, to bring up the Continue offer
     bool titleMusic_ = false;             // the soundtrack has been started on the title screen        // developer menu: the next run starts 30 m before the finish line             // the last run ended at the finish line (Level Cleared screen)
     int clearCoins_ = 0;                  // coins for that clear
     void applyCosmetics();
@@ -483,6 +488,13 @@ private:
     void hudAtlasQuad(glm::vec4 uv, glm::vec2 center, glm::vec2 size, float rot, glm::vec3 tint, float alpha);
     void hudFrost(glm::vec2 c, glm::vec2 size, float radius, float amount);
     void hudNineSlice(Icon frame, glm::vec2 center, glm::vec2 size, float corner, glm::vec3 tint, float alpha, float slice = 0.25f);
+    glm::vec4 hudImgUV(const HudImg& img, glm::vec4 px) const; // a rect of the image (its pixels) -> atlas UV
+    void hudImage(const HudImg& img, glm::vec2 center, glm::vec2 size, float alpha, glm::vec3 tint = glm::vec3(1.f));
+    // stretched sideways through its middle: the end caps (half its height each) keep their shape
+    // (leftCap: the left end's width in image pixels, when something there mustn't stretch; 0 = half its height)
+    void hudImage3(const HudImg& img, glm::vec2 center, glm::vec2 size, float alpha, glm::vec3 tint = glm::vec3(1.f), float leftCap = 0);
+    // 9-sliced: `src` = corner size in image pixels, `dst` = on screen
+    void hudImage9(const HudImg& img, glm::vec2 center, glm::vec2 size, glm::vec2 src, glm::vec2 dst, float alpha, glm::vec3 tint = glm::vec3(1.f));
     // pill button; `fn` (if any) runs when it's tapped. Returns its size.
     glm::vec2 hudButton(std::string_view label, glm::vec2 center, glm::vec3 color, float alpha, bool glow, std::function<void()> fn = {}, float scale = 1.f);
     bool privacyButton_ = false; // title-screen 'Privacy settings' (UMP), refreshed each frame on the title

@@ -402,7 +402,19 @@ ICONS = [("Coin", [coin(a) for a in (0, 22.5, 45, 67.5, 90, 112.5, 135, 157.5)])
          ("BtnBlue", [png("btn_blue", 2, 6, fill=True)], {"span": 2, "raw": True}),
          ("BtnGold", [png("btn_gold", 2, 6, fill=True)], {"span": 2, "raw": True}),
          ("BtnDark", [png("btn_dark", 2, 6, fill=True)], {"span": 2, "raw": True}),
-         ("RibbonBest", [png("ribbon_best", 2, 4)], {"span": 2, "raw": True})]
+         ("RibbonBest", [png("ribbon_best", 2, 4)], {"span": 2, "raw": True}),
+         # Daily Drop art (scripts/hud/extract_drop_sprites.py), pasted with Pillow: (png name, padding, glow)
+         ("DropCoin", [""], {"raw": True, "paste": ("drop_coin", 12, 0.45)}),
+         ("DropChest", [""], {"raw": True, "paste": ("drop_chest", 10, 0.5)}),
+         ("DropTv", [""], {"raw": True, "paste": ("drop_tv", 34, 0.35)}),
+         ("DropTileGreen", [""], {"raw": True, "paste": ("drop_tile_green", 4, 0)}),   # today (art includes its glow)
+         ("DropTilePurple", [""], {"raw": True, "paste": ("drop_tile_purple", 4, 0)}), # tomorrow
+         ("DropTileBlue", [""], {"raw": True, "paste": ("drop_tile_blue", 4, 0)}),     # the other days
+         ("DropTilePink", [""], {"raw": True, "paste": ("drop_tile_pink", 4, 0)}),     # day 7
+         ("DropClaim", [""], {"span": 2, "raw": True, "paste": ("drop_claim", 4, 0)}),
+         ("DropClaim2", [""], {"span": 2, "raw": True, "paste": ("drop_claim2", 4, 0)}),
+         # the panel frame, 4:1, 9-sliced by hudNineSlice with corners wide enough for its tech notches
+         ("DropFrame", [""], {"span": 4, "raw": True, "paste": ("drop_frame", 6, 0)})]
 
 # Locker outfit tiles (scripts/hud/extract_outfit_tiles.py): 2 x 2 cells each (384 px wide = 3x of a ~125 pt tile),
 # packed after everything else, four per double row. Enum names follow the cosmetic ids (hen_lava -> OutfitLava).
@@ -464,6 +476,11 @@ def paste_tiles(png_path, first_row):
         s = min(bw / t.width, bh / t.height)
         t = t.resize((round(t.width * s), round(t.height * s)), Image.LANCZOS)
         atlas.alpha_composite(t, (col * F + (2 * F - t.width) // 2, row * F + (2 * F - t.height) // 2))
+    # cells no sprite owns in the sprite rows are blank (a reused atlas may still hold what was there before)
+    owned = {i + k for name, i, n, span in ENUM if i < first_row * COLS for k in range(n * span)}
+    for k in range(first_row * COLS):
+        if k not in owned:
+            atlas.paste(Image.new("RGBA", (F, F)), ((k % COLS) * F, (k // COLS) * F))
     paste_raster(atlas, {name: (i, span) for name, i, n, span in ENUM})
     # 3 x 2 (etc.) blocks below the tiles
     by = first_row + (len(TILES) + COLS // 2 - 1) // (COLS // 2) * 2
