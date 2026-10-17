@@ -1,5 +1,4 @@
-// The course generator (Level.cpp), beyond byte-for-byte parity with the web build (tests/level_parity.cpp):
-// its fairness rules over many seeds, sector breathers, the finish runway, determinism, lookups, and the blocks,
+// The course generator (Level.cpp): its fairness rules over many seeds (the egg budget: every climb affordable), sector breathers, the finish runway, determinism, lookups, and the blocks,
 // dance-floor tiles and barriers built from the segments.
 #include "TestUtil.h"
 #include "core/Difficulty.h"
@@ -32,10 +31,7 @@ void fairness() {
                 if (i + 1 < l.segs.size())
                     underBarrier = underBarrier && l.segs[i + 1].h <= s.ceil - int(std::ceil(HEN_H / U));
             }
-            // (exception, kept for parity with the web build: a sector breather is always 12 crates, even right after
-            // a tall wall, so it can be shorter than this rule asks. Flagged for a design decision, not changed.)
-            const bool breather = s.h == 0 && cols(s) == 12 && std::floor(s.x0 / SECTOR) > std::floor(p.x0 / SECTOR);
-            if (s.h < p.h && !breather) {
+            if (s.h < p.h) { // (sector breathers too: after a tall wall they get the full landing run)
                 drops++;
                 // the flat run after a drop: long enough to land and react (the segment that dropped)
                 const double fall = std::sqrt(2.0 * (p.h - s.h) * U / 36.0);
@@ -61,7 +57,7 @@ void sectors() {
     for (int sec = 1; sec * SECTOR < 700; ++sec) {
         bool found = false;
         for (const Segment& s : l.segs)
-            if (s.x0 >= sec * SECTOR && s.x0 < sec * SECTOR + 20 && s.h == 0 && cols(s) == 12) found = true;
+            if (s.x0 >= sec * SECTOR && s.x0 < sec * SECTOR + 20 && s.h == 0 && cols(s) >= 12) found = true; // (longer: the egg budget)
         int corn = 0;
         for (const Corn& c : l.corns) corn += c.x >= sec * SECTOR && c.x < sec * SECTOR + 12 * U + 20;
         breathers = breathers && found && corn >= 3;
@@ -170,8 +166,57 @@ void blocks() {
 
 } // namespace
 
+// The egg budget: a careful player (a full meter at the start, refilling per metre at the curve's pace, stacking just
+// enough, so every climb is paid from the meter) can afford every step up, on every course: the endless daily one and
+// every campaign level (each starting 35 m further along the curve, at 0.35x)
+void eggBudget() {
+    auto affordable = [](const Level& l, double& worst) {
+        double meter = Level::kBudgetCap;
+        for (size_t i = 0; i < l.segs.size(); ++i) {
+            const Segment& s = l.segs[i];
+            const int prev = i ? l.segs[i - 1].h : 0;
+            if (s.h > prev) {
+                worst = std::min(worst, meter - (s.h - prev));
+                meter -= s.h - prev;
+            }
+            const Curve c = l.curveAt(s.x0);
+            meter = std::min(Level::kBudgetCap, meter + (s.x1 - s.x0) / (c.speed * c.regen * 1.1));
+        }
+    };
+    double worst = 99;
+    for (uint32_t seed = 1; seed <= 60; ++seed) {
+        Level l;
+        l.reset(seed * 2654435761u);
+        l.generateUntil(3000);
+        affordable(l, worst);
+    }
+    check(worst >= Level::kBudgetMargin - 1e-6, "egg budget: every climb on the endless course is affordable (with eggs to spare)");
+    double worstLevels = 99;
+    for (int level = 1; level <= 40; ++level)
+        for (uint32_t seed = 1; seed <= 5; ++seed) {
+            Level l;
+            l.reset(seed * 7919u + uint32_t(level));
+            l.setDifficulty(35.0 * (level - 1), 0.35);
+            l.setFinish(300.0 + 10.0 * (level - 1));
+            l.generateUntil(l.finish() + 20);
+            affordable(l, worstLevels);
+        }
+    check(worstLevels >= Level::kBudgetMargin - 1e-6, "...and on every campaign level, 1 to 40");
+    // without it, the same courses ask for more than the meter holds (the rule is doing the work)
+    double worstOff = 99;
+    for (uint32_t seed = 1; seed <= 60; ++seed) {
+        Level l;
+        l.reset(seed * 2654435761u);
+        l.setEggBudget(false);
+        l.generateUntil(3000);
+        affordable(l, worstOff);
+    }
+    check(worstOff < 0, "...(switched off, the same seeds give climbs no meter can pay for)");
+}
+
 int main() {
     fairness();
+    eggBudget();
     sectors();
     finishLine();
     determinism();

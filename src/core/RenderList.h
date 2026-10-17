@@ -33,6 +33,8 @@ enum class MeshId : uint8_t {
     Plane,       // 1x1 in XY, facing +Z
     RingFlat,    // ring 0.86..1 in XY (shockwaves)
     Circle,      // r=1 disc in XY
+    Pyramid,     // square pyramid: base 1x1 at y = -0.5, apex at y = 0.5 (Neon Egypt's pyramids, pyramidions)
+    Frustum,     // tapered square block: base 1x1 at y = -0.5, top 0.7x0.7 at y = 0.5 (obelisk shafts, temple pylons)
     // the title screen's jet droid (DroidModel.h), one mesh per part, in the droid's own space
     DroidBody, DroidEye, DroidFanL, DroidFanR, DroidShroud, DroidBackplate, DroidFlame,
     // the hen model (HenModel.h), one mesh per colour region; skinned on the CPU every frame (RenderList::heroVerts)
@@ -46,7 +48,12 @@ static_assert(kMeshCount <= 255, "MeshId is a uint8_t");
 // Procedural surface patterns, evaluated in the lit fragment shader instead of uploading canvas textures.
 // HeroTexture: the textured hen model's albedo (frame set binding 2); warm bright texels glow by the emissive amount
 // DroidTexture: the title droid's albedo + normal map (bindings 6, 7); its bright neon trims glow by the emissive amount
-enum class Pattern : uint8_t { None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5, HeroTexture = 6, DroidTexture = 7 };
+// Stone: Neon Egypt's dark glossy stone with glowing Tron edge lines (emissive = the line colour), color.a stone courses
+//   (0: the course's blocks, with a glyph band; 1: plain); TronFloor: the zones' obsidian street with its glowing grid
+//   (minor lines in rimColor, rim strength 0; major lines in emissive)
+enum class Pattern : uint8_t {
+    None = 0, Container = 1, Hazard = 2, Asphalt = 3, Windows = 4, DiscoBall = 5, HeroTexture = 6, DroidTexture = 7, Stone = 8, TronFloor = 9
+};
 
 // Shape masks for the unlit shader (replaces the small canvas gradient textures).
 enum class Shape : uint8_t {

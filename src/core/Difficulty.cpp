@@ -15,7 +15,7 @@ Curve curve(double d) {
     return {
         D,
         mix(8.0, 12.4),             // speed, m/s
-        mix(0.5, 0.92),             // seconds per egg
+        mix(0.5, 0.4),              // seconds per egg: faster at full speed, so eggs per metre stay near level 1's (was 0.92: one egg every 11 m, levels 7+ unbeatable)
         jsRound(mix(1.4, 4.4)),     // tallest single step up, in eggs
         jsRound(mix(4, 8)),         // tallest wall
         jsRound(mix(7, 3)), jsRound(mix(10, 5)),

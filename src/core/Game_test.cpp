@@ -183,6 +183,92 @@ void streetReflection() {
 
 // ---------------------------------------------------------------- wall materials
 
+// the zones (Zone.h): the scenery and the course walls follow the level, on the title and in a run
+void zones() {
+    auto pyramids = [](const Game& g) { return g.renderList().buckets[size_t(Pass::Lit)][size_t(MeshId::Pyramid)].size(); };
+    auto towers = [](const Game& g) {
+        size_t n = 0;
+        for (const Instance& in : g.renderList().buckets[size_t(Pass::Lit)][size_t(MeshId::Box)]) n += int(in.params.z + 0.5f) == int(Pattern::Windows);
+        return n;
+    };
+    struct TrackAudio : IAudio { // (records the soundtrack asked for)
+        int track = -1;
+        void play(Sfx, int) override {}
+        void musicStart(bool) override {}
+        void musicStop(bool) override {}
+        void musicTempo(float) override {}
+        void musicSurge(bool) override {}
+        void setMuted(bool) override {}
+        void musicTrack(int t) override { track = t; }
+    } audio;
+    FakeStorage st = FakeStorage::ready();
+    FakeClock clock;
+    FakeAds ads;
+    ads.state = RewardedState::Unavailable;
+    GameServices s;
+    s.storage = &st; s.clock = &clock; s.ads = &ads; s.audio = &audio;
+    Campaign(&st).debugSetLevel(10);
+    Game g(s);
+    step(g, 0.3f);
+    check(towers(g) > 20 && pyramids(g) == 0 && audio.track != 1, "zones: level 10 is the neon city, with its music (on the title)");
+    g.resize(430, 932);
+    g.debugOpenScreen("dev");
+    step(g, 0.3f);
+    g.tapButton("dev:Game");
+    step(g, 0.1f);
+    g.scrollBy(250); // (the Level & rank section)
+    step(g, 0.1f);
+    check(g.tapButton("dev:Jump to level 11"), "...the developer menu jumps to level 11");
+    g.tapButton("Close");
+    step(g, 0.3f);
+    check(pyramids(g) > 0 && towers(g) == 0, "...and the title turns to Neon Egypt");
+    check(audio.track == 1, "...with its own music (Giza Overdrive)");
+    g.tapButton("Close");
+    // in a run on level 11: the walls are stone blocks with glowing edges and a glyph band (no crates or cyber cubes)
+    g.press();
+    step(g, 0.1f);
+    g.debugStartSurge(); // (invulnerable: past walls of both kinds)
+    int stone = 0, old = 0;
+    bool glyphs = true;
+    for (int i = 0; i < 60 * 4 && g.state() == Game::State::Play; ++i) {
+        g.update(1.0 / 60.0);
+        for (const Instance& in : g.renderList().buckets[size_t(Pass::Lit)][size_t(MeshId::Box)]) {
+            const int p = int(in.params.z + 0.5f);
+            if (p == int(Pattern::Hazard) || p == int(Pattern::Container)) ++old;
+            const bool block = std::abs(glm::length(glm::vec3(in.model[0])) - Uf * 0.985f) < 1e-3f &&
+                               std::abs(glm::length(glm::vec3(in.model[1])) - Uf * 0.985f) < 1e-3f; // (a wall block, not a girder)
+            if (p == int(Pattern::Stone) && block) {
+                ++stone;
+                glyphs = glyphs && in.color.a == 0.f; // (0 courses: the blocks' glyph band)
+            }
+        }
+    }
+    check(stone > 0 && old == 0 && glyphs, "...its walls: stone blocks with glyph bands (no crates or cyber cubes; barriers stone lintels)");
+    // Neon Japan (level 21): its own scene, music slot and walls
+    {
+        TrackAudio audio2;
+        FakeStorage st2 = FakeStorage::ready();
+        GameServices s2 = s;
+        s2.storage = &st2; s2.audio = &audio2;
+        Campaign(&st2).debugSetLevel(21);
+        Game j(s2);
+        step(j, 0.3f);
+        size_t bloom = 0;
+        for (const Instance& in : j.renderList().buckets[size_t(Pass::Lit)][size_t(MeshId::Sphere)]) bloom += in.params.x < 0 && in.emissive.r > in.emissive.g;
+        check(bloom > 20 && towers(j) == 0 && pyramids(j) > 0 && audio2.track == 2, "zones: level 21 is Neon Japan (cherry trees, mountains), asking for its own track");
+        j.press();
+        step(j, 0.1f);
+        j.debugStartSurge();
+        bool pinkStone = false;
+        for (int i = 0; i < 60 * 2 && j.state() == Game::State::Play; ++i) {
+            j.update(1.0 / 60.0);
+            for (const Instance& in : j.renderList().buckets[size_t(Pass::Lit)][size_t(MeshId::Box)])
+                pinkStone = pinkStone || (int(in.params.z + 0.5f) == int(Pattern::Stone) && in.color.a == 0.f && in.emissive.r > in.emissive.g && in.emissive.b > in.emissive.g);
+        }
+        check(pinkStone, "...its walls: lacquered blocks with pink glowing edges and glyph bands");
+    }
+}
+
 void wallMaterials() {
     FakeStorage st = FakeStorage::ready();
     FakeClock clock;
@@ -458,6 +544,7 @@ int main() {
     gameSide();
     streetReflection();
     wallMaterials();
+    zones();
     liteEffects();
     frameSummaryAndPad();
     return finish("Game");

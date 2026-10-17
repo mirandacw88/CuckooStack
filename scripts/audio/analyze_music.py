@@ -5,8 +5,8 @@ its loudest section, written to src/core/audio/MusicTracks.inc so the game's vis
     python3 -m pip install numpy
     python3 scripts/audio/analyze_music.py        (macOS: decodes with afconvert)
 
-The soundtrack is one track, played on the title screen and during runs (a surge speeds it up). Re-run after
-replacing the file.
+The soundtrack is a track per zone (the city on levels 1-10, Neon Egypt on 11-20), played on the title screen and
+during runs (a surge speeds it up). Re-run after replacing or adding a file.
 """
 import os
 import struct
@@ -20,7 +20,7 @@ import numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MUSIC = os.path.join(ROOT, "assets", "music")
 OUT = os.path.join(ROOT, "src", "core", "audio", "MusicTracks.inc")
-TRACKS = ["midnight_city_sprint.mp3"]  # the soundtrack (title + runs; a surge plays it faster)
+TRACKS = ["midnight_city_sprint.mp3", "giza_overdrive.mp3", "katana_overdrive.mp3"]  # by zone: the city (1-10), Neon Egypt (11-20), Neon Japan (21-30)
 SR = 22050
 
 

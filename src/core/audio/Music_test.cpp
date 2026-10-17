@@ -1,4 +1,6 @@
-// The recorded soundtrack (audio/Music.h): one track, sped up during a surge, tape stop, restart vs revive; beat grid for the visuals;
+// The recorded soundtrack (audio/Music.h): a track per zone (the city's, Neon Egypt's Giza Overdrive, Neon Japan's Katana
+// Overdrive), switching with a
+// crossfade; sped up during a surge, tape stop, restart vs revive; beat grid for the visuals;
 // the finish-line applause and firework bursts.
 #include "TestUtil.h"
 #include "core/audio/Synth.h"
@@ -22,9 +24,13 @@ double rms(const std::vector<float>& v) { double e = 0; for (float x : v) e += d
 
 int main() {
     const audio::TrackInfo* run = audio::musicTrackInfo(0);
-    check(run && !audio::musicTrackInfo(1), "one track is built in");
-    if (!run) return test::finish("Music");
-    check(std::abs(run->bpm - 155) < 0.5, "beat grid: 155 BPM");
+    const audio::TrackInfo* giza = audio::musicTrackInfo(1);
+    const audio::TrackInfo* katana = audio::musicTrackInfo(2);
+    check(run && giza && katana && !audio::musicTrackInfo(3), "three tracks are built in: the city's, Neon Egypt's and Neon Japan's");
+    if (!run || !giza || !katana) return test::finish("Music");
+    check(std::abs(run->bpm - 155) < 0.5, "beat grid: 155 BPM (the city)");
+    check(std::abs(giza->bpm - 160) < 0.5 && giza->length > 180, "...160 BPM, 3 minutes (Giza Overdrive)");
+    check(std::abs(katana->bpm - 155) < 0.5 && katana->length > 175, "...155 BPM, 3 minutes (Katana Overdrive)");
 
     audio::Synth s(48000);
     double bpm = 0, first = 0, pos = 0, rate = 0;
@@ -78,6 +84,38 @@ int main() {
     out.clear();
     play(s, 1, &out);
     check(rms(out) < 1e-4, "muted: no applause");
+
+    // the zones' tracks: Neon Egypt's plays its own beat grid; switching while it plays crossfades to the other from
+    // its top; the beat grid follows the track you hear
+    {
+        audio::Synth z(48000);
+        z.musicTrack(1);
+        z.musicStart(true);
+        std::vector<float> egypt;
+        play(z, 2, &egypt);
+        check(rms(egypt) > 0.02 && z.musicBeat(bpm, first, pos, rate) && std::abs(bpm - giza->bpm) < 0.01 && std::abs(pos - 2) < 0.05,
+              "Neon Egypt: Giza Overdrive plays from its top, with its beat grid (160 BPM)");
+        z.musicTrack(0);
+        std::vector<float> mid;
+        play(z, 0.2, &mid);
+        check(rms(mid) > 0.01, "...switching zones crossfades (no gap of silence)");
+        play(z, 1);
+        check(z.musicBeat(bpm, first, pos, rate) && std::abs(bpm - run->bpm) < 0.01 && pos < 1.5,
+              "...to the city's track, from its top, and the visuals follow its beat");
+        z.musicTrack(2); // Neon Japan
+        play(z, 1.2);
+        check(z.musicBeat(bpm, first, pos, rate) && std::abs(first - katana->firstBeat) < 1e-6 && pos < 1.5,
+              "Neon Japan: Katana Overdrive, from its top, with its own beat grid");
+        z.musicTrack(7);
+        play(z, 0.6);
+        check(z.musicBeat(bpm, first, pos, rate) && std::abs(first - run->firstBeat) < 1e-6, "a track not built in: the city's");
+        // chosen before the music starts (the title on level 11): it starts on that track
+        audio::Synth t(48000);
+        t.musicTrack(1);
+        t.musicStart(true);
+        play(t, 0.5);
+        check(t.musicBeat(bpm, first, pos, rate) && std::abs(bpm - giza->bpm) < 0.01, "picked before the music starts: it starts on that track");
+    }
 
     // the applause: heard on its own, played once, not cut off when the music fades out (a level clear)
     audio::Synth c(48000);

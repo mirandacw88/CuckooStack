@@ -30,6 +30,9 @@ public:
     virtual void musicTempo(float bpm) = 0;
     virtual void musicSurge(bool on) = 0;            // party pattern during a surge; the song resumes where it left off
     virtual void setMuted(bool muted) = 0;
+    // which recorded soundtrack plays (0: the city's, 1: Neon Egypt's, 2: Neon Japan's); switching while it plays crossfades to the new
+    // track from its top. No-op without a recorded soundtrack.
+    virtual void musicTrack(int track) { (void)track; }
     // A recorded soundtrack's beat grid, for visuals in time with the music: false = none (synth or no audio);
     // otherwise its tempo and first-beat time (track seconds), the playback position and the playback rate.
     virtual bool musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const {

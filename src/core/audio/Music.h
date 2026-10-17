@@ -1,4 +1,4 @@
-// The recorded soundtrack (assets/music, embedded): one track on the title screen and during runs. The MP3 is
+// The recorded soundtrack (assets/music, embedded): a track per zone (select()), on the title screen and during runs. The MP3 is
 // decoded while it plays (no full-length PCM in memory), resampled to the device rate and mixed in stereo under the
 // synth's sound effects (Synth::render).
 //
@@ -35,6 +35,9 @@ public:
     void stop(bool tapeStop);
     void surge(bool on);
     void cheer();                       // the finish-line applause, from the start
+    // the track to play (0: the city's, 1: Neon Egypt's, 2: Neon Japan's; out of range: 0). Playing: crossfades to it from its top
+    void select(int track);
+    int selected() const { return current_; }
     void setMuted(bool muted) { muted_ = muted; }
     void render(float* out, int frames, int channels, float outRate); // adds into interleaved `out`
 
@@ -48,6 +51,7 @@ private:
     std::vector<std::unique_ptr<Track>> tracks_;
     std::unique_ptr<Track> cheer_;      // nullptr: couldn't be decoded
     bool cheering_ = false;
+    int current_ = 0;
     bool ok_ = false, playing_ = false, muted_ = false, surging_ = false;
     float master_ = 0.f, masterTarget_ = 0.f, rate_ = 1.f;   // master fade; tape-stop rate
     float surgeRate_ = 1.f;                                  // playback speed: eases up to kSurgeRate in a surge

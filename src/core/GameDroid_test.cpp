@@ -26,6 +26,8 @@ struct RecordingAudio : IAudio {
     void musicTempo(float) override {}
     void musicSurge(bool) override {}
     void setMuted(bool) override {}
+    int track = 0;
+    void musicTrack(int t) override { track = t; }
     int count(Sfx s) const { int n = 0; for (auto& p : played) n += p.first == s; return n; }
 };
 
@@ -245,7 +247,7 @@ void raid(int shots) {
 
 void fromLevel5() {
     // levels 1-4: no raids; from level 5: one (its introduction), from level 7: one or two
-    for (int level = 1; level <= 8; ++level) {
+    for (int level : {1, 2, 3, 4, 5, 6, 7, 8, 11, 15}) { // (11, 15: Neon Egypt too)
         size_t most = 0, least = 9;
         for (int run = 0; run < 12; ++run) {
             Env env;

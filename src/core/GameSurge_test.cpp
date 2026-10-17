@@ -1,5 +1,6 @@
 // Headless acceptance checks for Surge mode (Surge.h), driving the real Game at a fixed 60 Hz step.
 #include "TestUtil.h"
+#include "core/Campaign.h"
 
 #include <cstdio>
 
@@ -80,6 +81,22 @@ int main() {
         check(g.state() == Game::State::Play && !st.surging && st.chain == 0 && st.graceT == 0 && st.smashed == 0 &&
                   g.liveSmashDebris() == 0, "restart resets surge state, timers and debris");
         check(st.partyK < 0.01f, "restart resets party visuals");
+    }
+    {   // 6. coming out of the surge with a tall stack: she sheds the eggs the course ahead can't take (a low barrier
+        // after the next drop would otherwise be unpassable: level 28), keeping only what its walls ask for
+        Env env;
+        Game g(env.svc());
+        g.press();
+        run(g, 0.2f);
+        g.debugStartSurge();
+        for (int i = 0; i < 7; ++i) { g.press(); run(g, 0.12f); } // stacked high while the surge smashes the walls
+        const int carried = g.eggCount();
+        run(g, 4.f);
+        const int during = g.eggCount();
+        run(g, 1.2f); // the surge and its grace end
+        std::printf("      carried %d, after the surge %d\n", carried, g.eggCount());
+        check(carried >= 6 && during == carried, "a stack rides through the surge untouched (it smashes walls, not eggs)");
+        check(g.state() == Game::State::Play && g.eggCount() <= 4, "...and when it's over she sheds what level 1's walls don't need (at most 4)");
     }
     std::printf("%s\n", failures ? "SURGE TESTS FAILED" : "all surge checks passed");
     return failures ? 1 : 0;

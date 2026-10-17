@@ -13,7 +13,10 @@ void sCurve() {
     check(a.D == 0 && b.D == 1 && std::abs(m.D - 0.5) < 1e-12, "D: 0 at the start, 0.5 halfway, 1 at 350 m");
     check(far.D == 1 && far.speed == b.speed && far.cap == b.cap, "past 350 m: a flat plateau");
     check(neg.D == 0 && neg.speed == a.speed, "before the start: clamped to the start");
-    check(a.speed == 8.0 && b.speed == 12.4 && a.regen == 0.5 && b.regen == 0.92, "speed 8 -> 12.4 m/s, refill 0.5 -> 0.92 s per egg");
+    check(a.speed == 8.0 && b.speed == 12.4 && a.regen == 0.5 && b.regen == 0.4, "speed 8 -> 12.4 m/s, refill 0.5 -> 0.4 s per egg");
+    // eggs per metre: never much stingier at full speed than at the start (a slow refill at top speed starved the
+    // later levels: 0.92 s per egg at 12.4 m/s is one egg every 11.4 m)
+    check(b.speed * b.regen < 1.3 * a.speed * a.regen, "...so an egg refills every ~5 m at full speed (4 m at the start)");
     check(a.cap == 4 && b.cap == 8 && a.maxUp == 1 && b.maxUp == 4, "walls: up to 4 eggs tall, then 8; steps up 1 -> 4");
     check(a.minLen == 7 && a.maxLen == 10 && b.minLen == 3 && b.maxLen == 5, "segments get shorter (7-10 -> 3-5)");
     check(a.gap == 4 && b.gap == 3, "barrier clearance 4 eggs -> 3");

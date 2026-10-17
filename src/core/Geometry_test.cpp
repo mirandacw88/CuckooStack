@@ -79,6 +79,15 @@ void library() {
     const Stats egg = inspect(lib[size_t(MeshId::Egg)]);
     check(std::abs((egg.hi.y - egg.lo.y) - 0.6f * 0.49f * 2) < 1e-3f, "the egg: one egg unit (0.6 m) tall, near enough");
     check(inspect(lib[size_t(MeshId::Box)]).ccw && size3(inspect(lib[size_t(MeshId::Box)]), {1, 1, 1}), "the unit box");
+    // Neon Egypt: the pyramid and the tapered block, unit sized, closed, faces pointing out
+    const Stats pyr = inspect(lib[size_t(MeshId::Pyramid)]), fru = inspect(lib[size_t(MeshId::Frustum)]);
+    check(pyr.ccw && pyr.unitNormals && pyr.degenerate == 0 && size3(pyr, {1, 1, 1}) && lib[size_t(MeshId::Pyramid)].indices.size() == 3 * 6,
+          "the pyramid: 1 x 1 base, 1 tall, four sides and a base, faces out");
+    check(fru.ccw && fru.unitNormals && fru.degenerate == 0 && size3(fru, {1, 1, 1}) && lib[size_t(MeshId::Frustum)].indices.size() == 3 * 12,
+          "the tapered block: four sides, base and top, faces out");
+    float topW = 0;
+    for (const Vertex& v : lib[size_t(MeshId::Frustum)].vertices) if (v.pos.y > 0.49f) topW = std::max(topW, 2 * std::abs(v.pos.x));
+    check(std::abs(topW - 0.7f) < 1e-5f, "...its top 0.7 wide (it tapers)");
     // the jet droid: each part of its model (DroidModel.h) becomes its own mesh, every vertex and triangle carried over
     const DroidModel& droid = droidModel();
     bool same = droid.ok;

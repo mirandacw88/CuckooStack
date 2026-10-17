@@ -22,6 +22,7 @@ layout(location = 4) flat out vec4 vColor;
 layout(location = 5) flat out vec4 vEmissive;
 layout(location = 6) flat out vec4 vRim;
 layout(location = 7) flat out vec4 vParams;
+layout(location = 8) out vec3 vLocal; // the mesh's own position (unit space: the patterns that follow its edges)
 
 void main() {
     mat4 model = mat4(iModel0, iModel1, iModel2, iModel3);
@@ -32,6 +33,7 @@ void main() {
     vNormal = m3 * (inNormal * invSq);
     vWorld = world.xyz;
     vObj = world.xyz - model[3].xyz;
+    vLocal = inPos;
     vUv = inUv;
     vColor = iColor; vEmissive = iEmissive; vRim = iRim; vParams = iParams;
     gl_Position = F.viewProj * world;

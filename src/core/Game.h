@@ -180,6 +180,7 @@ private:
     // surge mode (tuning in Surge.h)
     void startSurge();
     void endSurge();
+    void shedAfterSurge();
     void resetSurge();
     bool smashing() const { return surging_ || graceT_ > 0.f; }
     void smashAhead();
@@ -329,6 +330,7 @@ private:
     DroidRaid raid_;
     struct Bot { bool on = false, loop = false, sloppy = false, short_ = false; int spare = 0; float cooldown = 0, restartT = 0; double rolledFor = -1; } bot_;
     void updateBot(float rdt);
+    static int zoneGrade(Zone z) { return z == Zone::Egypt ? 4 : z == Zone::Japan ? 5 : 0; } // the colour grade per zone (Game.cpp grade())
     std::vector<double> raidPlan_;            // this run's raids: where along the course they fall due
     size_t raidNext_ = 0;
     bool debugRaids_ = false;                 // developer menu: the next run's droid raids come every ~35 m

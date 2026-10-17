@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <cstdio>
+#include <string>
 
 using namespace cs;
 using namespace test;
@@ -183,6 +185,27 @@ void botPlays() {
     check(Campaign(&env.st).cleared() == 1, "...and the clear counts");
 }
 
+void refillKeepsUp() {
+    // every level can be cleared by a careful player (the bot, stacking just enough): the egg refill keeps up at full
+    // speed (Difficulty.cpp curve()) and the course never asks for a climb the meter can't pay for (Level.h, the egg
+    // budget), and nobody comes out of OVERDRIVE with a stack too tall for the next barrier (Game::shedAfterSurge).
+    // Before these, no level from 7 on could be cleared (egg starvation), and level 28 not after its surge
+    std::string failed;
+    for (int level = 1; level <= 30; ++level) {
+        Env env;
+        env.ads.state = RewardedState::Unavailable;
+        Campaign(&env.st).debugSetLevel(level);
+        Game g(env.svc());
+        g.debugSeed(1);
+        g.debugSetBot({true, false, false, 0});
+        g.press();
+        for (int i = 0; i < 60 * 150 && g.state() == Game::State::Play; ++i) g.update(1.0 / 60.0);
+        if (!g.lastRunCleared()) failed += " " + std::to_string(level);
+    }
+    if (!failed.empty()) std::printf("  not cleared:%s\n", failed.c_str());
+    check(failed.empty(), "every level 1-30 can be cleared by a careful player (eggs keep up with the climbs)");
+}
+
 void botSpareEggs() {
     Env env;
     env.ads.state = RewardedState::Unavailable;
@@ -314,6 +337,7 @@ void showScreens() {
 int main() {
     scrolls();
     botPlays();
+    refillKeepsUp();
     botSpareEggs();
     botSloppy();
     botKeepsGoing();

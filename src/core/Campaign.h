@@ -5,6 +5,7 @@
 
 #include "Level.h"
 #include "Meta.h"
+#include "Zone.h"
 
 #include <cstdint>
 
@@ -15,6 +16,7 @@ public:
     explicit Campaign(IStorage* storage);
 
     int level() const { return level_; }              // current level, from 1
+    Zone zone() const { return zoneOf(level_); }      // its scenery (Zone.h)
     int cleared() const { return cleared_; }          // levels cleared in total
     double best() const { return best_; }             // best distance on the current level, metres
     int attempts() const { return attempts_; }        // attempts on the current level

@@ -35,6 +35,19 @@ bool same(const std::vector<Segment>& a, const std::vector<Segment>& b) {
 } // namespace
 
 int main() {
+    {   // ---- zones: the city, then Neon Egypt on levels 11-20, then the city again
+        bool city = true, egypt = true, japan = true, after = true;
+        for (int l = 1; l <= 10; ++l) city = city && zoneOf(l) == Zone::City;
+        for (int l = 11; l <= 20; ++l) egypt = egypt && zoneOf(l) == Zone::Egypt;
+        for (int l = 21; l <= 30; ++l) japan = japan && zoneOf(l) == Zone::Japan;
+        for (int l = 31; l <= 50; ++l) after = after && zoneOf(l) == Zone::City;
+        check(city && egypt && japan && after, "zones: levels 1-10 the city, 11-20 Neon Egypt, 21-30 Neon Japan, 31+ the city again");
+        check(zoneTrack(Zone::City) == 0 && zoneTrack(Zone::Egypt) == 1 && zoneTrack(Zone::Japan) == 2,
+              "...each with its own soundtrack");
+        Campaign c(nullptr);
+        c.debugSetLevel(11);
+        check(c.zone() == Zone::Egypt, "...a campaign on level 11 is in Egypt");
+    }
     {   // ---- the same course for everyone; every level different
         check(same(courseOf(3, 400), courseOf(3, 400)), "level 3 is the same course every time (and for every player)");
         check(!same(courseOf(1, 400), courseOf(2, 400)), "level 1 and level 2 are different courses");

@@ -39,6 +39,38 @@ MeshData box(float width, float height, float depth) {
     return m;
 }
 
+MeshData frustum(float bottom, float top, float h) {
+    MeshData m;
+    const float b = bottom / 2, t = top / 2, y0 = -h / 2, y1 = h / 2;
+    // the four sides, counter-clockwise seen from outside: corners (x, z) of the base, walked around +y
+    const glm::vec2 c[4] = {{-1, 1}, {1, 1}, {1, -1}, {-1, -1}};
+    for (int i = 0; i < 4; ++i) {
+        const glm::vec2 a2 = c[i], b2 = c[(i + 1) % 4];
+        const glm::vec3 p0{a2.x * b, y0, a2.y * b}, p1{b2.x * b, y0, b2.y * b}, p2{b2.x * t, y1, b2.y * t}, p3{a2.x * t, y1, a2.y * t};
+        const glm::vec3 n = glm::normalize(glm::cross(p1 - p0, (top > 0 ? p3 : p2) - p0));
+        const uint16_t base = uint16_t(m.vertices.size());
+        m.vertices.push_back({p0, n, {0, 0}});
+        m.vertices.push_back({p1, n, {1, 0}});
+        if (top > 0) {
+            m.vertices.push_back({p2, n, {1, 1}});
+            m.vertices.push_back({p3, n, {0, 1}});
+            for (uint16_t k : {0, 1, 2, 0, 2, 3}) m.indices.push_back(uint16_t(base + k));
+        } else {
+            m.vertices.push_back({glm::vec3(0, y1, 0), n, {0.5f, 1}});
+            for (uint16_t k : {0, 1, 2}) m.indices.push_back(uint16_t(base + k));
+        }
+    }
+    auto cap = [&](float r, float y, float ny) { // a square face, facing ny
+        const uint16_t base = uint16_t(m.vertices.size());
+        for (const glm::vec2& q : c) m.vertices.push_back({{q.x * r, y, q.y * r}, {0, ny, 0}, {q.x * 0.5f + 0.5f, q.y * 0.5f + 0.5f}});
+        if (ny > 0) for (uint16_t k : {0, 1, 2, 0, 2, 3}) m.indices.push_back(uint16_t(base + k));
+        else for (uint16_t k : {0, 2, 1, 0, 3, 2}) m.indices.push_back(uint16_t(base + k));
+    };
+    cap(b, y0, -1.f);
+    if (top > 0) cap(t, y1, 1.f);
+    return m;
+}
+
 MeshData sphere(float r, int ws, int hs) {
     MeshData m;
     std::vector<std::vector<size_t>> grid(hs + 1);
@@ -193,6 +225,8 @@ std::vector<MeshData> buildMeshLibrary() {
     at(MeshId::Plane) = geo::plane(1, 1);
     at(MeshId::RingFlat) = geo::ring(0.86f, 1.f, 64);
     at(MeshId::Circle) = geo::circle(1, 24);
+    at(MeshId::Pyramid) = geo::frustum(1, 0, 1);
+    at(MeshId::Frustum) = geo::frustum(1, 0.7f, 1);
     // the title screen's jet droid, one mesh per part (DroidModel.h); empty if its asset is missing
     if (const DroidModel& droid = droidModel(); droid.ok)
         for (int p = 0; p < DroidModel::kParts; ++p) {

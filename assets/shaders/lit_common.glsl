@@ -13,6 +13,7 @@ layout(location = 4) flat in vec4 vColor;
 layout(location = 5) flat in vec4 vEmissive;
 layout(location = 6) flat in vec4 vRim;
 layout(location = 7) flat in vec4 vParams;
+layout(location = 8) in vec3 vLocal;
 layout(location = 0) out vec4 outColor;
 #ifdef LIT_REFLECT
 layout(push_constant) uniform Push { mat4 viewProj; } P; // the reflection puts its depth on the street (below)
@@ -26,7 +27,7 @@ layout(set = 0, binding = 6) uniform sampler2D tDroid;     // the title droid's 
 layout(set = 0, binding = 7) uniform sampler2D tDroidN;    // its tangent-space normal map
 
 const float PI = 3.14159265;
-const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5, P_HERO = 6, P_DROID = 7;
+const int P_CONTAINER = 1, P_HAZARD = 2, P_ASPHALT = 3, P_WINDOWS = 4, P_DISCO = 5, P_HERO = 6, P_DROID = 7, P_STONE = 8, P_TRON_FLOOR = 9;
 
 vec3 lin(vec3 srgb) { return pow(srgb, vec3(2.2)); }
 // Dave Hoskins' "hash without sine": plain ALU, no sin (which is slow on mobile GPUs)
@@ -179,6 +180,58 @@ void main() {
             }
             albedo *= base;
             emissive *= emc * em;
+        } else if (pattern == P_STONE) {
+            // Neon Egypt stone (pyramids, obelisks, pylons, the course's blocks): dark glossy stone cut by glowing
+            // Tron edge lines (between the side faces, and round the base and top), vColor.a horizontal stone courses
+            // (1: none, plain), and on the blocks (0) a band of glyph marks that light up in a sweep; all pulse on the beat.
+            // Lines are measured in the mesh's own unit space and kept ~1.5 px wide on screen (fwidth), at any size or distance.
+            bool lite = F.misc.y > 0.5;
+            float t = lite ? 0.0 : F.cameraPos.w, beat = lite ? 0.0 : F.misc.x;
+            vec3 o = vLocal; // (unit space: -0.5 .. 0.5 on every mesh it's used on)
+            float ax = abs(o.x), az = abs(o.z);
+            bool cap = abs(N.y) > 0.95; // (they only turn about y)
+            // (caps carry no lines: the blocks' tops are under the floor tiles, the monuments' are tiny or unseen)
+            float d = cap ? 1.0 : min(max(ax, az) - min(ax, az), 0.5 - abs(o.y));
+            float w = max(fwidth(d), 1e-5);
+            float edge = 1.0 - smoothstep(w * 0.8, w * 2.2, d);
+            float halo = exp(-d / (w * 7.0)) * 0.3;
+            float courses = vColor.a, groove = 0.0, glyph = 0.0;
+            if (courses > 1.5) { // stone courses: thin glowing seams
+                float fc = fract((o.y + 0.5) * courses), dc = min(fc, 1.0 - fc) / courses;
+                float wc = max(fwidth(dc), 1e-5);
+                groove = 1.0 - smoothstep(wc * 0.6, wc * 1.8, dc);
+            } else if (!cap && courses < 0.5) { // the blocks (0 courses; 1 = plain stone): a band of glyph marks across the face's middle
+                float u = (ax < az ? o.x : o.z) + 0.5, v = o.y + 0.5;
+                if (v > 0.36 && v < 0.64) {
+                    vec2 g = vec2(u * 5.0, (v - 0.36) / 0.28 * 2.0), cell = floor(g), f = fract(g);
+                    float h = hash12(cell + vEmissive.w * 7.13);
+                    bool mark = h > 0.35 && f.x > 0.22 && f.x < 0.78 && f.y > 0.18 && f.y < 0.82 &&
+                                (h < 0.6 ? (f.x < 0.42 || f.y > 0.62) : h < 0.8 ? abs(f.x - 0.5) < 0.12 || abs(f.y - 0.5) < 0.12 : length(f - 0.5) > 0.16);
+                    float sweep = 0.5 + 0.5 * sin(t * 2.4 - u * 6.0 - vEmissive.w * 3.0);
+                    glyph = mark ? 0.55 + 0.45 * sweep : 0.0;
+                }
+            }
+            float pulse = 0.85 + 0.4 * beat;
+            albedo *= (1.0 - 0.45 * groove) * (1.0 - 0.3 * edge);
+            emissive = vEmissive.rgb * (edge * 1.6 + halo + groove * 0.35 + glyph * 0.9) * pulse;
+        } else if (pattern == P_TRON_FLOOR) {
+            // the zones' street: glossy obsidian under a glowing grid, a wave of light running along it, glossier
+            // patches where the puddle mask lies (the reflections stay). Lines every 1.5 m in vRim.rgb (its rim
+            // strength is 0), every 6 m in vEmissive.rgb (Egypt: cyan / gold; Japan: pink / vermilion)
+            bool lite = F.misc.y > 0.5;
+            float t = lite ? 0.0 : F.cameraPos.w, beat = lite ? 0.0 : F.misc.x;
+            vec2 p = vWorld.xz;
+            vec2 fm = fract(p / 1.5), fM = fract(p / 6.0);
+            float dm = min(min(fm.x, 1.0 - fm.x), min(fm.y, 1.0 - fm.y)) * 1.5;
+            float dM = min(min(fM.x, 1.0 - fM.x), min(fM.y, 1.0 - fM.y)) * 6.0;
+            float wm = max(fwidth(dm), 1e-5), wM = max(fwidth(dM), 1e-5);
+            float minor = 1.0 - smoothstep(wm * 0.7, wm * 2.0, dm), major = 1.0 - smoothstep(wM * 0.8, wM * 2.6, dM);
+            float wave = smoothstep(0.82, 1.0, 0.5 + 0.5 * sin((p.x - t * 9.0) * 0.21));
+            float puddle = texture(tPuddle, fract(p / 6.0)).r;
+            albedo *= lin(vec3(0.03, 0.035, 0.06)) * (0.9 + 0.2 * hash12(floor(p * 40.0)));
+            rough = mix(0.32, 0.1, puddle);
+            metal = 0.6;
+            emissive = vRim.rgb * minor * (0.45 + 0.9 * wave) + vEmissive.rgb * major * (1.0 + 0.5 * wave + 0.4 * beat);
         } else if (pattern == P_ASPHALT) {
             // asphMap / asphRough: speckled wet asphalt, glossy puddles tiled every 6 m
             vec2 t = vWorld.xz / 6.0, cell = floor(t), f = fract(t);

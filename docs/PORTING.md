@@ -21,7 +21,7 @@ into a `<canvas>` at startup, and every sound is synthesized live.
 | Constants | `U = 0.6` (egg/crate), `DEPTH = 1.3`, `MAXE = 8`, `SECTOR = 150 m`, `HEN_H = 1.05` | `Level.h`, `Game.h` |
 | Difficulty | `curve(d)`: smoothstep over 350 m → speed 8→12.4 m/s, regen 0.5→0.92 s/egg, wall cap 4→8, segment length, drop/ceiling/corn chances | `Difficulty.cpp` (doubles, bit-exact) |
 | Adaptive difficulty | `DDA`: assist rubber band to today's best, sticking-zone Gaussian relief, skill EMA; changes only speed and refill | `Dda` |
-| Daily course | `mulberry32(seedFor('cluckstack:' + YYYY-MM-DD))` | `Math.h` + `Level::generateUntil` (**verified identical**, `tests/run_level_parity.sh`) |
+| Daily course | `mulberry32(seedFor('cluckstack:' + YYYY-MM-DD))` | `Math.h` + `Level::generateUntil` (was verified identical; since 2026-10-16 the native course has its own rules, e.g. the egg budget, and no longer matches) |
 | Physics | Hen moves at `speed`; wall ahead taller than stack top − 0.06 ⇒ death; otherwise the wall shears `k` eggs (`knock`); exact fit ⇒ `perfect` streak bonus (3 × streak); falling `vy -= 36·dt`; landing squash | `Game::updatePlay` |
 | Barriers | Overhead girder at `ceil` eggs; head above underside ⇒ death; clearance < 0.35 ⇒ `closeCall` +2 | `Game::updatePlay` |
 | Scoring | `floor(distance) + bonus`; disco ball +5 and +1.5 eggs; best / daily best / attempts in `localStorage` | `Game`, `FileStorage` |
@@ -100,7 +100,7 @@ src/platform  PlatformSurface implementations + entry points (Android, iOS, desk
 
 | Check | Result |
 |---|---|
-| Course generator vs. the web build (5 dates × 5 km) | Byte-identical (`tests/run_level_parity.sh`, also `ctest`) |
+| Course generator vs. the web build | No longer compared (the native game diverges on purpose since 2026-10-16; the parity test was removed) |
 | Desktop build (macOS, Apple clang, Ninja) | Clean; the only suppressed warning is `-Wmissing-field-initializers` for `{VK_STRUCTURE_TYPE_…}` |
 | Desktop run (MoltenVK 1.4.2, Apple M2) | Title and gameplay frames captured with `--capture`; visually matches the web build |
 | Missing Vulkan driver | Clean diagnostic, exit code 1 |
