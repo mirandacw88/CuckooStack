@@ -134,11 +134,6 @@ git config core.hooksPath .githooks
 
 GitHub Actions runs the same build and tests when a pull request is opened and on every push to it (`.github/workflows/tests.yml`, macOS).
 
-```bash
-tests/run_level_parity.sh
-```
-
-This needs Node.js. It checks that the C++ course generator reproduces the web build's daily course exactly.
 
 Audio parity: render the native synth (`render_audio`, built with the desktop target) and the web build's own audio
 code through Web Audio for Node (`npm install node-web-audio-api` into some folder), then compare:

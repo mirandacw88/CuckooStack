@@ -6,13 +6,17 @@ namespace cs {
 void Level::reset(uint32_t seed) {
     rng_ = Mulberry32(seed);
     segs.clear(); corns.clear();
-    genX_ = 0; lastH_ = 0; segN_ = 0; genSector_ = 0;
+    genX_ = 0; lastH_ = 0; segN_ = 0; genSector_ = 0; budget_ = kBudgetCap;
 }
+
+// (refill: 1 / (speed x seconds per egg) eggs per metre, with 10% slack for an adaptive-difficulty slowdown)
+double Level::eggsPerUnit(double x) const { const Curve c = curveAt(x); return U / (c.speed * c.regen * 1.1); }
 
 void Level::pushSeg(int len, int h, WallKind kind) {
     Segment s;
     s.x0 = genX_; s.x1 = genX_ + len * U; s.h = h; s.kind = kind;
     segs.push_back(s);
+    if (eggBudget_) creditRun(len, genX_); // (the run along it refills the meter)
     genX_ += len * U; lastH_ = h; segN_++;
 }
 
@@ -40,7 +44,12 @@ bool Level::generateUntil(double xmax) {
         if (sec > genSector_) {
             genSector_ = sec;
             const double x0 = genX_;
-            pushSeg(12, 0, WallKind::Crate);
+            int len = 12;
+            if (lastH_ > 0) { // (after a tall wall: long enough to land and react, like any drop)
+                const double fall = std::sqrt(2.0 * lastH_ * U / 36.0);
+                len = std::max(len, static_cast<int>(std::ceil(curveAt(genX_).speed * (fall + 0.45) / U)));
+            }
+            pushSeg(len, 0, WallKind::Crate);
             for (int k = 0; k < 3; ++k) spawnCorn(x0 + (2.5 + k * 3) * U, (2 + k) * U + 0.25);
             continue;
         }
@@ -60,6 +69,22 @@ bool Level::generateUntil(double xmax) {
         }
         const double r = rng_.next();
         const int prevH = lastH_;
+        if (eggBudget_ && h > lastH_ && !segs.empty()) { // the egg budget: can a careful player afford this climb?
+            const double need = (h - lastH_) + kBudgetMargin;
+            if (budget_ < need) {
+                const int extra = static_cast<int>(std::ceil((need - budget_) / eggsPerUnit(genX_)));
+                if (extra <= kMaxRunup && budget_ + extra * eggsPerUnit(genX_) <= kBudgetCap + 1e-9) {
+                    segs.back().x1 += extra * U; // a longer run-up on the segment before the wall
+                    creditRun(extra, genX_);
+                    genX_ += extra * U;
+                } else { // too long a wait (or more than a full meter): a lower wall, after a full refill if needed
+                    const int extraMax = std::min(kMaxRunup, static_cast<int>(std::ceil((kBudgetCap - budget_) / eggsPerUnit(genX_))));
+                    if (extraMax > 0) { segs.back().x1 += extraMax * U; creditRun(extraMax, genX_); genX_ += extraMax * U; }
+                    h = std::max(lastH_ + 1, std::min(h, lastH_ + static_cast<int>(std::floor(budget_ - kBudgetMargin))));
+                }
+            }
+            budget_ = std::max(0.0, budget_ - (h - lastH_)); // the eggs knocked off climbing it
+        }
         pushSeg(len, h, r < 0.4 ? WallKind::Crate : r < 0.7 ? WallKind::Hay : WallKind::Mix);
         Segment& seg = segs.back();
         // barriers only over rising walls that don't follow a drop (the hen would still be falling)
@@ -68,7 +93,10 @@ bool Level::generateUntil(double xmax) {
             // fairness: you can't pre-stack past a barrier, so it must last long enough to react and lay under it
             const int minUnits = static_cast<int>(std::ceil(c.speed * 0.5 / U));
             const int cur = jsRound((seg.x1 - seg.x0) / U);
-            if (cur < minUnits) { seg.x1 = seg.x0 + minUnits * U; genX_ = seg.x1; }
+            if (cur < minUnits) {
+                if (eggBudget_) creditRun(minUnits - cur, genX_);
+                seg.x1 = seg.x0 + minUnits * U; genX_ = seg.x1;
+            }
         }
         if (rng_.next() < c.corn) {
             const double y = seg.ceil ? h * U + 0.7 : (h + 2 + static_cast<int>(std::floor(rng_.next() * 3))) * U + 0.25;

@@ -1,4 +1,4 @@
-// Difficulty curve and the invisible adaptive difficulty (DDA), ported 1:1 from the web build.
+// Difficulty curve and the invisible adaptive difficulty (DDA) (first ported from the web build; no longer kept in step).
 // The daily course layout never changes; DDA only scales run speed and egg refill.
 #pragma once
 
@@ -9,7 +9,7 @@
 
 namespace cs {
 
-// Doubles on purpose: level generation must match the JS (IEEE double) build bit-for-bit.
+// (Doubles: from the web port; the native game no longer needs to match it.)
 struct Curve {
     double D, speed, regen;
     int maxUp, cap, minLen, maxLen;

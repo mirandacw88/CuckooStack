@@ -104,6 +104,7 @@ void Synth::musicStart(bool fromTop) { push({Command::MusicStart, fromTop ? 1 : 
 void Synth::musicStop(bool sad) { push({Command::MusicStop, sad ? 1 : 0, 0}); }
 void Synth::musicTempo(float bpm) { push({Command::Tempo, 0, bpm}); }
 void Synth::musicSurge(bool on) { push({Command::Surge, on ? 1 : 0, 0}); }
+void Synth::musicTrack(int track) { push({Command::Track, track, 0}); }
 void Synth::setMuted(bool m) { push({Command::Mute, m ? 1 : 0, 0}); }
 
 bool Synth::musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const {
@@ -125,6 +126,7 @@ void Synth::processCommands() {
         case Command::MusicStart: if (music_.ok()) music_.start(c.a != 0); else startMusic(); break;
         case Command::MusicStop: if (music_.ok()) music_.stop(c.a != 0); else stopMusic(c.a != 0); break;
         case Command::Tempo: bpm_ = c.f; break; // (recorded tracks keep their own tempo)
+        case Command::Track: music_.select(c.a); break;
         case Command::Surge:
             if (music_.ok()) { music_.surge(c.a != 0); break; } // the soundtrack speeds up
             if (c.a && playing_ && !muted_ && !party_) { // party music only while the music is audible

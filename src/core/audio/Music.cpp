@@ -112,7 +112,7 @@ MusicPlayer::MusicPlayer() {
         tracks_.push_back(std::move(t));
     }
     ok_ = !tracks_.empty();
-    if (ok_) CS_LOGI("Music: %.0f BPM soundtrack, x%.2f in a surge", tracks_[0]->info.bpm, kSurgeRate);
+    if (ok_) CS_LOGI("Music: %d tracks (%.0f BPM first), x%.2f in a surge", int(tracks_.size()), tracks_[0]->info.bpm, kSurgeRate);
 }
 
 MusicPlayer::~MusicPlayer() = default;
@@ -121,14 +121,25 @@ void MusicPlayer::start(bool fromTop) {
     if (!ok_) return;
     const bool stopping = !playing_ || tapeStopping_ || masterTarget_ <= 0.f; // stopped, or winding / fading down
     if (fromTop && stopping) {
-        Track& t = *tracks_[0];
+        Track& t = *tracks_[size_t(current_)];
         t.seekTo(0);
-        master_ = 0.f; t.gain = 0.f;                // fade in from silence (cuts any wind-down short)
+        master_ = 0.f;                              // fade in from silence (cuts any wind-down short)
+        for (auto& o : tracks_) o->gain = 0.f;
         surgeRate_ = 1.f;
     }
     playing_ = true; tapeStopping_ = false; rate_ = 1.f;
     masterTarget_ = 1.f;
-    tracks_[0]->target = 1.f;
+    for (size_t i = 0; i < tracks_.size(); ++i) tracks_[i]->target = int(i) == current_ ? 1.f : 0.f;
+}
+
+void MusicPlayer::select(int track) {
+    if (!ok_) return;
+    if (track < 0 || track >= int(tracks_.size())) track = 0;
+    if (track == current_) return;
+    current_ = track;
+    Track& t = *tracks_[size_t(current_)];
+    if (playing_ && t.gain <= 0.f) t.seekTo(0); // (fading in from silence: from its top)
+    for (size_t i = 0; i < tracks_.size(); ++i) tracks_[i]->target = int(i) == current_ ? 1.f : 0.f; // crossfade
 }
 
 void MusicPlayer::stop(bool tapeStop) {
@@ -196,8 +207,8 @@ void MusicPlayer::render(float* out, int frames, int channels, float outRate) {
         else out[i] += 0.5f * (L + R) * g;
     }
     // the track's position and speed, for the beat-synced visuals
-    const Track& t = *tracks_[0];
-    beatTrack_.store(0, std::memory_order_relaxed);
+    const Track& t = *tracks_[size_t(current_)];
+    beatTrack_.store(current_, std::memory_order_relaxed);
     beatPos_.store(t.pos / t.srcRate, std::memory_order_relaxed);
     beatRate_.store(double(rate_ * surgeRate_), std::memory_order_relaxed);
 }

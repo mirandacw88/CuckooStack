@@ -1355,6 +1355,8 @@ void Game::hudDev() {
         bs.push_back({"Course level -1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() - 1); }});
         bs.push_back({"Course level +1", St::Plain, [this] { campaign_.debugSetLevel(campaign_.level() + 1); }});
         bs.push_back({"Jump to level 10", St::Plain, [this] { campaign_.debugSetLevel(10); }});
+        bs.push_back({"Jump to level 11 (Egypt)", St::Plain, [this] { campaign_.debugSetLevel(11); }});
+        bs.push_back({"Jump to level 21 (Japan)", St::Plain, [this] { campaign_.debugSetLevel(21); }});
         bs.push_back({"Reset levels", St::Plain, [this] { campaign_.debugReset(); }});
         bs.push_back({"Rank +1 (chest)", St::Plain, [this] { levelGained(prog_.add(prog_.xpToNext() - prog_.xp())); }});
         bs.push_back({"Rank 1", St::Plain, [this] { prog_.debugSetLevel(1); }});

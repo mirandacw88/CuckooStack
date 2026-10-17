@@ -1,5 +1,5 @@
 // Procedural course: wall segments, overhead barriers and disco-ball pickups.
-// generateUntil() consumes the daily mulberry32 stream in exactly the same order as the web build.
+// generateUntil() lays it ahead of the run from a seeded mulberry32 stream; every climb is affordable (the egg budget).
 #pragma once
 
 #include "Difficulty.h"
@@ -40,9 +40,18 @@ public:
     void reset(uint32_t seed);
     bool generateUntil(double xmax);
     // Levels (Campaign.h): difficulty is read at offset + x * scale along the curve, and past `finish` (0 = endless)
-    // only flat, wall-free runway is laid. The defaults reproduce the endless daily course (web parity).
+    // only flat, wall-free runway is laid. The defaults give the endless daily course.
     void setDifficulty(double offset, double scale) { diffOffset_ = offset; diffScale_ = scale; }
     void setFinish(double x) { finish_ = x; }
+    // The egg budget (on by default): every step up must be affordable from the egg meter of a player who stacks just
+    // enough. The generator tracks that meter
+    // (full at the start, refilling per metre at the curve's speed and refill) and, where a climb would need more eggs
+    // than it holds, lengthens the run-up before it (or, past kMaxRunup, lowers the wall). The random stream is
+    // consumed exactly as without it (off: the course as it was, for comparisons).
+    void setEggBudget(bool on) { eggBudget_ = on; }
+    static constexpr double kBudgetCap = 8.0;    // the egg meter's size (Game::MAXE)
+    static constexpr double kBudgetMargin = 0.4; // eggs to spare at every climb (a tap's reaction, DDA slowing the refill)
+    static constexpr int kMaxRunup = 40;         // units a run-up may be lengthened by (24 m) before the wall is lowered instead
     double finish() const { return finish_; }
     Curve curveAt(double x) const { return curve(diffOffset_ + std::max(0.0, x) * diffScale_); }
     void dropBehind(double x) { while (!segs.empty() && segs.front().x1 < x - 14) segs.erase(segs.begin()); }
@@ -61,10 +70,14 @@ public:
 
 private:
     void pushSeg(int len, int h, WallKind kind);
+    double eggsPerUnit(double x) const; // the egg budget: eggs refilled per unit (one egg's width) of run at x
+    void creditRun(double units, double x) { budget_ = std::min(kBudgetCap, budget_ + units * eggsPerUnit(x)); }
     void spawnCorn(double x, double y);
     Mulberry32 rng_;
     double genX_ = 0, diffOffset_ = 0, diffScale_ = 1, finish_ = 0;
     int lastH_ = 0, segN_ = 0, genSector_ = 0;
+    bool eggBudget_ = true;
+    double budget_ = kBudgetCap; // eggs in a careful player's meter at genX_
 };
 
 } // namespace cs

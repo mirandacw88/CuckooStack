@@ -24,6 +24,9 @@ MeshData lathe(const std::vector<glm::vec2>& points, int segments);
 MeshData plane(float w, float h);
 MeshData ring(float inner, float outer, int thetaSegments);
 MeshData circle(float r, int segments);
+// a square frustum, centred: base `bottom` wide at y = -h/2, top `top` wide at y = +h/2 (top 0: a pyramid);
+// flat-shaded (each face its own vertices and normal), uv = (across the face, up it)
+MeshData frustum(float bottom, float top, float h);
 } // namespace geo
 
 // Every mesh in MeshId order.

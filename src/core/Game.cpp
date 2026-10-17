@@ -29,8 +29,10 @@ const Grade& grade(int i) {
         {hexColor("#061b2c"), hexColor("#06203a"), hexColor("#0d3f60"), hexColor("#22c4ff"), hexColor("#29e7ff")}, // ice blue
         {hexColor("#26081a"), hexColor("#2a0a22"), hexColor("#62162c"), hexColor("#ff5a3d"), hexColor("#ff6a3d")}, // red dusk
         {hexColor("#120a3a"), hexColor("#140a40"), hexColor("#2c1a7c"), hexColor("#9a5bff"), hexColor("#9a5bff")}, // violet
+        {hexColor("#0d0b24"), hexColor("#0a1030"), hexColor("#3a2240"), hexColor("#ff9a3a"), hexColor("#29e7ff")}, // desert night (Neon Egypt)
+        {hexColor("#140a26"), hexColor("#120a32"), hexColor("#3c1446"), hexColor("#ff7ab8"), hexColor("#ff5aa8")}, // sakura night (Neon Japan)
     };
-    return g[i % 4];
+    return g[i % 6];
 }
 
 const glm::vec3& discoPalette(int i) {
@@ -248,7 +250,7 @@ void Game::reset() {
     level_.generateUntil(60); level_.rebuildBlocks();
     clearT_ = -1; runCleared_ = false;
     x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
-    timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = 0 /* one background for levels 1-10 */; camKick_ = 0;
+    timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = zoneGrade(campaign_.zone()); camKick_ = 0;
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
     hen_.nodes[hen_.root].pos = glm::vec3(0.f);
@@ -600,6 +602,30 @@ void Game::lay() {
     chromaKick_ = std::max(chromaKick_, 0.22f);
     if (rng_.next01() < 0.6f)
         spawnFeathers({float(x_) - 0.1f, hen_.nodes[hen_.root].pos.y + 0.5f, 0}, 1 + static_cast<int>(rng_.next01() * 2), 0.5f);
+}
+
+// OVERDRIVE ends: the walls it smashed collapsed down to the hen's level, so she comes out of it still carrying the
+// stack she went in with, more than the course ahead allows (a low barrier after the next drop is then unpassable;
+// level 28). She sheds what she can't use: down to what the next walls ask for, and what the next barrier lets
+// under. Her meter is full by then, so re-stacking is a tap away
+void Game::shedAfterSurge() {
+    if (eggs_.empty()) return;
+    const double x = x_, base = baseY_;
+    int need = 0;                       // eggs to climb the walls ahead (the tallest within ~1 s of running)
+    int allow = static_cast<int>(eggs_.size());
+    for (const Segment& s : level_.segs) {
+        if (s.x1 <= x) continue;
+        if (s.x0 > x + std::max(6.5, speed_ * 1.2)) break;
+        need = std::max(need, static_cast<int>(std::ceil((s.h * U - base) / U - 1e-6)));
+    }
+    for (const Segment& s : level_.segs) { // the lowest barrier within ~2 s: as many as fit under it, standing on its wall
+        if (s.x1 <= x) continue;
+        if (s.x0 > x + std::max(12.0, speed_ * 2.0)) break;
+        if (s.ceil) allow = std::min(allow, std::max(0, static_cast<int>(std::floor((s.ceil * U - HEN_H - 0.02 - s.h * U) / U + 1e-6)) + static_cast<int>(std::floor((s.h * U - base) / U + 1e-6))));
+    }
+    const int keep = std::min({static_cast<int>(eggs_.size()), std::max(need, 0), allow}); // (a barrier wins over a wall)
+    const int shed = static_cast<int>(eggs_.size()) - keep;
+    if (shed > 0) knock(shed);
 }
 
 void Game::knock(int k) {
@@ -1233,6 +1259,11 @@ void Game::update(double rawDt) {
         }
 
     updateCamera(rdt);
+    // the zone follows the level (Zone.h): the city, or Neon Egypt on levels 11-20 (the title too, as the level changes)
+    if (const Zone z = campaign_.zone(); z != world_.zone()) {
+        world_.setZone(z); gradeIdx_ = zoneGrade(z);
+        svc_.audio->musicTrack(zoneTrack(z)); // the zone's own track (Zone.h)
+    }
     world_.update(dt, time_, camX_, camY_, speed_, state_ == State::Play);
     updateAmbient(dt);
     fxAdd_.update(dt); fxSmoke_.update(dt); rings_.update(dt);
@@ -1369,7 +1400,10 @@ void Game::updatePlay(float dt, float rdt) {
     beat_.setTempoFromSpeed(speed_, surge::MUSIC_BPM_CAP); svc_.audio->musicTempo(float(beat_.bpm()));
     // real time, so hit-pauses don't stretch the 5 s surge
     if (surging_) { surgeT_ -= rdt; if (surgeT_ <= 0) endSurge(); }
-    else if (graceT_ > 0) graceT_ = std::max(0.f, graceT_ - rdt);
+    else if (graceT_ > 0) {
+        graceT_ = std::max(0.f, graceT_ - rdt);
+        if (graceT_ <= 0 && clearT_ < 0) shedAfterSurge(); // (past the finish the grace never ends: no shedding there)
+    }
     x_ += speed_ * dt;
     const float overclock = runBoost_ == Boost::Overclock ? 0.6f : 1.f; // boost: eggs refill faster all run
     meter_ = std::min(float(MAXE), meter_ + dt / (float(cv.regen) * dda_.regenMul(float(x_)) * overclock));
@@ -1689,7 +1723,7 @@ void Game::updateCamera(float rdt) {
 
 void Game::updateAmbient(float dt) {
     // rain splashes, neon dust, vent steam
-    rainAcc_ += lite_ ? 0.f : dt * 75; // (lite mode: no rain, no splashes)
+    rainAcc_ += lite_ || world_.zone() != Zone::City ? 0.f : dt * 75; // (lite mode, the desert and old Japan: no rain, no splashes)
     while (rainAcc_ > 1) {
         rainAcc_--;
         const float rx = camX_ + rng_.range(-8, 12), rz = rng_.range(-1.4f, 6.5f);
@@ -1702,7 +1736,10 @@ void Game::updateAmbient(float dt) {
     moteAcc_ += dt * 24;
     while (moteAcc_ > 1) {
         moteAcc_--;
-        const glm::vec3 cols[] = {C().cyan, C().pink, C().volt};
+        const Zone z = world_.zone();
+        const glm::vec3 cols[] = {z == Zone::Egypt ? glow("#ffb43a", 1.4f) : z == Zone::Japan ? glow("#ff8cc6", 1.3f) : C().cyan,
+                                  z == Zone::Egypt ? C().cyan : z == Zone::Japan ? glow("#ffe2f0", 1.2f) : C().pink,
+                                  z == Zone::Egypt ? glow("#ffd36a", 1.2f) : z == Zone::Japan ? glow("#ff4a3a", 1.2f) : C().volt};
         fxAdd_.emit({camX_ + rng_.range(-8, 11), camY_ + rng_.range(-3, 7), rng_.range(-4, 6)}, {rng_.range(-0.4f, 0.1f), rng_.range(-0.1f, 0.15f), rng_.range(-0.1f, 0.1f)},
                     rng_.range(3, 6), rng_.range(0.025f, 0.06f), rng_.range(0.025f, 0.06f), cols[rng_.index(3)], 0.19f, 0, 0);
     }
@@ -1724,17 +1761,29 @@ void Game::buildRenderList() {
     LitMaterial crate; crate.color = glm::vec3(1.f); crate.emissive = glm::vec3(1.4f + pz * 0.36f); crate.metalness = 0.45f; crate.roughness = 0.5f;
     crate.rimColor = wallRim; crate.rimStrength = 0.25f; crate.rimPow = 3.f; crate.pattern = Pattern::Container;
     LitMaterial hay = crate; hay.emissive = glm::vec3(1.3f + pz * 0.3f); hay.metalness = 0.2f; hay.roughness = 0.55f; hay.pattern = Pattern::Hazard;
+    float wallCourses = 1.f; // (Stone: 0 = the glyph band)
+    if (world_.zone() == Zone::Egypt) { // Neon Egypt: sandstone blocks with glowing edges and a glyph band; the cyber cubes gold-capped stone
+        crate = {}; crate.color = hexColor("#3a2c1c"); crate.metalness = 0.35f; crate.roughness = 0.55f; crate.pattern = Pattern::Stone;
+        crate.emissive = glow("#ffb43a", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ffb43a"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
+        hay = crate; hay.color = hexColor("#1c1a2a"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#29e7ff", 1.f) * (1.1f + pz * 0.35f);
+        wallCourses = 0.f;
+    } else if (world_.zone() == Zone::Japan) { // Neon Japan: dark lacquered blocks, pink edges and glyph band; the cubes vermilion-edged
+        crate = {}; crate.color = hexColor("#24141e"); crate.metalness = 0.4f; crate.roughness = 0.4f; crate.pattern = Pattern::Stone;
+        crate.emissive = glow("#ff5aa8", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ff5aa8"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
+        hay = crate; hay.color = hexColor("#1c1424"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#ff4a3a", 1.f) * (1.1f + pz * 0.35f);
+        wallCourses = 0.f;
+    }
     const glm::vec3 blockSize{Uf * 0.985f, Uf * 0.985f, DEPTH};
     for (const Level::Block& b : level_.blocks) {
         if (b.pos.x < x - 16 || b.pos.x > x + 48) continue;
-        out.add(Pass::Lit, MeshId::Box) = makeLit(compose(b.pos, {0, b.flipped ? kPi : 0.f, 0}, blockSize), b.hay ? hay : crate, b.pos.x, b.tint);
+        (out.add(Pass::Lit, MeshId::Box) = makeLit(compose(b.pos, {0, b.flipped ? kPi : 0.f, 0}, blockSize), b.hay ? hay : crate, b.pos.x, b.tint)).color.a = wallCourses;
     }
     // surge debris: pooled blocks flying off smashed walls, shrinking out at the end of their life
     for (const SmashBlock& b : smashPool_) {
         if (b.life <= 0) continue;
         const float s = std::min(1.f, b.life / surge::DEBRIS_SHRINK);
-        out.add(Pass::Lit, MeshId::Box) = makeLit(compose(b.pos, b.rot + glm::vec3(0, b.flipped ? kPi : 0.f, 0), blockSize * glm::vec3(1, 1, 0.5f) * s),
-                                                  b.hay ? hay : crate, b.pos.x, b.tint);
+        (out.add(Pass::Lit, MeshId::Box) = makeLit(compose(b.pos, b.rot + glm::vec3(0, b.flipped ? kPi : 0.f, 0), blockSize * glm::vec3(1, 1, 0.5f) * s),
+                                                   b.hay ? hay : crate, b.pos.x, b.tint)).color.a = wallCourses;
     }
     // disco floor tiles and barrier underside edges
     const float flashOn = std::sin(time_ * 16) > 0 ? 1.f : 0.45f, flashSoft = 0.6f + 0.4f * std::max(0.f, std::sin(time_ * 16));

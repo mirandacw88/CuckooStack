@@ -97,6 +97,15 @@ void sceneSet() {
     const std::string glsl = source("assets/shaders/lit_common.glsl");
     check(std::regex_search(glsl, m, std::regex(R"(P_DROID = (\d+))")) && std::stoi(m[1]) == int(Pattern::DroidTexture),
           "lit_common.glsl's P_DROID is Pattern::DroidTexture");
+    std::smatch st, fl;
+    check(std::regex_search(glsl, st, std::regex(R"(P_STONE = (\d+))")) && std::stoi(st[1]) == int(Pattern::Stone) &&
+              std::regex_search(glsl, fl, std::regex(R"(P_TRON_FLOOR = (\d+))")) && std::stoi(fl[1]) == int(Pattern::TronFloor),
+          "...and Neon Egypt's P_STONE / P_TRON_FLOOR are Pattern::Stone / TronFloor");
+    // the stone pattern follows the mesh's own unit-space position (lit.vert passes it through)
+    const std::string vert = source("assets/shaders/lit.vert");
+    check(vert.find("out vec3 vLocal") != std::string::npos && glsl.find("in vec3 vLocal") != std::string::npos &&
+              bindings(spv::lit_frag, spv::lit_frag_size).size() > 0,
+          "lit.vert hands the fragment shaders the unit-space position (vLocal) the stone lines are measured in");
 }
 
 } // namespace

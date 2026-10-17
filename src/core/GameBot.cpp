@@ -1,5 +1,5 @@
 // The developer menu's bot (staging builds): it plays the run for you, reading the course the game built and stacking
-// just enough eggs for the next wall (under a barrier: as high as the barrier allows, minus two). Options: carry two
+// just enough eggs for the next wall (under barriers: as high as the lowest allows, minus two). Options: carry two
 // spare eggs (so the droid has something to raid), play sloppy (now and then it lays one egg too few), and keep
 // going (it declines the continue and starts the next run by itself).
 #include "Game.h"
@@ -30,11 +30,11 @@ void Game::updateBot(float rdt) {
         if (s.x0 <= x) want = std::max(want, (s.h + bot_.spare) * U); // (spare eggs over the floor here)
         else if (s.x1 > x + 0.22) want = std::max(want, s.h * U);
     }
+    // under (or about to pass under) barriers: as high as the lowest of them allows, minus two
+    double safe = 1e9;
     for (const Segment& s : level_.segs)
-        if (s.ceil && x + 0.25 >= s.x0 - 3 && x + 0.22 < s.x1) {
-            const double safe = std::floor((s.ceil * U - HEN_H - 0.02) / U + 1e-6) * U;
-            want = std::min(std::max(want, safe - U * 2), safe);
-        }
+        if (s.ceil && x + 0.25 >= s.x0 - 3 && x + 0.22 < s.x1) safe = std::min(safe, std::floor((s.ceil * U - HEN_H - 0.02) / U + 1e-6) * U);
+    if (safe < 1e8) want = std::min(std::max(want, safe - U * 2), safe);
     if (bot_.sloppy && want > 0) { // now and then, one egg short for a wall (one roll per wall)
         const double next = level_.heightAt(x + 3.0) * U;
         if (next > baseY_ + 0.05 && std::abs(next - bot_.rolledFor) > 1e-6) { bot_.rolledFor = next; bot_.short_ = rng_.next01() < 0.17f; }

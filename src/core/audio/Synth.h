@@ -27,6 +27,7 @@ public:
     void musicStop(bool powerDown) override;
     void musicTempo(float bpm) override;
     void musicSurge(bool on) override;
+    void musicTrack(int track) override;
     void setMuted(bool muted) override;
     bool musicBeat(double& bpm, double& firstBeat, double& position, double& rate) const override;
 
@@ -57,7 +58,7 @@ private:
         Bus dest = Bus::Master;
         float delaySend = 0;
     };
-    struct Command { enum Type : uint8_t { Sfx, MusicStart, MusicStop, Tempo, Mute, Surge } type; int a; float f; };
+    struct Command { enum Type : uint8_t { Sfx, MusicStart, MusicStop, Tempo, Mute, Surge, Track } type; int a; float f; };
 
     // ---- web build ports (audio thread)
     void sfx(Sfx s, int variant);
