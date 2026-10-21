@@ -307,8 +307,13 @@ bool VulkanPipeline::create(VulkanContext& ctx, VkFormat hdrFormat, VkFormat pre
     t.input = VertexInput::MeshInstanced; t.blend = Blend::Alpha; t.depthTest = true;
     t.pass = scenePass; t.layout = textLayout;
     textWorld = buildPipeline(dev, cache_, t);
+    PipelineDesc sp = t; // world-space sprites (the backdrop's art): the same quads, a premultiplied full-colour atlas
+    sp.fs = spv::sprite_frag; sp.fsSize = spv::sprite_frag_size; sp.blend = Blend::Premultiplied;
+    spriteWorld = buildPipeline(dev, cache_, sp);
 
-    if (!sky || !lit || !litTwoSided || !litReflect || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld) return false;
+    if (!sky || !lit || !litTwoSided || !litReflect || !unlitAlpha || !unlitAdd || !particleAdd || !particleAlpha || !bloom || !textWorld ||
+        !spriteWorld)
+        return false;
     return createPresentObjects(presentFormat);
 }
 
@@ -370,7 +375,7 @@ void VulkanPipeline::destroy() {
     if (!ctx_) return;
     VkDevice dev = ctx_->device;
     destroyPresentObjects();
-    for (VkPipeline* p : {&sky, &lit, &litTwoSided, &litReflect, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld}) {
+    for (VkPipeline* p : {&sky, &lit, &litTwoSided, &litReflect, &unlitAlpha, &unlitAdd, &particleAdd, &particleAlpha, &bloom, &textWorld, &spriteWorld}) {
         if (*p) vkDestroyPipeline(dev, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }

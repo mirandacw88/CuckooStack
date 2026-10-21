@@ -1,0 +1,104 @@
+; Level 4, the neon city.
+length 330
+difficulty 105 0.35
+raids auto
+course
+16 0 crate
+6 2 crate
+8 4 crate
+8 5 crate
+8 5 crate
+8 5 mix
+13 1 hay
+6 3 hay
+8 5 hay 9
+13 1 hay
+7 3 hay
+8 4 crate 8
+8 5 crate 10
+6 5 hay
+8 5 hay
+13 1 crate
+8 3 mix
+8 5 hay 9
+6 5 hay
+8 5 crate
+14 0 crate
+7 3 hay
+13 0 mix
+5 3 mix
+12 1 crate
+11 0 crate
+8 3 crate
+8 4 hay
+14 0 crate
+5 1 crate
+11 0 hay
+5 2 crate
+12 0 hay
+7 1 hay
+7 4 hay
+9 5 mix 9
+14 1 hay
+5 3 crate
+13 1 crate
+11 0 hay
+6 2 crate
+9 5 hay 9
+9 6 mix 11
+13 4 mix
+5 6 crate
+5 6 mix
+5 6 hay
+6 6 crate
+7 6 crate
+5 6 mix
+16 0 hay
+5 3 hay
+9 6 hay 10
+7 6 hay
+6 6 crate
+9 7 hay 11
+14 4 hay
+15 0 crate
+6 1 mix
+10 4 crate 7
+10 5 crate 8
+10 6 crate 10
+saws
+discos
+11.4 2.65
+15.6 5.05
+46.5 3.7
+52.5 2.65
+63.6 3.1
+72 4.45
+76.2 5.05
+88.8 3.25
+94.2 3.7
+102 5.05
+108.6 2.65
+126.3 3.85
+131.4 3.25
+138.3 2.05
+148.8 3.85
+152.7 1.45
+154.5 2.05
+156.3 2.65
+161.1 2.65
+170.7 3.85
+175.8 2.05
+190.8 3.7
+197.4 3.25
+203.1 4.45
+220.8 3.25
+226.5 3.7
+242.7 5.65
+248.7 6.25
+252 6.25
+296.4 3.85
+302.1 1.45
+303.9 2.05
+305.7 2.65
+311.4 2.65
+317.1 3.1

@@ -20,7 +20,13 @@ MeshData box(float w, float h, float d);
 MeshData sphere(float r, int widthSegments, int heightSegments);
 MeshData cylinder(float radiusTop, float radiusBottom, float height, int radialSegments);
 MeshData torus(float radius, float tube, int radialSegments, int tubularSegments, float arc);
-MeshData lathe(const std::vector<glm::vec2>& points, int segments);
+// (phiLength < 2 pi: part of the turn, from +z through +x, so a half turn is the x >= 0 half)
+MeshData lathe(const std::vector<glm::vec2>& points, int segments, float phiLength = 6.2831853f);
+// the flat face closing a lathe cut in half (phiLength = pi): the profile's outline in the x = 0 plane, facing -x
+MeshData latheCap(const std::vector<glm::vec2>& points);
+// a saw blade's toothed rim in XY, `thickness` along z: `teeth` hooked teeth (tips at r = 1, gullets at `gullet`)
+// round a hole of radius `inner`; flat-shaded; each tooth's steep face leads clockwise (seen from +z)
+MeshData sawTeeth(int teeth, float gullet, float inner, float thickness);
 MeshData plane(float w, float h);
 MeshData ring(float inner, float outer, int thetaSegments);
 MeshData circle(float r, int segments);

@@ -235,6 +235,7 @@ void game() {
 } // namespace
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     schedule();
     poses();
     jog();

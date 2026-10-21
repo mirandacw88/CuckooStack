@@ -1,0 +1,67 @@
+; Level 11, Neon Egypt: the tomb at 40% of the way.
+length 400
+difficulty 350 0.35
+raids auto
+course
+16 0 crate
+4 1 crate
+5 4 crate
+4 7 crate
+19 1 mix
+5 2 crate
+13 5 crate 9
+11 7 crate 10
+18 2 crate
+16 5 hay
+11 7 hay 10
+11 8 crate 11
+24 0 crate
+4 2 crate
+23 0 hay
+36 4 hay
+11 8 crate 12
+3 8 crate
+20 1 crate
+20 1 crate
+3 1 crate 5
+168 0 gauntlet tomb
+8 1 crate
+11 2 crate 5
+12 3 hay 7
+11 5 crate 8
+11 6 crate 9
+11 7 mix 10
+22 0 crate
+36 4 crate
+11 7 crate 11
+11 8 hay 11
+3 8 hay
+5 8 hay
+5 8 mix
+3 8 hay
+4 8 crate
+3 8 mix
+20 0 crate
+3 1 crate
+14 0 crate
+3 1 crate
+14 0 hay
+10 0 crate
+saws
+88.04 324.3
+discos
+10.8 2.65
+16.2 6.85
+23.1 2.65
+51.6 3.25
+85.8 1.45
+101.1 2.05
+139.5 6.25
+297.9 4.3
+306.9 1.45
+308.7 2.05
+310.5 2.65
+356.7 6.85
+359.7 7.45
+373.2 2.05
+395.4 2.05

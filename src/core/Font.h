@@ -19,6 +19,7 @@ enum class FontId : uint8_t {
     Body = 1,      // Chakra Petch 500: --body
     BodyBold = 2,  // Chakra Petch 700: tags, labels, pills
     Japanese = 3,  // Noto Sans JP 700 subset: katakana / kanji on the neon signs (fallback only)
+    Hieroglyphs = 4, // Noto Sans Egyptian Hieroglyphs subset: the tombs' inscriptions (Hieroglyphs.h)
     Count
 };
 
@@ -71,6 +72,7 @@ struct TextStyle {
     float letterSpacing = 0.f;     // em, added after every glyph (CSS behaviour)
     float lineHeight = 0.f;        // multiple of size; 0 = CSS `normal` (font ascent - descent + line gap)
     bool uppercase = false;
+    float weight = 0.f;            // bolder than the font: the SDF edge moved out (0.05: each stroke ~1/40 em fuller)
     glm::vec3 color{1.f};
     float opacity = 1.f;
     std::vector<TextShadow> shadows;
@@ -95,6 +97,10 @@ public:
     // Canvas-style placement: `baseline` is the alphabetic baseline (fillText semantics).
     void drawBaseline(std::vector<Instance>& out, std::string_view text, const TextStyle& s, float anchorX, float baseline,
                       TextAlign align, bool yDown = true, const glm::mat4& world = glm::mat4(1.f)) const;
+    // One glyph (its ink, not its padding) scaled to fill a square `box`, centred on `center` (world: the plane's units,
+    // Y up): the hieroglyphs in a tomb wall's columns. The style's size is ignored; its colour, weight and glow apply.
+    void drawGlyphFit(std::vector<Instance>& out, uint32_t cp, const TextStyle& s, glm::vec2 center, float box,
+                      const glm::mat4& world = glm::mat4(1.f)) const;
     // Multiple lines, each centred on anchor.x; returns total height.
     float drawLines(std::vector<Instance>& out, const std::vector<std::string>& lines, const TextStyle& s, float centerX, float top,
                     bool yDown = true) const;

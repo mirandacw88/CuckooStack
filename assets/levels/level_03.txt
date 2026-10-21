@@ -1,0 +1,98 @@
+; Level 3, the neon city.
+length 320
+difficulty 70 0.35
+raids auto
+course
+16 0 crate
+9 2 mix
+11 0 crate
+7 2 crate
+10 1 mix
+10 0 crate
+8 2 crate
+9 3 mix
+9 5 crate 9
+9 5 crate
+6 5 hay
+10 4 mix
+8 5 hay
+7 5 hay
+7 5 crate
+13 1 crate
+6 3 crate
+9 5 crate 10
+9 5 mix
+6 5 mix
+8 5 crate
+13 0 mix
+7 2 crate
+9 3 mix 7
+11 1 mix
+9 3 hay
+8 5 mix 9
+6 5 mix
+14 0 crate
+6 1 crate
+8 2 crate
+8 3 hay 7
+8 4 mix 9
+8 5 hay 9
+14 0 hay
+8 2 crate
+8 4 crate 9
+8 5 crate 10
+8 5 hay
+6 5 crate
+7 5 crate
+9 6 crate 11
+12 4 crate
+7 6 hay
+8 6 hay
+13 3 hay
+13 0 mix
+6 1 crate
+9 2 mix 7
+9 3 crate 8
+9 6 hay 11
+6 6 crate
+16 0 crate
+6 2 mix
+9 4 crate 8
+9 6 hay 10
+16 0 crate
+5 2 crate
+9 5 mix 9
+10 0 crate
+saws
+discos
+12.3 3.25
+23.7 2.65
+40.2 2.65
+50.7 3.7
+70.8 5.05
+75.3 5.65
+91.2 3.85
+95.7 3.7
+109.8 5.65
+126.9 2.5
+138.9 4.45
+144 3.7
+151.5 1.45
+153.3 2.05
+155.1 2.65
+160.2 3.25
+164.4 3.85
+174 3.1
+185.4 2.05
+201.6 3.7
+206.4 4.45
+214.5 4.45
+235.8 5.65
+266.1 2.5
+275.4 5.65
+282 1.45
+288.6 3.85
+302.7 1.45
+304.5 2.05
+306.3 2.65
+312.3 3.25

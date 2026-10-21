@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Level Editor · Cuckoo Stack</title>
+  <link rel="stylesheet" href="/static/editor.css">
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body data-mode="level">
+  <header class="top">
+    <div class="brand">
+      <div class="mark">CUCKOO <b>STACK</b></div>
+      <div class="title">Level editor</div>
+    </div>
+    <div class="modes" id="modes" role="tablist" aria-label="View">
+      <button role="tab" data-mode="level">
+        <svg viewBox="0 0 24 24"><path d="M3 20h18M5 20v-6h3v6M10 20V9h3v11M15 20v-9h4v9M3 6h6"/></svg>Levels
+      </button>
+      <button role="tab" data-mode="gauntlet">
+        <svg viewBox="0 0 24 24"><path d="M4 20h16V8l-8-5-8 5zM8 20v-6h8v6M8 11h8"/></svg>Gauntlets
+      </button>
+    </div>
+    <nav class="tabs g-only" id="tabs" aria-label="Gauntlets"></nav>
+    <nav class="lnav l-only" id="lnav" aria-label="Levels"></nav>
+    <div class="top-actions">
+      <button class="dirty" id="dirty" hidden>Unsaved</button>
+      <button class="icon" id="undo" aria-label="Undo">
+        <svg viewBox="0 0 24 24"><path d="M9 7H4V2M4 7a9 9 0 1 1-1.8 5.6" /></svg>
+      </button>
+      <button class="icon" id="redo" aria-label="Redo">
+        <svg viewBox="0 0 24 24"><path d="M15 7h5V2M20 7a9 9 0 1 0 1.8 5.6" /></svg>
+      </button>
+      <button class="ghost" id="revert">Revert</button>
+      <button class="primary" id="save">Save</button>
+      <span class="sep"></span>
+      <button class="play" id="play">
+        <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" /></svg>Play
+      </button>
+      <button class="ghost" id="watch">Watch the bot</button>
+      <button class="ghost" id="sim">
+        <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></svg>Simulator
+      </button>
+      <button class="icon help" id="help" aria-label="The wiki: this editor's documentation">?</button>
+      <span class="job" id="job" hidden></span>
+    </div>
+  </header>
+  <div class="picker" id="picker" aria-label="Every level"></div>
+
+  <main class="main">
+    <!-- the gauntlet view -->
+    <aside class="tools g-only" id="tools" aria-label="Cells and tools"></aside>
+    <section class="stage g-only">
+      <div class="mini-wrap"><canvas id="minimap" class="minimap"></canvas></div>
+      <div class="board" id="boardWrap">
+        <canvas id="board"></canvas>
+        <span class="start-chip" id="gstartChip" hidden><svg viewBox="0 0 24 24"><path d="M6 21V4M6 4h11l-2.5 4L17 12H6" /></svg><span class="lead">Play starts</span><span class="where"></span><button class="x" aria-label="Clear the start point">✕</button></span>
+        <div class="chips" id="chips"></div>
+        <div class="zoom">
+          <button class="icon small" id="zoomOut" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg></button>
+          <button class="small" id="zoomFit">Fit</button>
+          <button class="icon small" id="zoomIn" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14" /></svg></button>
+        </div>
+        <div class="hoverinfo" id="hoverinfo"></div>
+      </div>
+    </section>
+    <aside class="inspector g-only" id="inspector">
+      <section class="card verdict" id="verdict"></section>
+      <section class="card history-card" id="ghistory"></section>
+      <section class="card" id="numbers"></section>
+      <section class="card" id="gamecard"></section>
+      <section class="card" id="misses"></section>
+      <section class="card" id="notes" hidden></section>
+      <section class="card describe">
+        <h3>Description</h3>
+        <textarea id="description" spellcheck="true" rows="7" aria-label="Description"></textarea>
+        <p class="hint">Saved at the top of its grid file, and into the game's layouts as notes.</p>
+      </section>
+      <section class="card keys">
+        <h3>Keys</h3>
+        <dl>
+          <dt>1–0</dt><dd>cells (right click: the second cell)</dd>
+          <dt>B R V C E I T</dt><dd>brush, rectangle, select, columns, rows, pick, start point</dd>
+          <dt>X</dt><dd>swap the two cells</dd>
+          <dt>⌘C ⌘X ⌘V</dt><dd>copy, cut, paste a selection; F flips it; ⌫ fills it</dd>
+          <dt>Scroll</dt><dd>look around (⌘ / pinch: zoom); Space-drag pans</dd>
+          <dt>P , .</dt><dd>replay: play, step back, step on</dd>
+          <dt>⇧G</dt><dd>to its level’s course</dd>
+        </dl>
+      </section>
+    </aside>
+
+    <!-- the level view -->
+    <aside class="tools l-only" id="ltools" aria-label="Walls and tools"></aside>
+    <section class="stage l-only">
+      <div class="mini-wrap"><canvas id="lminimap" class="minimap"></canvas></div>
+      <div class="board" id="courseWrap">
+        <canvas id="course"></canvas>
+        <span class="start-chip" id="lstartChip" hidden><svg viewBox="0 0 24 24"><path d="M6 21V4M6 4h11l-2.5 4L17 12H6" /></svg><span class="lead">Play starts</span><span class="where"></span><button class="x" aria-label="Clear the start point">✕</button></span>
+        <div class="chips" id="lchips"></div>
+        <div class="zoom">
+          <button class="icon small" id="lzoomOut" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg></button>
+          <button class="small" id="lzoomFit">Fit</button>
+          <button class="icon small" id="lzoomIn" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14" /></svg></button>
+        </div>
+        <div class="hoverinfo" id="lhoverinfo"></div>
+      </div>
+    </section>
+    <aside class="inspector l-only" id="linspector">
+      <section class="card verdict" id="lverdict"></section>
+      <section class="card history-card" id="lhistory"></section>
+      <section class="card props" id="lprops"></section>
+      <section class="card" id="lgame"></section>
+      <section class="card" id="lnumbers"></section>
+      <section class="card" id="lnotes" hidden></section>
+      <section class="card describe">
+        <h3>Description</h3>
+        <textarea id="ldescription" spellcheck="true" rows="4" aria-label="The level's description"></textarea>
+        <p class="hint">The notes at the top of its file (assets/levels).</p>
+      </section>
+      <section class="card keys">
+        <h3>Keys</h3>
+        <dl>
+          <dt>W K B S D</dt><dd>walls, kind, barrier, saw, disco ball</dd>
+          <dt>C V G T</dt><dd>columns, select, gauntlet, start point</dd>
+          <dt>1 2 3</dt><dd>crates, hay, hay-topped crates</dd>
+          <dt>⌥ / right</dt><dd>take away (down to the street, off, gone)</dd>
+          <dt>⌘C ⌘X ⌘V</dt><dd>copy, cut, put in columns; ⌫ takes them out</dd>
+          <dt>L ⌥← ⌥→</dt><dd>every level; the one before, after</dd>
+          <dt>Scroll</dt><dd>look along (⌘ / pinch: zoom); Space-drag pans</dd>
+          <dt>P , .</dt><dd>the bot’s run: play, back, on</dd>
+          <dt>⇧G</dt><dd>to its gauntlet’s grid</dd>
+        </dl>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="replay g-only">
+    <div class="transport">
+      <button class="round" id="rpPlay" aria-label="Play the bot's run">
+        <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" /></svg>
+        <svg class="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" /></svg>
+      </button>
+      <div class="stepper">
+        <button class="icon small" id="rpPrev" aria-label="A move back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg></button>
+        <button class="icon small" id="rpNext" aria-label="A move on"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></svg></button>
+      </div>
+      <div class="field">
+        <label>Speed</label>
+        <div class="seg" id="rpSpeed"></div>
+      </div>
+      <div class="field">
+        <label>Meter</label>
+        <div class="seg" id="rpRate"></div>
+      </div>
+    </div>
+    <div class="track-wrap"><canvas id="track"></canvas></div>
+    <div class="readout" id="readout"></div>
+  </footer>
+  <footer class="replay l-only">
+    <div class="transport">
+      <button class="round" id="lrpPlay" aria-label="Play the bot's run">
+        <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" /></svg>
+        <svg class="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" /></svg>
+      </button>
+      <div class="stepper">
+        <button class="icon small" id="lrpStart" aria-label="Back to its start"><svg viewBox="0 0 24 24"><path d="M7 5v14M18 6l-7 6 7 6" /></svg></button>
+        <button class="icon small toggle" id="lrpFollow" aria-label="Follow her"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" /></svg></button>
+      </div>
+      <div class="field">
+        <label>Speed</label>
+        <div class="seg" id="lrpSpeed"></div>
+      </div>
+    </div>
+    <div class="track-wrap"><canvas id="ltrack"></canvas></div>
+    <div class="readout" id="lreadout"></div>
+  </footer>
+
+  <div class="loading" id="loading">Loading the levels and gauntlets…</div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

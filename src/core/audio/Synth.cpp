@@ -249,6 +249,39 @@ void Synth::sfx(Sfx s, int k) {
         tone(760, 2700, 0.55f, Wave::Sine, 0.06f);
         for (int i = 0; i < 4; ++i) tone(2200 + 400 * float(i), 2200 + 400 * float(i), 0.05f, Wave::Square, 0.025f, 0.12f * float(i));
         break;
+    case Sfx::SawWhirr: // a blade spinning up ahead: two detuned buzzes beating against each other, rising, over a grinding hiss
+        tone(620, 1180, 0.55f, Wave::Sawtooth, 0.05f);
+        tone(655, 1240, 0.55f, Wave::Sawtooth, 0.045f);
+        tone(1240, 2400, 0.4f, Wave::Square, 0.018f, 0.12f);
+        noise(0.5f, 0.22f, 4200, 0.05f, Biquad::Type::Bandpass);
+        break;
+    case Sfx::SawCut:
+        if (k == 1) { // the egg falls apart: a wet squelch dropping in pitch, the shell's crack, a ring of the blade
+            tone(340, 85, 0.16f, Wave::Sine, 0.32f);
+            noise(0.1f, 0.4f, 900, 0.f, Biquad::Type::Lowpass);
+            noise(0.05f, 0.35f, 2800, 0.02f);
+            tone(2950, 2800, 0.3f, Wave::Triangle, 0.04f, 0.03f);
+        } else { // the bite: a bright metallic zing over a screech of grinding sparks (2: on the hen, harsher and lower)
+            const float p = k == 2 ? 0.7f : 1.f;
+            tone(3400 * p, 2300 * p, 0.2f, Wave::Square, 0.07f);
+            tone(1700 * p, 1150 * p, 0.22f, Wave::Sawtooth, 0.07f);
+            noise(0.18f, 0.45f, 6200 * p, 0.f, Biquad::Type::Bandpass);
+            noise(0.06f, 0.3f, 1800 * p);
+        }
+        break;
+    case Sfx::Bounce:
+        if (k == 1) { // a stone door slamming: a deep thud, grit, a low ring
+            tone(120, 45, 0.45f, Wave::Sine, 0.5f);
+            noise(0.3f, 0.45f, 500, 0.f, Biquad::Type::Lowpass);
+            noise(0.12f, 0.25f, 1800, 0.03f);
+            tone(240, 200, 0.6f, Wave::Triangle, 0.05f, 0.05f);
+        } else { // a springy boing: a quick pitch up and down, a wobble on top, a soft thump
+            tone(180, 520, 0.08f, Wave::Sine, 0.3f);
+            tone(520, 300, 0.18f, Wave::Sine, 0.22f, 0.08f);
+            tone(1040, 620, 0.16f, Wave::Triangle, 0.05f, 0.06f);
+            noise(0.05f, 0.25f, 700, 0.f, Biquad::Type::Lowpass);
+        }
+        break;
     case Sfx::DroidLaser: { // pew: a bright square zap diving down, a buzzy body, a crackle of static (k: the 2nd shot sits lower)
         const float p = k ? 0.84f : 1.f;
         tone(2600 * p, 260 * p, 0.22f, Wave::Square, 0.12f);

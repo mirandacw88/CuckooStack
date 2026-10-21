@@ -5,7 +5,9 @@
 #import <QuartzCore/QuartzCore.h>
 #import <VideoToolbox/VideoToolbox.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -16,6 +18,13 @@ namespace cs {
 namespace {
 constexpr double kWindow = 20.0;   // seconds of encoded video kept
 constexpr int kMaxInFlight = 4;    // frames queued in the encoder; beyond this a frame is skipped (never mid-stream)
+// Frame times are whole ticks of this, each frame's at least a tick after the one before (an MP4 won't take two frames
+// at one time: the clip fails to write). A crash's mark goes on the same grid, rounded down as a frame's time is, so
+// a frame stamped from the crash on is never stored before it. (Against an unrounded mark, a frame pushed a few
+// microseconds after the crash rounded down past it, survived the cut, and shared its time with the revived run's
+// first frame.)
+constexpr int32_t kTimescale = 90000;
+int64_t ticksOf(double seconds) { return int64_t(std::floor(seconds * kTimescale)); }
 
 bool isKeyframe(CMSampleBufferRef sb) {
     CFArrayRef att = CMSampleBufferGetSampleAttachmentsArray(sb, false);
@@ -26,6 +35,7 @@ bool isKeyframe(CMSampleBufferRef sb) {
              CFBooleanGetValue(notSync));
 }
 double ptsOf(CMSampleBufferRef sb) { return CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sb)); }
+int64_t ticksOf(CMSampleBufferRef sb) { return CMTimeConvertScale(CMSampleBufferGetPresentationTimeStamp(sb), kTimescale, kCMTimeRoundingMethod_RoundTowardNegativeInfinity).value; }
 } // namespace
 
 struct IOSVideoRecorder::Impl {
@@ -37,12 +47,13 @@ struct IOSVideoRecorder::Impl {
     std::atomic<bool> rebuild{false}; // the session died (iOS kills hardware encoders in the background): start over
     double lastPush = -1, retryAt = 0;
     double pausedTotal = 0, pausedAt = -1; // capture pauses, cut out of the clip's timeline
-    double markPts = -1;                   // the last crash, on the clip's timeline
+    int64_t markTick = -1;                 // the last crash, on the clip's timeline (in ticks: see kTimescale)
+    int64_t lastTick = -1;                 // the last frame's time: the next is at least a tick later
     // a revive's cut: frames encoded before it (the generation then) and stamped from the crash on are dropped
     // when the encoder hands them back late. (Not by time alone: the timeline closes over the cut, so the revived
-    // run's frames reuse those timestamps.)
+    // run's frames reuse those timestamps.) Both change under the lock, where the encoder thread reads them.
     std::atomic<uintptr_t> generation{0};
-    std::atomic<double> cutFrom{-1};
+    std::atomic<int64_t> cutFrom{-1}; // ticks
     bool forceKey = true;
 #ifndef NDEBUG
     double costSec = 0, costLogAt = 0; // debug: time spent in push() (copy + submit), logged every 2 s
@@ -70,7 +81,7 @@ struct IOSVideoRecorder::Impl {
         if (status != noErr) rebuild = true;
         if (status != noErr || !sb || (flags & kVTEncodeInfo_FrameDropped) || !CMSampleBufferDataIsReady(sb)) return;
         std::lock_guard<std::mutex> lock(m);
-        if (gen != generation.load() && ptsOf(sb) >= cutFrom.load()) return; // from the crash a revive cut out
+        if (gen != generation.load() && ticksOf(sb) >= cutFrom.load()) return; // from the crash a revive cut out
         if (samples.empty() && !isKeyframe(sb)) return; // the window always starts on a keyframe
         CFRetain(sb);
         samples.push_back(sb);
@@ -118,28 +129,30 @@ void IOSVideoRecorder::stop() { impl_->stop(); }
 
 void IOSVideoRecorder::resetWindow() {
     impl_->clear();
-    impl_->markPts = -1;
+    impl_->markTick = -1;
     impl_->forceKey = true; // the new window starts on a keyframe
 }
 
 void IOSVideoRecorder::markCrash() {
     Impl& s = *impl_;
-    s.markPts = (s.pausedAt >= 0 ? s.pausedAt : CACurrentMediaTime()) - s.pausedTotal;
+    s.markTick = ticksOf((s.pausedAt >= 0 ? s.pausedAt : CACurrentMediaTime()) - s.pausedTotal);
 }
 
 void IOSVideoRecorder::dropSinceMark() {
     Impl& s = *impl_;
-    if (s.markPts < 0) return;
+    if (s.markTick < 0) return;
     const double end = (s.pausedAt >= 0 ? s.pausedAt : CACurrentMediaTime()) - s.pausedTotal; // captured so far
+    const double mark = double(s.markTick) / kTimescale;
     {
         std::lock_guard<std::mutex> lock(s.m);
-        while (!s.samples.empty() && ptsOf(s.samples.back()) >= s.markPts) { CFRelease(s.samples.back()); s.samples.pop_back(); }
+        while (!s.samples.empty() && ticksOf(s.samples.back()) >= s.markTick) { CFRelease(s.samples.back()); s.samples.pop_back(); }
+        s.cutFrom = s.markTick;
+        ++s.generation;
     }
-    s.cutFrom = s.markPts;
-    ++s.generation;
-    s.pausedTotal += std::max(0.0, end - s.markPts); // the timeline closes over the cut
+    s.pausedTotal += std::max(0.0, end - mark); // the timeline closes over the cut
+    s.lastTick = s.markTick - 1;                // (what's kept is all before the mark: the revived run may start on it)
     s.forceKey = true; // the next frame can't lean on the dropped ones
-    s.markPts = -1;
+    s.markTick = -1;
 }
 
 void IOSVideoRecorder::setCapturing(bool on) {
@@ -179,8 +192,9 @@ void IOSVideoRecorder::push(const uint8_t* bgra, uint32_t width, uint32_t height
     CVPixelBufferUnlockBaseAddress(pb, 0);
     NSDictionary* props = s.forceKey ? @{(id)kVTEncodeFrameOptionKey_ForceKeyFrame: @YES} : nil;
     s.forceKey = false;
+    s.lastTick = std::max(ticksOf(now - s.pausedTotal), s.lastTick + 1);
     ++s.inFlight;
-    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMakeWithSeconds(now - s.pausedTotal, 90000), kCMTimeInvalid, (__bridge CFDictionaryRef)props,
+    if (VTCompressionSessionEncodeFrame(s.session, pb, CMTimeMake(s.lastTick, kTimescale), kCMTimeInvalid, (__bridge CFDictionaryRef)props,
                                         reinterpret_cast<void*>(s.generation.load()), nullptr) != noErr) {
         --s.inFlight;
         s.rebuild = true;

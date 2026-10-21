@@ -12,4 +12,6 @@ extern const unsigned char body_bold[];  // ChakraPetch-Bold.ttf
 extern const size_t body_bold_size;
 extern const unsigned char japanese[];   // NotoSansJP-Bold-signs.ttf
 extern const size_t japanese_size;
+extern const unsigned char hieroglyphs[]; // NotoSansEgyptianHieroglyphs-tomb.ttf (scripts/subset_hieroglyphs.py)
+extern const size_t hieroglyphs_size;
 } // namespace cs::fontdata

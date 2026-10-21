@@ -35,10 +35,11 @@ Stats render(Synth& s, double seconds) {
 
 void effects() {
     const Sfx all[] = {Sfx::Lay, Sfx::Crack, Sfx::Perfect, Sfx::Corn, Sfx::Land, Sfx::Squawk, Sfx::Empty, Sfx::Smash,
-                       Sfx::SurgeStart, Sfx::SurgeEnd, Sfx::LifeLost, Sfx::Firework, Sfx::DroidWarp, Sfx::DroidCharge, Sfx::DroidLaser};
+                       Sfx::SurgeStart, Sfx::SurgeEnd, Sfx::LifeLost, Sfx::Firework, Sfx::DroidWarp, Sfx::DroidCharge, Sfx::DroidLaser,
+                       Sfx::SawWhirr, Sfx::SawCut, Sfx::Bounce};
     bool sound = true, finite = true, clean = true;
     for (Sfx f : all)
-        for (int variant : {0, 2}) {
+        for (int variant : {0, 1, 2}) {
             Synth s;
             render(s, 0.05);
             s.play(f, variant);
@@ -75,6 +76,25 @@ void droidSounds() {
     render(a, 0.05); render(b, 0.05);
     a.play(Sfx::DroidLaser, 0); b.play(Sfx::DroidLaser, 1);
     check(crossingRate(b, 0.12) < crossingRate(a, 0.12), "...the second shot of a double is lower-pitched");
+}
+
+void sawSounds() {
+    // the saw's sounds carry over the music like the droid's; the whine climbs as the blade comes up, and the egg
+    // falling apart (a wet squelch) sits well below the blade's bite
+    auto rms = [](Sfx f, int k) { Synth s; render(s, 0.05); s.play(f, k); return render(s, 0.6).rms; };
+    const double crack = rms(Sfx::Crack, 0);
+    check(rms(Sfx::SawWhirr, 0) > 0.3 * crack && rms(Sfx::SawCut, 0) > 0.6 * crack && rms(Sfx::SawCut, 1) > 0.6 * crack && rms(Sfx::SawCut, 2) > 0.6 * crack,
+          "saw: the whine, the bite and the split are about as loud as an egg cracking");
+    Synth w;
+    render(w, 0.05);
+    w.play(Sfx::SawWhirr, 0);
+    const double early = crossingRate(w, 0.1);
+    render(w, 0.2);
+    check(crossingRate(w, 0.1) > early * 1.3, "...the whine rises as the blade spins up");
+    Synth bite, split;
+    render(bite, 0.05); render(split, 0.05);
+    bite.play(Sfx::SawCut, 0); split.play(Sfx::SawCut, 1);
+    check(crossingRate(split, 0.1) < crossingRate(bite, 0.1) * 0.6, "...the egg falling apart sits well below the bite");
 }
 
 void music() {
@@ -119,6 +139,7 @@ void deterministic() {
 int main() {
     effects();
     droidSounds();
+    sawSounds();
     music();
     deterministic();
     return finish("Synth");

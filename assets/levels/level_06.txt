@@ -1,0 +1,116 @@
+; Level 6, the neon city.
+length 350
+difficulty 175 0.35
+raids auto
+course
+16 0 crate
+6 3 crate
+7 6 mix
+11 5 crate
+13 3 mix
+7 5 mix
+7 6 mix
+5 6 hay
+16 0 mix
+5 3 mix
+7 5 mix
+9 6 hay 11
+6 6 mix
+7 6 mix
+7 6 crate
+6 6 hay
+5 6 mix
+7 6 hay
+17 0 crate
+7 2 crate
+10 4 hay 7
+13 2 crate
+13 0 mix
+5 1 hay
+6 4 hay
+16 0 crate
+4 1 mix
+12 0 crate
+12 0 crate
+4 4 crate
+6 6 hay
+6 7 mix
+4 7 hay
+5 7 crate
+16 3 hay
+4 4 hay
+6 7 mix
+6 7 crate
+5 7 hay
+5 7 hay
+5 7 mix
+6 7 crate
+18 1 mix
+4 2 crate
+13 1 hay
+6 2 crate
+10 4 hay 7
+13 3 hay
+5 7 mix
+4 7 hay
+5 7 mix
+5 7 hay
+6 7 mix
+17 2 hay
+4 5 hay
+10 7 mix 10
+5 7 mix
+10 8 mix 12
+3 8 crate
+3 8 hay
+3 8 mix
+5 8 hay
+3 8 crate
+16 5 mix
+18 0 crate
+4 4 crate
+11 6 mix 10
+18 1 crate
+4 4 hay
+11 6 mix 9
+11 7 crate 11
+saws
+discos
+11.4 3.25
+20.7 4.45
+33.9 4.45
+38.1 5.65
+54.3 3.85
+67.2 5.65
+75.3 5.65
+82.5 5.65
+125.7 2.05
+135.6 2.05
+151.5 1.45
+153.3 2.05
+155.1 2.65
+165 5.65
+168 6.25
+170.7 6.85
+186 5.65
+189.6 5.65
+192.9 5.65
+195.9 5.65
+198.9 6.25
+209.4 2.05
+221.1 3.25
+232.8 3.1
+238.5 4.45
+243.9 5.65
+246.6 6.25
+255.6 5.65
+262.5 3.85
+268.8 5.65
+274.2 4.9
+277.5 5.65
+300 5.05
+306.3 1.45
+308.1 2.05
+309.9 2.65
+323.4 4.3
+330 2.65

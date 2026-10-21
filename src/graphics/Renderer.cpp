@@ -23,7 +23,7 @@ static bool uploadJpeg(VulkanContext& ctx, VulkanImage& img, const unsigned char
 namespace {
 
 constexpr size_t kMaxInstances = 20000; // per frame, all instanced passes + HUD
-constexpr size_t kMaxParticles = 6400;  // fxAdd (5600) + fxSmoke (700)
+constexpr size_t kMaxParticles = 7000;  // fxAdd (5600) + fxSmoke (700) + Neon Egypt's gold dust (460) + its sparkles
 
 using gpu::GpuFrame;
 using gpu::toGpu; // (RendererLogic.h)
@@ -105,19 +105,20 @@ bool Renderer::init(PlatformSurface& platform, bool enableValidation, std::strin
 
     const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, uint32_t(gpu::descriptorPoolSamplers(kFramesInFlight))}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pci.maxSets = kFramesInFlight + 6;
+    pci.maxSets = kFramesInFlight + 7;
     pci.poolSizeCount = 2;
     pci.pPoolSizes = sizes;
     if (vkCreateDescriptorPool(ctx_.device, &pci, nullptr, &pool_) != VK_SUCCESS) { error = "vkCreateDescriptorPool failed"; return false; }
     VkDescriptorSetLayout layouts[] = {pipes_.compositeSetLayout, pipes_.bloomSetLayout, pipes_.bloomSetLayout, pipes_.bloomSetLayout,
-                                       pipes_.bloomSetLayout, pipes_.bloomSetLayout};
-    VkDescriptorSet sets[6];
+                                       pipes_.bloomSetLayout, pipes_.bloomSetLayout, pipes_.bloomSetLayout};
+    VkDescriptorSet sets[7];
     VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     dai.descriptorPool = pool_;
-    dai.descriptorSetCount = 6;
+    dai.descriptorSetCount = 7;
     dai.pSetLayouts = layouts;
     if (vkAllocateDescriptorSets(ctx_.device, &dai, sets) != VK_SUCCESS) { error = "vkAllocateDescriptorSets failed"; return false; }
     compositeSet_ = sets[0]; prefilterSet_ = sets[1]; blurHSet_ = sets[2]; blurVSet_ = sets[3]; textSet_ = sets[4]; imageSet_ = sets[5];
+    worldImageSet_ = sets[6];
 
     if (!createFrames()) { error = "Per-frame resource creation failed"; return false; }
     if (!uploadMeshes()) { error = "Mesh upload failed"; return false; }
@@ -337,6 +338,10 @@ bool Renderer::render(const RenderList& list) {
         CS_LOGE("Font atlas upload failed; text disabled");
     if (list.hudImage && list.hudImage != uploadedHudImage_ && list.hudImage->built() && !uploadHudImage(*list.hudImage))
         CS_LOGE("HUD sprite upload failed; sprites disabled");
+    if (list.worldImage && list.worldImage != uploadedWorldImage_ && list.worldImage->built()) {
+        if (uploadImage(*list.worldImage, worldImage_, worldImageSet_)) uploadedWorldImage_ = list.worldImage;
+        else { CS_LOGE("World sprite upload failed; the backdrop is off"); uploadedWorldImage_ = list.worldImage; worldImage_.destroy(); }
+    }
     if (list.heroModel != uploadedHeroModel_ && henModel(list.heroModel).textured() && !uploadHeroTexture(list.heroModel)) {
         CS_LOGW("Hen texture upload failed; the textured hen draws untextured");
         uploadedHeroModel_ = list.heroModel; // don't retry every frame
@@ -424,21 +429,26 @@ bool Renderer::uploadFontAtlas(const FontAtlas& atlas) {
 }
 
 bool Renderer::uploadHudImage(const HudImage& image) {
+    if (!uploadImage(image, hudImage_, imageSet_)) return false;
+    uploadedHudImage_ = &image;
+    return true;
+}
+
+bool Renderer::uploadImage(const HudImage& image, VulkanImage& target, VkDescriptorSet set) {
     vkDeviceWaitIdle(ctx_.device);
     const VkExtent2D e{static_cast<uint32_t>(image.width()), static_cast<uint32_t>(image.height())};
     const uint32_t mips = 1 + static_cast<uint32_t>(image.mips().size());
-    if (!hudImage_.create(ctx_.device, ctx_.allocator, e, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                          VK_IMAGE_ASPECT_COLOR_BIT, false, mips))
+    if (!target.create(ctx_.device, ctx_.allocator, e, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, false, mips))
         return false;
     std::vector<VulkanImage::Level> levels{{image.pixels().data(), image.pixels().size()}};
     for (const auto& m : image.mips()) levels.push_back({m.data(), m.size()});
-    if (!hudImage_.uploadMips(ctx_, levels.data(), mips)) return false;
-    VkDescriptorImageInfo info{linearMip_, hudImage_.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    if (!target.uploadMips(ctx_, levels.data(), mips)) return false;
+    VkDescriptorImageInfo info{linearMip_, target.view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    w.dstSet = imageSet_; w.dstBinding = 0; w.descriptorCount = 1;
+    w.dstSet = set; w.dstBinding = 0; w.descriptorCount = 1;
     w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w.pImageInfo = &info;
     vkUpdateDescriptorSets(ctx_.device, 1, &w, 0, nullptr);
-    uploadedHudImage_ = &image;
     return true;
 }
 
@@ -469,6 +479,8 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
         }
     const auto [hudFirst, hudCount] = push(list.hud);
     const auto [worldTextFirst, worldTextCount] = push(list.worldText);
+    const auto [spriteFirst, spriteCount] = push(list.worldSprites);
+    const bool spritesWorldReady = uploadedWorldImage_ != nullptr && list.worldImage == uploadedWorldImage_ && worldImage_.view();
     const bool textReady = uploadedAtlas_ != nullptr;
     f.instances.flush(0, VkDeviceSize(used) * sizeof(Instance));
     // the posed hen: indices already carry the library's vertex offsets (no base-vertex on some Metal GPUs), so it is
@@ -489,9 +501,11 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
     auto* parts = static_cast<Particle*>(f.particles.mapped());
     const uint32_t smokeCount = static_cast<uint32_t>(std::min(list.particlesSmoke.size(), kMaxParticles));
     const uint32_t addCount = static_cast<uint32_t>(std::min(list.particlesAdd.size(), kMaxParticles - smokeCount));
+    const uint32_t sparkleCount = static_cast<uint32_t>(std::min(list.particlesSparkle.size(), kMaxParticles - smokeCount - addCount));
     std::memcpy(parts, list.particlesSmoke.data(), smokeCount * sizeof(Particle));
     std::memcpy(parts + smokeCount, list.particlesAdd.data(), addCount * sizeof(Particle));
-    f.particles.flush(0, VkDeviceSize(smokeCount + addCount) * sizeof(Particle));
+    std::memcpy(parts + smokeCount + addCount, list.particlesSparkle.data(), sparkleCount * sizeof(Particle));
+    f.particles.flush(0, VkDeviceSize(smokeCount + addCount + sparkleCount) * sizeof(Particle));
 
     VkCommandBuffer cmd = f.cmd;
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -549,6 +563,16 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
         drawPass(Pass::Lit, pipes_.lit);
         drawPass(Pass::LitTwoSided, pipes_.litTwoSided);
         drawPass(Pass::Reflect, pipes_.litReflect); // (lit_reflect.frag)
+        if (spriteCount && spritesWorldReady) { // the backdrop's art, back to front, behind every glow and glyph
+            const MeshRange& plane = meshes_[size_t(MeshId::Plane)];
+            const VkDeviceSize off = VkDeviceSize(spriteFirst) * sizeof(Instance);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes_.spriteWorld);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes_.textLayout, 0, 1, &worldImageSet_, 0, nullptr);
+            vkCmdPushConstants(cmd, pipes_.textLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+            vkCmdBindVertexBuffers(cmd, 1, 1, &ib, &off);
+            vkCmdDrawIndexed(cmd, plane.indexCount, spriteCount, plane.firstIndex, plane.vertexOffset, 0);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes_.sceneLayout, 0, 1, &f.frameSet, 0, nullptr);
+        }
         drawPass(Pass::UnlitAlpha, pipes_.unlitAlpha);
 
         if (worldTextCount && textReady) { // neon sign words, today's-best gate label
@@ -577,6 +601,7 @@ void Renderer::record(Frame& f, uint32_t imageIndex, const RenderList& list) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &zero);
         drawPass(Pass::UnlitAdd, pipes_.unlitAdd);
         drawParticles(pipes_.particleAdd, smokeCount, addCount, 0.f);
+        drawParticles(pipes_.particleAdd, smokeCount + addCount, sparkleCount, 2.f);
         vkCmdEndRenderPass(cmd);
     }
 
@@ -949,7 +974,7 @@ void Renderer::shutdown() {
     }
     stopRecording();
     stopReadback();
-    vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
+    vertexBuffer_.destroy(); indexBuffer_.destroy(); captureBuffer_.destroy(); fontAtlas_.destroy(); puddleMask_.destroy(); hudImage_.destroy(); worldImage_.destroy(); heroTexture_.destroy(); heroNormal_.destroy();
     cyberSurface_.destroy(); cyberGlow_.destroy(); droidTexture_.destroy(); droidNormal_.destroy();
     if (linearRepeat_) vkDestroySampler(ctx_.device, linearRepeat_, nullptr);
     linearRepeat_ = VK_NULL_HANDLE;

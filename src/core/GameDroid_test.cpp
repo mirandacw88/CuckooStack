@@ -1,7 +1,8 @@
 // The jet droid (GameDroid.cpp). On the title it circles the hen (behind her and in front), nose first, its fans
 // spinning and its flames lit, with a shadow on the street right below it; a run sends it boosting off screen, and
 // the Locker's close-up of the hen leaves it out. In a run it raids the stack: it warps in, circles high over the hen,
-// and zaps the bottom egg (or two, one blue laser each), with its sounds; never when she carries fewer than 2 eggs.
+// and zaps the bottom egg (or two, one blue laser each), with its sounds: the egg pops out of the stack to the side,
+// whole, and the eggs above settle into its place; never when she carries fewer than 2 eggs.
 #include "TestUtil.h"
 #include "core/DroidModel.h"
 #include "core/Campaign.h"
@@ -149,7 +150,7 @@ struct Bot {
     void tick(Game& g, float dt) {
         cooldown -= dt;
         if (g.state() != Game::State::Play || cooldown > 0) return;
-        const double x = henX(g), top = g.henHeight();
+        const double x = henX(g), top = g.henBase() + g.eggCount() * Uf; // (the stack as it is: once an egg's gone, what's drawn settles a beat later)
         double want = 0;
         for (const Segment& s : course.segs)
             if (s.x0 <= x && x < s.x1) want = s.h * U + spare * U;
@@ -243,6 +244,40 @@ void raid(int shots) {
     check(!g.droidRaiding() && !g.droidVisible() && g.state() == Game::State::Play, "then it zips off, and she runs on");
     for (int i = 0; i < 60 && g.state() == Game::State::Play; ++i) { bot.tick(g, 1.f / 60); g.update(1.0 / 60.0); }
     check(g.state() == Game::State::Play && bucket(g, Pass::Lit, MeshId::DroidBody).empty(), "...and it's not drawn any more");
+}
+
+void zapPops() {
+    // the zapped egg pops out of the stack to the side (back from her and toward the camera, up first), whole, so it's
+    // seen going; the eggs above settle down into its place over a beat (drawn where they were, then lower)
+    Env env;
+    env.ads.state = RewardedState::Unavailable;
+    Game g(env.svc());
+    g.debugSeed(7);
+    Bot bot(&env.st);
+    bot.spare = 3;
+    step(g, 0.2f);
+    g.press();
+    for (int i = 0; i < 60 * 60 && !(g.state() == Game::State::Play && g.eggCount() > 2 && henX(g) > 15); ++i) { bot.tick(g, 1.f / 60); g.update(1.0 / 60.0); }
+    for (int i = 0; i < 60 * 30 && !g.droidRaiding(); ++i) { g.debugDroidRaid(1); bot.tick(g, 1.f / 60); g.update(1.0 / 60.0); }
+    bool zapped = false;
+    for (int i = 0; i < 60 * 4 && !zapped && g.state() == Game::State::Play; ++i) {
+        bot.tick(g, 1.f / 60);
+        g.update(1.0 / 60.0);
+        zapped = !g.zappedEggs().empty();
+    }
+    check(zapped && g.zappedEggs().size() == 1, "a zap: the bottom egg knocked out of the stack, whole (not in pieces)");
+    if (!zapped) return;
+    const glm::vec3 p0 = g.zappedEggs()[0];
+    const float x0 = henX(g);
+    check(g.stackDrawnBase() > g.henBase() + 0.8f * Uf, "...the eggs above drawn where they were at first (the gap it leaves is seen)");
+    float peak = p0.y;
+    for (int i = 0; i < 9; ++i) { g.update(1.0 / 60.0); if (!g.zappedEggs().empty()) peak = std::max(peak, g.zappedEggs()[0].y); }
+    const bool flying = !g.zappedEggs().empty();
+    const glm::vec3 p = flying ? g.zappedEggs()[0] : p0;
+    check(flying && (p.x - henX(g)) < (p0.x - x0) - 0.6f && p.z > p0.z + 0.3f && peak > p0.y + 0.3f,
+          "...it pops out to the side: up, back from her and toward the camera, in a sixth of a second");
+    step(g, 0.2f);
+    check(std::abs(g.stackDrawnBase() - g.henBase()) < 1e-3f, "...and the eggs above have settled into its place");
 }
 
 void fromLevel5() {
@@ -362,12 +397,14 @@ void comesFromAllAround() {
 } // namespace
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     if (!droidModel().ok) { check(false, "the droid model is embedded"); return finish("GameDroid"); }
     circles();
     leaves();
     lockerHidesIt();
     raid(1);
     raid(2);
+    zapPops();
     fromLevel5();
     remoteConfig();
     needsTwoEggs();

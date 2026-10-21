@@ -55,6 +55,37 @@ void generators() {
     all("lathe", geo::lathe(profile, 16), size_t(17 * 5), size_t(16 * 4 * 6), {1.2f, 2, 1.2f});
     const MeshData arc = geo::torus(1, 0.2f, 6, 10, kPi);
     check(inspect(arc).lo.y > -0.21f, "torus arc: half a turn stays on one side");
+    // an egg sawn lengthwise (GameSaw.cpp): half a turn of the lathe, on the x >= 0 side, and the flat face closing it
+    all("half lathe", geo::lathe(profile, 8, kPi), size_t(9 * 5), size_t(8 * 4 * 6), {0.6f, 2, 1.2f});
+    const MeshData cap = geo::latheCap(profile);
+    all("lathe cap", cap, size_t(2 * 5), size_t(4 * 6), {0, 2, 1.2f});
+    bool flat = true;
+    for (const Vertex& v : cap.vertices) flat = flat && v.pos.x == 0 && v.normal == glm::vec3(-1, 0, 0);
+    check(flat, "lathe cap: in the cut plane (x = 0), facing out of the open half (-x)");
+    // a saw blade's toothed rim: closed faces on both sides, 16 teeth with tips at r = 1 and gullets at 0.84 round the hole
+    const MeshData teeth = geo::sawTeeth(16, 0.84f, 0.74f, 0.1f);
+    const Stats ts = inspect(teeth);
+    check(teeth.vertices.size() == size_t(2 * 2 * 49 + 4 * 48) && teeth.indices.size() == size_t(2 * 48 * 6 + 48 * 6) && ts.inRange,
+          "saw teeth: two faces of 48 quads round the hole, and the edge of the outline");
+    check(ts.unitNormals && ts.ccw && ts.degenerate == 0, "saw teeth: counter-clockwise faces (normals point out)");
+    int tips = 0;
+    float rMin = 9, rMax = 0, hole = 9;
+    for (const Vertex& v : teeth.vertices) {
+        const float r = glm::length(glm::vec2(v.pos));
+        if (v.normal.z > 0.5f && v.uv.y > 0.5f) { tips += std::abs(r - 1) < 1e-5f; rMin = std::min(rMin, r); rMax = std::max(rMax, r); } // the front's outline
+        if (v.uv.y < 0.5f && std::abs(v.normal.z) > 0.5f) hole = std::min(hole, r);
+    }
+    check(tips == 16 && std::abs(rMax - 1) < 1e-5f && std::abs(rMin - 0.84f) < 1e-5f && std::abs(hole - 0.74f) < 1e-5f && std::abs(ts.hi.z - 0.05f) < 1e-6f,
+          "saw teeth: 16 tips at r = 1, gullets at 0.84, the hole 0.74, 0.1 thick");
+    // the teeth hook: each tip comes just after its gullet going counter-clockwise, so the steep faces lead clockwise
+    bool hooked = true;
+    for (size_t i = 0; i + 2 < 2 * 48; i += 2 * 3) {
+        const glm::vec2 g(teeth.vertices[i + 1].pos), t(teeth.vertices[i + 3].pos), b(teeth.vertices[i + 5].pos);
+        const float ag = std::atan2(g.y, g.x), at = std::atan2(t.y, t.x), ab = std::atan2(b.y, b.x);
+        auto ahead = [](float a, float b) { float d = b - a; while (d < 0) d += 2 * kPi; while (d >= 2 * kPi) d -= 2 * kPi; return d; };
+        hooked = hooked && ahead(ag, at) < ahead(at, ab) * 0.4f && glm::length(t) > glm::length(b) && glm::length(b) > glm::length(g);
+    }
+    check(hooked, "saw teeth: steep cutting faces, sloping backs");
 }
 
 void library() {
@@ -78,6 +109,10 @@ void library() {
     check(fits && valid, "library: 16-bit indices, all in range");
     const Stats egg = inspect(lib[size_t(MeshId::Egg)]);
     check(std::abs((egg.hi.y - egg.lo.y) - 0.6f * 0.49f * 2) < 1e-3f, "the egg: one egg unit (0.6 m) tall, near enough");
+    const Stats half = inspect(lib[size_t(MeshId::EggHalf)]), cap = inspect(lib[size_t(MeshId::EggHalfCap)]);
+    check(half.ccw && cap.ccw && std::abs(half.hi.y - egg.hi.y) < 1e-4f && std::abs(half.lo.y - egg.lo.y) < 1e-4f && half.lo.x > -1e-4f &&
+              std::abs(half.hi.x - egg.hi.x) < 1e-3f && std::abs(cap.hi.z - egg.hi.z) < 1e-3f && cap.hi.x == 0,
+          "the sawn egg: half the egg's shell (x >= 0), as long as the egg, closed by its cut face");
     check(inspect(lib[size_t(MeshId::Box)]).ccw && size3(inspect(lib[size_t(MeshId::Box)]), {1, 1, 1}), "the unit box");
     // Neon Egypt: the pyramid and the tapered block, unit sized, closed, faces pointing out
     const Stats pyr = inspect(lib[size_t(MeshId::Pyramid)]), fru = inspect(lib[size_t(MeshId::Frustum)]);

@@ -34,6 +34,11 @@ namespace cs {
 
 class Game {
 public:
+    // The level editor's play-test: every run on `level` (cleared, it's played again, not the next), from `x` metres
+    // along its course (her meter full, no eggs), or from a cell of its maze gauntlet (`col`, `row`: the cell her feet
+    // are in; `dir`: the way she runs, 1 right, -1 left). Just `level`: every run on it, from its start (or, with
+    // debugNearGauntlet, its gauntlet's door)
+    struct PlayTest { int level = 0; double x = -1; int col = -1, row = -1, dir = 1; };
     // How long the end of a run plays before any panel (and before the replay clip ends): the crash's slow-motion
     // shatter, and the finish line's runway, fireworks and applause. Real seconds.
     static constexpr float kCrashTail = 2.5f;
@@ -116,6 +121,7 @@ public:
     glm::vec4 levelCompleteBanner() const { return completeBox_; } // centre x, y, width, height; zero when hidden
     static constexpr float kHenTop = 1.4f; // the top of the hen's comb above her feet (world m)
     bool henTopOnScreen(glm::vec2& px) const { return camera_.project(hen_.nodes[hen_.root].pos + glm::vec3(0.f, kHenTop, 0.f), px); }
+    bool worldOnScreen(const glm::vec3& p, glm::vec2& px) const { return camera_.project(p, px); } // (tests: HUD points)
     float progressBarBottom() const { return barBottom_; }
     float henHeight() const { return hen_.nodes[hen_.root].pos.y; }
     bool streetBelowHen() const { return level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0; }
@@ -129,9 +135,13 @@ public:
 private:
     static constexpr int MAXE = 8;
 
-    struct Egg { glm::vec3 pos{0.f}, rot{0.f}, scale{0.001f}; float age = 0, sway = 0, jig = 0, jd = 0; int ring = 0; float ringRot = 0; };
-    enum class DebrisKind { Egg, Shard, Spark, Feather };
-    struct Debris { DebrisKind kind; glm::vec3 pos, rot, scale, v, w; float life, ph; int ring; };
+    // cut: how far a saw has sawn through it (0: not being sawn; GameSaw.cpp)
+    struct Egg { glm::vec3 pos{0.f}, rot{0.f}, scale{0.001f}; float age = 0, sway = 0, jig = 0, jd = 0; int ring = 0; float ringRot = 0, cut = 0; };
+    // EggHalf: half of a sawn egg (its rot is an axis * angle tumble on top of `basis`, its orientation when sawn);
+    // Yolk: the yolk spilling out of it; Blade: a saw blade smashed off its slot by OVERDRIVE
+    enum class DebrisKind { Egg, Shard, Spark, Feather, EggHalf, Yolk, Blade };
+    // (zapped: an egg the droid's laser knocked out of the stack: it glows and crackles blue as it flies, at first)
+    struct Debris { DebrisKind kind; glm::vec3 pos, rot, scale, v, w; float life, ph; int ring; glm::mat3 basis{1.f}; bool zapped = false; };
     struct Splat { glm::vec3 pos; float sx, sy, scale, age, k; };
     enum class PopKind { Groove, Sector, Perfect, Surge, Smashed };
     struct Popup { glm::vec3 world; std::string text; PopKind kind; float age, dur; };
@@ -146,7 +156,8 @@ private:
     void completeLevel();                 // the finish-line celebration is over: the run ends as a clear
     void revive();             // Continue: back into the run where the hen fell
     void perfect(float top);
-    void closeCall(float top);
+    void closeCall(float top, const char* label = "CLOSE CALL");
+    static constexpr float kNearChain = 1.2f; // near misses this close (game seconds) chain
     void die(bool ceiling);
     void updatePlay(float dt, float rdt);
     void updateHen(float dt);
@@ -174,6 +185,17 @@ private:
     void updateDroid(float rdt);
     void emitDroid(RenderList& out, bool onStreet);
     void updateDebris(float dt);
+    // saw blades (GameSaw.cpp): the stack crossing one, the cut, the egg falling apart; the blades and the halves drawn
+    void updateSaws(float dt);
+    void animateSaws(float rdt); // every frame, in play or not: the spin, spent blades sinking, the slash and zoom fading
+    void sawEgg(Saw& s);
+    void sawHen(Saw& s);
+    void smashSaw(Saw& s);
+    glm::mat4 stackEggMatrix(size_t i) const; // an egg of the stack as it's drawn (lying on its side, rolling)
+    glm::vec3 sawColor() const;               // the zone's colour for the blades' teeth
+    void emitSaws(RenderList& out, float pz);
+    void emitSawBlade(RenderList& out, const glm::mat4& hub, float spin, glm::vec3 teeth, float glowK);
+    void emitSawDebris(RenderList& out, const Debris& d);
     void updateCamera(float rdt);
     void updateAmbient(float dt);
 
@@ -258,6 +280,8 @@ private:
 
     GameServices svc_;      // every pointer set (null services replaced by no-op ones)
     FastRandom rng_;
+    // the scenery's own stream (rain, signs, traffic): what it draws never shifts the run's (debugSeed: repeatable runs)
+    FastRandom sceneRng_;
     Dda dda_;
     Level level_;
     World world_;
@@ -289,6 +313,47 @@ private:
 
     std::vector<Egg> eggs_;
     std::vector<Debris> debris_;
+    // maze gauntlets (GameGauntlet.cpp): the one she's in (g null: none) and her way through it (+1 right, -1 left), at
+    // the run's full speed;
+    // the camera's blend into its follow, and its lead her way (-1..1, eased round on a bounce); which way she faces
+    // (radians about y, eased round too); a bumper's flash (where, how much left); the furthest she's got (distance,
+    // score, progress: in a maze she turns back)
+    PlacedGauntlet gIn_{};
+    int gDir_ = 1;
+    int gMoves_ = 0, gBotLay_ = -99; // cells her front edge has crossed in it (and bounces); when the bot last laid
+    float gK_ = 0, gLead_ = 1, henYaw_ = 0, gFlash_ = 0;
+    // a squeeze in a maze: her head brushing what's over her since this time (-1: none), over this many columns; it's
+    // a CLOSE CALL when it ends, unless a near miss came in it
+    float gSqueezeFrom_ = -1;
+    int gSqueezeCols_ = 0;
+    // near misses in quick succession chain (CLOSE SHAVE x3): the last one's time, the chain so far; the last cut's time
+    // (saws cut in quick succession skip the slow motion and the zoom after the first)
+    float nearMissT_ = -10, sawCutT_ = -10;
+    int nearChain_ = 0;
+    glm::vec3 gFlashAt_{0.f};
+    double maxX_ = 0;
+    bool debugNearGauntlet_ = false; // developer menu: the next run starts just before its level's gauntlet
+    bool debugNearGauntletEvery_ = false; // (every run, not just the next: the level editor's play-test)
+    PlayTest playTest_{};                 // the level editor's play-test: its level, where every run starts
+    void enterGauntlet(const PlacedGauntlet& p);
+    void leaveGauntlet();
+    void updateGauntlet(float dt);
+    void gauntletBounce(int c, int r);
+    void emitGauntlets(RenderList& out, float pz);
+    void endSqueeze(); // (a maze's squeeze is over: its CLOSE CALL, if it earned one)
+    void emitInscriptions(RenderList& out, float lo, float hi); // (a tomb's hieroglyphs, from emitGauntlets)
+    void wallMaterials(float pz, LitMaterial& crate, LitMaterial& hay, float& courses) const; // the zone's walls
+    // saws (GameSaw.cpp): the one sawing the bottom egg now (its x, -1: none; and its height: in a maze one may sit right
+    // over another, on another floor); the blades' spin, in real time so they
+    // scream on through a hit-pause; the stack settling one egg down after a cut (cosmetic: metres still to fall)
+    static constexpr float kSawSpin = 11.f; // rad/s (the spokes and teeth stay readable at 60 fps)
+    double cutSawX_ = -1;
+    int cutSawY_ = 0;
+    bool cutting(const Saw& s) const { return s.x == cutSawX_ && s.y == cutSawY_; }
+    float sawSpin_ = 0, sawDrop_ = 0, sawDropV_ = 0;
+    // the slash of light along the cut as a sawn egg falls apart (real seconds since; < 0: none)
+    struct SawSlash { glm::vec3 pos{0.f}; float angle = 0, t = -1; } sawSlash_;
+    float sawZoom_ = 0; // ...and the camera's punch in on it (1 at the split, easing out)
     std::vector<Splat> splats_;
     std::vector<Popup> popups_;
 
@@ -334,6 +399,7 @@ private:
     std::vector<double> raidPlan_;            // this run's raids: where along the course they fall due
     size_t raidNext_ = 0;
     bool debugRaids_ = false;                 // developer menu: the next run's droid raids come every ~35 m
+    bool debugSaws_ = false;                  // developer menu: the next run's course has saws (any level), ~one per 25 m
     std::string overTag_, overNote_;
     float overButtonRowBottom_ = 0; // game-over: bottom edge (HUD points) of the free row below 'Tap to reboot'
     float overCoinsY_ = 0;          // game-over: where the run's coins row sits (coins fly from here)
@@ -458,6 +524,30 @@ public:
     void scrollBy(float dyPts); // mouse wheel / trackpad (points, + = content moves up)
     float devScroll() const { return scroll_.y; }
     glm::vec3 droidPosition() const { return droidPose().pos; }
+    // saws (tests, developer menu): this course's saws; one set into the surface `ahead` metres in front of the hen
+    // (cube: on the next cyber-cube wall top ahead instead, 2.5 eggs past its edge; false if there's none in 40 m)
+    const std::vector<Saw>& saws() const { return level_.saws; }
+    const Level& course() const { return level_; } // tests: the course as laid so far
+    // gauntlets (tests, developer menu): whether she's in one, which way she's running, the furthest she's got
+    bool inGauntlet() const { return gIn_.g != nullptr; }
+    int runDirection() const { return gDir_; }
+    double furthest() const { return std::max(x_, maxX_); }
+    void debugNearGauntlet(bool everyRun = false) { debugNearGauntlet_ = true; debugNearGauntletEvery_ = everyRun; }
+    // the level editor's play-test (PlayTest, above): every run on its level, from where it says
+    void debugPlayTest(const PlayTest& t) { playTest_ = t; }
+    float meterEggs() const { return meter_; } // tests: the eggs in the meter
+    float henBase() const { return float(baseY_); } // tests: the floor her stack stands on, metres
+    bool debugSaw(double ahead, bool cube = false);
+    // tests: the sawn eggs' halves and yolks flying about (their centres), and the close calls this run
+    std::vector<glm::vec3> eggHalves() const { std::vector<glm::vec3> v; for (const auto& d : debris_) if (d.kind == DebrisKind::EggHalf) v.push_back(d.pos); return v; }
+    std::vector<glm::vec3> zappedEggs() const { std::vector<glm::vec3> v; for (const auto& d : debris_) if (d.zapped) v.push_back(d.pos); return v; }
+    float stackDrawnBase() const { return float(baseY_) + sawDrop_; } // (tests: where the stack's drawn from, settling)
+    int yolks() const { int n = 0; for (const auto& d : debris_) n += d.kind == DebrisKind::Yolk; return n; }
+    int flyingBlades() const { int n = 0; for (const auto& d : debris_) n += d.kind == DebrisKind::Blade; return n; }
+    int closeCalls() const { return run_.closeCalls; }
+    int perfects() const { return run_.perfects; }
+    float timeScale() const { return timeScale_; } // (tests: the slow motion a near miss brings on)
+    bool sawing() const { return cutSawX_ >= 0; }
 private:
     // after a crash the hen is stood on a clear, flat patch of ground behind the wall it hit (showroomSpot)
     bool showPlaced_ = false;

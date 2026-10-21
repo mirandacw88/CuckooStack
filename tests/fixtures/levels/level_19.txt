@@ -1,0 +1,77 @@
+; Level 19, Neon Egypt: the ascent at 40% of the way.
+length 480
+difficulty 630 0.35
+raids auto
+course
+16 0 crate
+4 4 mix
+4 7 mix
+5 8 mix
+3 8 hay
+4 8 hay
+5 8 mix
+5 8 hay
+14 7 hay
+3 8 mix
+18 3 mix
+24 0 mix
+5 1 mix
+11 2 hay 6
+30 4 hay
+11 7 hay 10
+3 8 hay
+4 8 hay
+19 2 hay
+5 6 hay
+11 8 mix 12
+4 8 hay
+4 8 mix
+15 6 crate
+3 7 hay
+3 8 mix
+4 8 crate
+3 8 crate
+4 8 mix
+4 8 mix
+27 8 mix
+20 0 crate
+16 4 crate
+36 8 crate
+10 12 crate
+4 13 crate
+20 13 crate
+3 13 crate 17
+276 0 gauntlet ascent
+31 1 crate
+28 5 crate
+3 8 hay
+15 6 hay
+16 3 crate
+16 0 crate
+5 2 hay
+11 3 hay 6
+11 4 hay 7
+11 5 crate 8
+saws
+56.84 80.84 82.64 84.44 155.175 156.975 158.775
+discos
+13.2 5.65
+18.3 7.45
+36.9 6.25
+98.1 6.85
+114 5.05
+131.7 6.25
+138.9 6.25
+147.6 6.85
+149.7 7.45
+166.5 1.45
+168.3 2.05
+170.1 2.65
+415.5 4.45
+432.3 6.85
+453.3 1.45
+455.1 2.05
+456.9 2.65
+462.9 3.85
+476.7 3.1
+483 3.7

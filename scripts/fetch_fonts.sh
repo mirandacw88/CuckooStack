@@ -4,6 +4,7 @@
 #   Orbitron 900            -> --display (score, title, stats, popups), shipped renamed as "Cuckoo Display"
 #   Chakra Petch 500 / 700  -> --body (paragraphs; tags, labels, pills, gate label)
 #   Noto Sans JP 700        -> katakana / kanji on the neon signs (the web build falls back to a system CJK font)
+# (Noto Sans Egyptian Hieroglyphs, for the tombs' inscriptions, is subset by scripts/subset_hieroglyphs.py instead.)
 # Requires: python3 -m pip install fonttools
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

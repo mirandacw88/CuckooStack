@@ -1,0 +1,137 @@
+; Level 27, Neon Japan.
+length 560
+difficulty 910 0.35
+raids auto
+course
+16 0 crate
+4 1 hay
+5 3 crate
+3 7 hay
+3 8 crate
+5 8 crate
+5 8 crate
+3 8 hay
+3 8 mix
+5 8 crate
+3 8 mix
+5 8 mix
+20 1 mix
+3 2 mix
+11 6 mix 9
+14 5 crate
+24 0 mix
+3 4 mix
+11 6 crate 9
+20 4 crate
+3 8 mix
+3 8 crate
+4 8 mix
+4 8 mix
+3 8 hay
+14 7 crate
+5 8 crate
+39 5 crate
+18 0 hay
+12 0 crate
+5 4 crate
+5 8 mix
+3 8 mix
+28 3 hay
+9 7 crate
+11 8 hay 11
+4 8 mix
+5 8 mix
+4 8 mix
+4 8 hay
+4 8 hay
+4 8 crate
+5 8 hay
+3 8 crate
+18 3 mix
+5 5 hay
+5 7 hay
+16 4 mix
+3 7 mix
+18 2 hay
+3 5 mix
+5 6 crate
+19 3 crate
+9 7 crate
+3 8 mix
+3 8 mix
+4 8 mix
+18 3 mix
+18 6 hay
+11 8 mix 11
+25 0 crate
+36 4 hay
+11 7 crate 11
+39 4 hay
+4 5 crate
+16 2 hay
+5 3 crate
+16 4 crate
+3 8 mix
+4 8 mix
+19 2 mix
+3 3 mix
+11 5 hay 8
+11 6 hay 9
+15 4 hay
+16 1 crate
+14 0 crate
+5 4 hay
+11 7 crate 11
+3 8 crate
+4 8 mix
+3 8 crate
+17 4 mix
+7 6 crate
+11 8 crate 11
+20 0 crate
+4 2 crate
+11 3 hay 7
+11 4 hay 8
+14 3 mix
+14 2 mix
+5 3 crate
+11 6 hay 9
+11 7 hay 10
+10 0 crate
+saws
+73.04 134.915 136.715 138.515 334.5 370.5 372.3 374.1
+discos
+10.8 3.25
+29.7 7.45
+54.9 4.3
+86.7 4.3
+92.1 4.45
+102.3 7.45
+104.4 6.85
+114 6.25
+119.7 6.25
+156.9 1.45
+158.7 2.05
+160.5 2.65
+164.1 5.05
+169.5 7.45
+188.7 5.65
+197.7 5.5
+203.1 6.25
+240.6 4.45
+258.9 5.65
+267.6 3.25
+315.3 1.45
+317.1 2.05
+318.9 2.65
+361.8 3.85
+393.9 3.25
+440.1 3.85
+449.4 2.65
+455.7 1.45
+457.5 2.05
+459.3 2.65
+473.1 6.25
+498.3 5.5
+505.2 1.45
+545.1 3.85

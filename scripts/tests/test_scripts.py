@@ -6,7 +6,12 @@
   - scripts/hud/extract_drop_sprites.py: re-running it reproduces the committed Daily Drop PNGs exactly, and the
     labels baked into the sheet (DAY n, CLAIM, CLAIM X2) are gone from them;
   - scripts/hud/make_hud_icons.py: re-running it (raster-only, without Chrome) reproduces the committed atlas and
-    HudIcons.h exactly, with every cell no sprite owns left empty.
+    HudIcons.h exactly, with every cell no sprite owns left empty;
+  - scripts/gauntlets/build_gauntlets.py: the committed GauntletLayouts.inc is what the grids in assets/gauntlets
+    build (no hand edits), every grid described and well formed, the first drafts still building, and a grid reading
+    back as it was saved (the level editor saves through it);
+  - scripts/levels/build_levels.py: the committed LevelLayouts.inc is what the level files in assets/levels build,
+    levels 1-30 each with its file, and a level refitted to its gauntlet's grid grown or shrunk (the level editor).
 
 The image tests need Pillow and numpy (python3 -m pip install pillow numpy); without them they're skipped.
 """
@@ -166,6 +171,74 @@ class MakeHudIcons(unittest.TestCase):
             mod.main()
             cleared = np.asarray(Image.open(png).convert("RGBA"))[y:y + F, x:x + F]
             self.assertEqual(int(cleared[..., 3].max()), 0, "stray art left in a cell no sprite owns")
+
+
+class BuildGauntlets(unittest.TestCase):
+    CELLS = set("#HBRLSC.>X")
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts", "gauntlets"))
+        self.mod = load("scripts/gauntlets/build_gauntlets.py", "build_gauntlets")
+
+    def well_formed(self, name, rows):
+        self.assertTrue(rows and all(len(r) == len(rows[0]) for r in rows), "%s: rows of one width" % name)
+        self.assertTrue(all(set(r) <= self.CELLS for r in rows), "%s: only Gauntlet.h's cells" % name)
+        self.assertEqual([r[0] for r in rows].count(">"), 1, "%s: one entry, on the left edge" % name)
+        self.assertEqual([r[-1] for r in rows].count("X"), 1, "%s: one exit, on the right edge" % name)
+        self.assertEqual(sum(r.count(">") + r.count("X") for r in rows), 2, "%s: no other doors" % name)
+
+    def test_committed_layouts_are_what_the_grids_build(self):
+        self.assertEqual(self.mod.render(), read(self.mod.OUT), "GauntletLayouts.inc is stale (re-run scripts/gauntlets/build_gauntlets.py)")
+
+    def test_every_grid_is_described_and_well_formed(self):
+        grids = self.mod.grids()
+        self.assertTrue(set(self.mod.DRAFTS) <= {name for name, _, _ in grids}, "a grid for every draft")
+        for name, description, rows in grids:
+            self.assertTrue(any(line.strip() for line in description), "%s has no description" % name)
+            self.well_formed(name, rows)
+
+    def test_drafts_still_build(self):
+        for name in self.mod.DRAFTS:
+            description, rows = self.mod.draft(name)
+            self.assertTrue(description, "%s's draft has no description" % name)
+            self.well_formed(name + " (draft)", rows)
+
+    def test_a_grid_saves_and_reads_back_as_it_was(self):
+        description, rows = ["Level 99, a test", "", "- two lines"], ["#####", "#...#", ">...X", "#####"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "test.txt")
+            self.mod.write_grid(path, description, rows)
+            self.assertEqual(self.mod.read_grid(path), (description, rows))
+            self.assertEqual(read(path), "; Level 99, a test\n;\n; - two lines\n#####\n#...#\n>...X\n#####\n")
+
+
+class BuildLevels(unittest.TestCase):
+    def setUp(self):
+        self.mod = load("scripts/levels/build_levels.py", "build_levels")
+
+    def test_committed_levels_are_what_the_files_build(self):
+        self.assertEqual(self.mod.render(), read(self.mod.OUT), "LevelLayouts.inc is stale (re-run scripts/levels/build_levels.py)")
+
+    def test_every_campaign_level_has_its_file(self):
+        numbers = [n for n, _ in self.mod.levels()]
+        self.assertTrue(set(range(1, 31)) <= set(numbers), "levels 1-30 each have a file in assets/levels")
+        for n, text in self.mod.levels():
+            self.assertIn("\nlength ", "\n" + text, "level %d: a length" % n)
+            self.assertIn("\ncourse\n", "\n" + text, "level %d: a course" % n)
+
+    def test_a_level_refits_its_gauntlet(self):
+        # (the level editor's save: a grid grown or shrunk, what's after its span in its level moves on or back)
+        text = "length 30\ncourse\n10 0 crate\n20 0 gauntlet tomb\n30 0 crate\nsaws\n3 19.5 24.75\ndiscos\n21 1.5\n"
+        self.assertEqual(self.mod.gauntlets_in(text), ["tomb"])
+        wider = self.mod.refit(text, "tomb", 22)
+        self.assertEqual(wider, "length 31.2\ncourse\n10 0 crate\n22 0 gauntlet tomb\n30 0 crate\nsaws\n3 20.7 25.95\ndiscos\n22.2 1.5\n")
+        self.assertEqual(self.mod.refit(wider, "tomb", 20), text, "and back")
+        self.assertEqual(self.mod.refit(text, "wells", 30), text, "another gauntlet's: as it was")
+        self.assertEqual([self.mod.fmt(v) for v in (420.0, 31.2000001, -0.0001, 2.5)], ["420", "31.2", "0", "2.5"])
+        for n, level in self.mod.levels():
+            for name in self.mod.gauntlets_in(level):
+                width = int(next(line for line in level.split("\n") if line.endswith(" 0 gauntlet " + name)).split()[0])
+                self.assertEqual(self.mod.refit(self.mod.refit(level, name, width + 3), name, width), level, "level %d: refitted and back" % n)
 
 
 if __name__ == "__main__":

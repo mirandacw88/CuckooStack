@@ -1,4 +1,5 @@
 #include "Campaign.h"
+#include "LevelData.h"
 
 #include <algorithm>
 #include <string>
@@ -15,11 +16,58 @@ Campaign::Campaign(IStorage* storage) : rec_(storage, "cluckstack-campaign") {
 uint32_t Campaign::seedOf(int level) { return seedFor("cluckstack:level:" + std::to_string(level)); }
 
 // Difficulty bands: level 1 covers the easy start of the curve (0..105), each level starts 35 further on, and level
-// 10 reaches the plateau (315..420); later levels stay there.
+// 10 reaches the plateau (315..420); later levels stay there. An authored level (LevelData.h) brings its own band,
+// course and finish line: the generator lays only the levels past them.
 void Campaign::applyTo(Level& course) const {
+    if (const LevelData* d = levelData(level_)) {
+        course.load(*d);
+        return;
+    }
+    applyGenerated(course);
+}
+
+void Campaign::applyGenerated(Level& course) const {
     course.reset(seedOf(level_));
     course.setDifficulty(35.0 * (level_ - 1), 0.35);
     course.setFinish(length());
+    course.setSaws(sawsOf(level_), sawRowOf(level_));
+    course.setGauntlet(nullptr, 0);
+}
+
+double Campaign::lengthOf(int level) {
+    const LevelData* d = levelData(level);
+    return d ? d->length : 300.0 + 10.0 * (level - 1);
+}
+
+// Each level's own (LevelData.h: a gauntlet's span in its course); Neon Egypt's every other level from 11, each its
+// own (docs/LEVEL_DESIGN.md)
+const Gauntlet* Campaign::gauntletOf(int level) {
+    if (const LevelData* d = levelData(level))
+        for (const LevelData::Wall& w : d->course)
+            if (!w.gauntlet.empty()) return gauntletNamed(w.gauntlet);
+    return nullptr;
+}
+
+double Campaign::gauntletAt(int level) {
+    if (const LevelData* d = levelData(level)) {
+        int cells = 0;
+        for (const LevelData::Wall& w : d->course) {
+            if (!w.gauntlet.empty()) return cells * U;
+            cells += w.cells;
+        }
+    }
+    return 0.4 * lengthOf(level);
+}
+
+int Campaign::gauntletLevel() {
+    for (int level : levelNumbers())
+        if (gauntletOf(level)) return level;
+    return 0;
+}
+
+int Campaign::raidsOf(int level) {
+    const LevelData* d = levelData(level);
+    return d ? d->raids : -1;
 }
 
 void Campaign::attempt() { ++attempts_; save(); }

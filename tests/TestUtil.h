@@ -1,12 +1,18 @@
 // Fakes shared by the headless tests: in-memory storage, a clock the test moves by hand, scriptable ads and store,
-// and an analytics sink that records every event.
+// and an analytics sink that records every event. And the course content the game's mechanics tests are written round,
+// frozen (useFixtures).
 #pragma once
 
 #include "core/Game.h"
+#include "core/Gauntlet.h"
+#include "core/LevelData.h"
 #include "core/Meta.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -21,6 +27,34 @@ inline int finish(const char* name) {
     std::printf("%s\n", failures ? (std::string(name) + " TESTS FAILED").c_str() : (std::string("all ") + name + " checks passed").c_str());
     return failures ? 1 : 0;
 }
+
+#ifdef CS_SOURCE_DIR
+// The levels and gauntlets the game's mechanics tests are written round, frozen: tests/fixtures holds them as they
+// were when those tests were written (the tomb on level 11, the wells on 15, the ascent on 19, every level's walls and
+// saws), and they stand in for the game's own (assets/levels, assets/gauntlets) from here on. Tuning a level or a
+// gauntlet in the level editor then never breaks a test of how the game plays. The tests of what every level and
+// gauntlet must be (each cleared by the bot, each gauntlet one way through ...) run on the game's own: before this.
+inline void useFixtures() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::path(CS_SOURCE_DIR) / "tests" / "fixtures";
+    auto read = [](const fs::path& p) { std::ifstream in(p); std::stringstream s; s << in.rdbuf(); return s.str(); };
+    bool ok = fs::is_directory(root / "gauntlets") && fs::is_directory(root / "levels");
+    std::string why;
+    for (const auto& e : fs::directory_iterator(root / "gauntlets")) { // (first: the levels name them)
+        if (e.path().extension() != ".txt") continue;
+        std::vector<std::string> rows;
+        std::istringstream in(read(e.path()));
+        for (std::string line; std::getline(in, line);) if (!line.empty() && line[0] != ';') rows.push_back(line);
+        if (!cs::debugOverrideGauntlet(e.path().stem().string(), rows, &why)) { ok = false; std::printf("  fixture %s: %s\n", e.path().c_str(), why.c_str()); }
+    }
+    for (const auto& e : fs::directory_iterator(root / "levels")) {
+        const std::string name = e.path().filename().string(); // level_NN.txt
+        if (name.rfind("level_", 0) != 0 || e.path().extension() != ".txt") continue;
+        if (!cs::debugOverrideLevel(std::atoi(name.c_str() + 6), read(e.path()), &why)) { ok = false; std::printf("  fixture %s: %s\n", name.c_str(), why.c_str()); }
+    }
+    if (!ok) check(false, "the frozen levels and gauntlets (tests/fixtures) stand in for the game's");
+}
+#endif
 
 struct FakeStorage : cs::IStorage {
     std::map<std::string, std::string> kv;

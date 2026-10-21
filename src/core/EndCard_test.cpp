@@ -8,6 +8,7 @@
 #include <memory>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,13 @@ void endCard() {
     check(g.endCard(360, 640, m) != a, "end card: the label is drawn");
 }
 
+// one channel of a pixel of a w x h card, its x and y checked: a read off the card is a bug in the test, so it fails
+// at once (an unchecked one reads the next row, or past the end of the image: a crash on some runs only)
+uint8_t at(const std::vector<uint8_t>& px, int w, int h, int x, int y, int c) {
+    if (x < 0 || y < 0 || x >= w || y >= h || px.size() != size_t(w) * h * 4) throw std::out_of_range("a pixel off the end card");
+    return px[(size_t(y) * w + x) * 4 + c];
+}
+
 // the card at other sizes: proportional, never drawing outside its canvas
 void sizes() {
     Env env;
@@ -63,17 +71,18 @@ void sizes() {
         ok = ok && px.size() == size_t(w) * h * 4;
     }
     check(ok, "any size, even tiny or odd shapes, renders without overrunning the canvas");
-    // half size looks like the full card scaled down: compare brightness on a coarse grid
+    // half size looks like the full card scaled down: compare brightness on a coarse grid, of whole 16 px blocks (360
+    // isn't a multiple of 16: the last part-block's strip is left out)
     const auto big = g.endCard(720, 1280, m), small = g.endCard(360, 640, m);
     double diff = 0;
     int n = 0;
-    for (int y = 0; y < 640; y += 16)
-        for (int x = 0; x < 360; x += 16) {
+    for (int y = 0; y + 16 <= 640; y += 16)
+        for (int x = 0; x + 16 <= 360; x += 16) {
             double a = 0, b = 0;
             for (int dy = 0; dy < 16; ++dy)
                 for (int dx = 0; dx < 16; ++dx) {
-                    b += small[(size_t(y + dy) * 360 + x + dx) * 4 + 1];
-                    for (int k = 0; k < 4; ++k) a += big[(size_t(2 * (y + dy) + k / 2) * 720 + 2 * (x + dx) + k % 2) * 4 + 1] / 4.0;
+                    b += at(small, 360, 640, x + dx, y + dy, 1);
+                    for (int k = 0; k < 4; ++k) a += at(big, 720, 1280, 2 * (x + dx) + k % 2, 2 * (y + dy) + k / 2, 1) / 4.0;
                 }
             diff += std::abs(a - b) / 256.0;
             ++n;
@@ -83,10 +92,7 @@ void sizes() {
     const int W = 720, H = 1280, cy = int(H * 0.42f) + 260;
     int gold = 0;
     for (int y = cy - 40; y < cy + 40; ++y)
-        for (int x = W / 2 - 40; x < W / 2 + 40; ++x) {
-            const uint8_t* p = &big[(size_t(y) * W + x) * 4];
-            gold += p[0] > 180 && p[1] > 120 && p[2] < 110;
-        }
+        for (int x = W / 2 - 40; x < W / 2 + 40; ++x) gold += at(big, W, H, x, y, 0) > 180 && at(big, W, H, x, y, 1) > 120 && at(big, W, H, x, y, 2) < 110;
     check(gold > 300, "the brand block: the spinning-coin logo");
     m.distance = 12;
     check(g.endCard(720, 1280, m) != big, "the distance is drawn");
@@ -95,6 +101,7 @@ void sizes() {
 } // namespace
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     endCard();
     sizes();
     return finish("EndCard");

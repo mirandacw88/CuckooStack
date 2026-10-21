@@ -15,8 +15,9 @@ namespace cs::gpu {
 constexpr int kFrameSetBindings = 8;
 constexpr int kFrameSetSamplers = kFrameSetBindings - 1;
 constexpr int kDroidAlbedoBinding = 6, kDroidNormalBinding = 7;
-// the other sets' textures: composite 2, bloom prefilter / blur H / blur V 1 each, HUD text 1, HUD sprites 1
-constexpr int kStaticSetSamplers = 2 + 3 + 1 + 1;
+// the other sets' textures: composite 2, bloom prefilter / blur H / blur V 1 each, HUD text 1, HUD sprites 1, world
+// sprites (the backdrop) 1
+constexpr int kStaticSetSamplers = 2 + 3 + 1 + 1 + 1;
 // the descriptor pool: every set's textures (one scene set per frame in flight)
 constexpr int descriptorPoolSamplers(int framesInFlight) { return kStaticSetSamplers + kFrameSetSamplers * framesInFlight; }
 // a texture binding never left empty: an image that failed to load (or a missing asset) binds a harmless stand-in

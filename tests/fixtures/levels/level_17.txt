@@ -1,0 +1,80 @@
+; Level 17, Neon Egypt: the labyrinth at 40% of the way.
+length 460
+difficulty 560 0.35
+raids auto
+course
+16 0 crate
+4 4 hay
+5 6 crate
+5 7 crate
+5 8 hay
+19 2 crate
+4 4 mix
+14 3 hay
+3 6 crate
+11 7 crate 10
+25 0 crate
+9 3 hay
+11 4 crate 7
+16 5 hay 9
+44 7 mix
+11 8 mix 11
+4 8 hay
+14 7 crate
+3 8 mix
+20 1 hay
+4 3 crate
+15 1 mix
+14 0 crate
+4 1 crate
+20 1 crate
+3 1 crate 4
+258 0 gauntlet labyrinth
+8 1 crate
+11 2 hay 5
+11 3 hay 6
+11 4 mix 8
+11 6 hay 9
+27 4 hay
+15 2 hay
+19 5 crate
+11 8 hay 11
+5 8 crate
+4 8 crate
+3 8 crate
+4 8 mix
+3 8 hay
+4 8 crate
+5 8 mix
+4 8 mix
+3 8 hay
+5 8 hay
+4 8 crate
+5 8 mix
+5 8 hay
+5 8 mix
+4 8 crate
+5 8 mix
+20 0 crate
+saws
+59.84 104.84 106.64 108.44 376.04 377.84
+discos
+19.5 7.45
+44.1 5.65
+50.4 4.9
+77.4 3.1
+127.8 5.65
+158.7 1.45
+160.5 2.05
+162.3 2.65
+346.8 1.9
+353.1 2.5
+360.3 3.1
+394.2 4.45
+415.2 6.85
+417.3 6.85
+433.5 6.25
+436.2 7.45
+453.3 1.45
+455.1 2.05
+456.9 2.65

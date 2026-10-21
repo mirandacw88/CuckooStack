@@ -95,6 +95,7 @@ private:
     void record(Frame& f, uint32_t imageIndex, const RenderList& list);
     bool uploadFontAtlas(const FontAtlas& atlas);
     bool uploadHudImage(const HudImage& image);
+    bool uploadImage(const HudImage& image, VulkanImage& target, VkDescriptorSet set); // (with its mips; binds it to set)
 
     PlatformSurface* platform_ = nullptr;
     VulkanContext ctx_;
@@ -125,6 +126,9 @@ private:
     VulkanImage hudImage_;                 // full-colour HUD sprites (lives heart)
     VkDescriptorSet imageSet_ = VK_NULL_HANDLE;
     const HudImage* uploadedHudImage_ = nullptr;
+    VulkanImage worldImage_;               // full-colour world sprites (Neon Egypt's backdrop)
+    VkDescriptorSet worldImageSet_ = VK_NULL_HANDLE;
+    const HudImage* uploadedWorldImage_ = nullptr;
     VkFramebuffer sceneFb_ = VK_NULL_HANDLE, bloomAFb_ = VK_NULL_HANDLE, bloomBFb_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> presentFbs_;
     VkSampler linearClamp_ = VK_NULL_HANDLE, linearMip_ = VK_NULL_HANDLE;

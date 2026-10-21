@@ -1,4 +1,4 @@
-// The developer menu's scrolling list and its bot (GameBot.cpp). The list: a drag scrolls it (and doesn't press the
+// The developer menu's scrolling list, its bot (GameBot.cpp) and its other buttons. The list: a drag scrolls it (and doesn't press the
 // button under the finger), a tap still presses, a fling coasts on, an end pulls back like a rubber band, the wheel
 // scrolls, and items past the edges can't be pressed. The bot: it plays a run to the finish on its own, keeps two spare
 // eggs when asked, and with "keeps going" declines the continue and starts the next run.
@@ -190,7 +190,7 @@ void refillKeepsUp() {
     // speed (Difficulty.cpp curve()) and the course never asks for a climb the meter can't pay for (Level.h, the egg
     // budget), and nobody comes out of OVERDRIVE with a stack too tall for the next barrier (Game::shedAfterSurge).
     // Before these, no level from 7 on could be cleared (egg starvation), and level 28 not after its surge
-    std::string failed;
+    std::string failed, tame;
     for (int level = 1; level <= 30; ++level) {
         Env env;
         env.ads.state = RewardedState::Unavailable;
@@ -201,9 +201,14 @@ void refillKeepsUp() {
         g.press();
         for (int i = 0; i < 60 * 150 && g.state() == Game::State::Play; ++i) g.update(1.0 / 60.0);
         if (!g.lastRunCleared()) failed += " " + std::to_string(level);
+        if (level >= 11 && g.closeCalls() < 3) tame += " " + std::to_string(level) + ":" + std::to_string(g.closeCalls());
     }
     if (!failed.empty()) std::printf("  not cleared:%s\n", failed.c_str());
+    if (!tame.empty()) std::printf("  too few near misses (level:close calls):%s\n", tame.c_str());
     check(failed.empty(), "every level 1-30 can be cleared by a careful player (eggs keep up with the climbs)");
+    // near misses on purpose (docs/LEVEL_DESIGN.md): a careful run through every level from 11 has its close calls
+    // (a barrier just cleared, a saw taking the last egg right under her)
+    check(tame.empty(), "...and every level from 11 gives a careful player at least 3 near misses");
 }
 
 void botSpareEggs() {
@@ -282,6 +287,48 @@ void devButtons() {
         }
         check(g.state() == Game::State::Play && g.droidRaidPlan().empty(), "...for one run only");
     }
+    {   // "Next run: saws": the next run's course has saws, on any level (about one per 25 m), once
+        Env env;
+        env.ads.state = RewardedState::Unavailable;
+        Game g(env.svc());
+        openGameTab(g);
+        check(g.tapButton("dev:Next run: saws") && (step(g, 0.1f), drew(g, "Saws: armed")), "Next run: saws: arms it");
+        g.tapButton("Close");
+        step(g, 0.3f);
+        g.debugSetBot({true, false, false, 0});
+        g.press();
+        std::vector<double> met;
+        for (int i = 0; i < 60 * 20 && g.state() == Game::State::Play; ++i) {
+            g.update(1.0 / 60.0);
+            for (const Saw& s : g.saws()) if (std::find(met.begin(), met.end(), s.x) == met.end()) met.push_back(s.x);
+        }
+        check(met.size() >= 5 && g.state() == Game::State::Play, "...that run on level 1 has saws, about one per 25 m (and the bot gets past them)");
+        g.debugSetBot({});
+        test::dieQuickly(g);
+        for (int i = 0; i < 60 * 8 && g.state() != Game::State::Play; ++i) {
+            if (g.screen() == Game::Screen::Continue) g.tapButton("No thanks");
+            else if (i % 30 == 0) g.press();
+            g.update(1.0 / 60.0);
+        }
+        step(g, 4.f);
+        check(g.state() != Game::State::Play || g.saws().empty(), "...for one run only");
+    }
+    {   // "Jump to gauntlet": the next run starts just before its level's maze gauntlet (the first level with one's, from
+        // a level without: 11's)
+        Env env;
+        env.ads.state = RewardedState::Unavailable;
+        Game g(env.svc());
+        openGameTab(g);
+        check(g.tapButton("dev:Jump to gauntlet") && (step(g, 0.1f), drew(g, "Gauntlet: armed")) && g.courseLevel() == Campaign::gauntletLevel() &&
+                  g.courseLevel() == 11,
+              "Jump to gauntlet: arms it (and on a level without one, goes to the first with one: 11)");
+        g.tapButton("Close");
+        step(g, 0.3f);
+        g.press();
+        bool in = false;
+        for (int i = 0; i < 60 * 3 && g.state() == Game::State::Play && !in; ++i) { g.update(1.0 / 60.0); in = g.inGauntlet(); }
+        check(in, "...the next run is in its tomb within moments");
+    }
     {   // "Daily drop day 1": the drop back to day 1, claimable
         Env env;
         env.st.kv["cluckstack-drop"] = "claims=4;last=2026-10-08;"; // day 5, claimed today
@@ -335,9 +382,10 @@ void showScreens() {
 } // namespace
 
 int main() {
+    refillKeepsUp(); // (the game's own levels: every one cleared)
+    test::useFixtures(); // (from here: the levels these tests are written round, tests/fixtures)
     scrolls();
     botPlays();
-    refillKeepsUp();
     botSpareEggs();
     botSloppy();
     botKeepsGoing();
