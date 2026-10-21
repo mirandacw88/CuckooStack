@@ -1,0 +1,100 @@
+; Level 1, the neon city.
+length 300
+difficulty 0 0.35
+raids auto
+course
+16 0 crate
+8 1 crate
+10 0 hay
+9 1 hay
+8 2 mix 6
+7 3 hay 7
+9 4 mix
+11 1 hay
+7 2 mix
+7 3 mix
+10 2 hay
+7 3 crate
+10 1 crate
+7 2 mix
+10 0 hay
+10 1 mix
+9 0 mix
+7 1 mix
+10 2 mix
+9 3 crate
+7 4 mix 8
+7 4 mix
+10 2 crate
+9 4 hay
+11 1 hay
+9 0 crate
+8 1 hay
+9 2 crate
+12 0 crate
+9 2 hay
+10 0 crate
+8 1 crate
+9 0 hay
+7 2 crate
+9 1 mix
+9 0 mix
+9 2 crate
+9 3 mix 8
+11 1 hay
+7 2 mix
+8 4 mix 8
+8 4 hay
+10 3 crate
+6 5 hay
+12 2 crate
+11 0 hay
+7 1 crate
+8 2 hay 7
+11 0 hay
+8 1 crate
+8 2 hay 6
+8 4 crate 8
+8 5 crate 9
+11 3 crate
+12 0 hay
+6 2 hay
+saws
+discos
+17.4 1.45
+28.2 1.9
+53.1 4.45
+63.3 3.25
+78.6 2.65
+84.6 2.05
+90.3 1.45
+95.1 2.65
+100.2 3.25
+105.9 3.85
+110.7 3.1
+114.9 5.05
+125.7 5.05
+137.7 2.65
+142.8 3.25
+152.1 1.45
+153.9 2.05
+155.7 2.65
+160.5 2.65
+166.2 1.45
+171.6 3.25
+176.7 1.45
+181.5 2.65
+186.3 3.25
+191.7 2.65
+197.1 3.85
+202.5 2.5
+213.9 3.85
+218.7 3.1
+228.6 3.25
+251.1 2.65
+267 2.05
+272.1 1.9
+276.9 3.1
+281.7 3.7
+294 2.65
+299.4 2.65

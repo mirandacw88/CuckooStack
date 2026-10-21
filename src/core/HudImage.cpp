@@ -17,14 +17,21 @@
 namespace cs::assets {
 extern const unsigned char hud_icons[];
 extern const size_t hud_icons_size;
+extern const unsigned char egypt_backdrop[];
+extern const size_t egypt_backdrop_size;
 } // namespace cs::assets
 
 namespace cs {
 
-bool HudImage::buildIcons() {
+// 3 extra levels: 192 px cells stay whole (96, 48, 24), so a level never mixes two icons
+bool HudImage::buildIcons() { return decode(assets::hud_icons, assets::hud_icons_size, 3, "HUD icon atlas"); }
+
+bool HudImage::buildEgyptBackdrop() { return decode(assets::egypt_backdrop, assets::egypt_backdrop_size, 5, "Egypt backdrop atlas"); }
+
+bool HudImage::decode(const unsigned char* png, size_t size, int levels, const char* what) {
     int n = 0;
-    unsigned char* data = stbi_load_from_memory(assets::hud_icons, int(assets::hud_icons_size), &w_, &h_, &n, 4);
-    if (!data) { CS_LOGE("HUD icon atlas failed to decode"); return false; }
+    unsigned char* data = stbi_load_from_memory(png, int(size), &w_, &h_, &n, 4);
+    if (!data) { CS_LOGE("%s failed to decode", what); return false; }
     pixels_.assign(data, data + size_t(w_) * h_ * 4);
     stbi_image_free(data);
     // premultiply alpha: soft edges filter cleanly (no dark fringes) and blend with ONE / ONE_MINUS_SRC_ALPHA
@@ -32,11 +39,10 @@ bool HudImage::buildIcons() {
         const unsigned a = pixels_[i + 3];
         for (int c = 0; c < 3; ++c) pixels_[i + c] = uint8_t((pixels_[i + c] * a + 127) / 255);
     }
-    // 3 extra levels: 192 px cells stay whole (96, 48, 24), so a level never mixes two icons
     mips_.clear();
     const std::vector<uint8_t>* src = &pixels_;
     int w = w_, h = h_;
-    for (int level = 1; level <= 3 && w % 2 == 0 && h % 2 == 0; ++level) {
+    for (int level = 1; level <= levels && w % 2 == 0 && h % 2 == 0; ++level) {
         const int nw = w / 2, nh = h / 2;
         std::vector<uint8_t> dst(size_t(nw) * nh * 4);
         for (int y = 0; y < nh; ++y)

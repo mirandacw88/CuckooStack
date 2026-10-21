@@ -19,6 +19,8 @@ cmake/                   shader compile + SPIR-V embedding
 assets/shaders/          GLSL 450 sources, compile_shaders.sh, generated/ (pre-built SPIR-V fallback)
 assets/fonts/            web-build fonts, subset + OFL licences (scripts/fetch_fonts.sh)
 assets/splash/           Aerosphere Games logo for the opening splash (scripts/splash/make_splash.py)
+assets/levels/           the campaign's levels, each its whole course (tuned in the level editor; built into LevelLayouts.inc)
+assets/gauntlets/        the maze gauntlets' grids (tuned in the level editor; built into GauntletLayouts.inc)
 src/main.cpp             desktop entry point (GLFW)
 src/core/                game logic, procedural geometry/world, camera, maths   (no OS headers, no Vulkan)
 src/graphics/            Vulkan 1.0 + volk + VMA renderer                       (no OS headers)
@@ -26,7 +28,9 @@ src/platform/            PlatformSurface + Android (ANativeWindow) / iOS (CAMeta
 platforms/android/       Gradle project, manifest, CuckooActivity (GameActivity)
 platforms/ios/           Info.plist, launch screen, Xcode project generator
 third_party/             volk, Vulkan-Headers, VMA, glm (pinned; see VERSIONS.txt)
-tests/                   shared test fakes (TestUtil.h), cross-file tests, course / audio parity tools
+tests/                   shared test fakes (TestUtil.h), cross-file tests, the levels' and gauntlets' checkers, the
+                         levels and gauntlets the game's tests are written round (fixtures/), audio parity tools
+tools/level_editor/      the level editor: a local web app (below)
 ```
 
 ## Build
@@ -149,6 +153,20 @@ NODE_PATH=/path/to/node_modules node tests/web_audio_reference.mjs web.wav
 ```bash
 python3 tests/compare_audio.py native.wav web.wav
 ```
+
+## Tuning levels and gauntlets: the level editor
+
+```bash
+python3 tools/level_editor/server.py --open
+```
+
+A web app on this machine (http://127.0.0.1:8765) for the campaign's levels (`assets/levels`) and their maze
+gauntlets (`assets/gauntlets`). Levels: a level's whole course (walls, barriers, saws, disco balls, the finish line,
+its difficulty and raids) and which gauntlet it plays, where (move one between levels, or start a new one). Gauntlets:
+a gauntlet's grid. The game's own checkers judge every edit against what the tests want, and the real game's bot plays
+each level a moment after; replay its run. Save writes every edit into the game together, Play opens the desktop
+game on the level as edited, and Simulator builds and installs the iOS app with what's saved. It builds
+`build/gauntlet_check`, `build/level_check` and `build/cuckoo_stack` first. More in `docs/LEVEL_DESIGN.md`.
 
 ## Editing shaders
 

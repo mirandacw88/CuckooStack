@@ -1,0 +1,88 @@
+; Level 5, the neon city.
+length 340
+difficulty 140 0.35
+raids auto
+course
+16 0 crate
+8 1 mix
+8 3 hay
+12 1 mix
+8 4 hay
+9 6 mix 11
+14 2 hay
+11 1 crate
+11 0 crate
+8 1 mix
+9 4 hay 8
+9 5 crate 9
+9 6 hay 10
+7 6 mix
+13 3 hay
+13 0 hay
+6 1 crate
+6 3 mix
+14 0 crate
+6 1 hay
+9 2 mix 7
+9 5 crate 9
+15 0 crate
+7 2 hay
+9 3 crate 7
+7 5 crate
+16 0 crate
+5 2 mix
+7 5 crate
+14 2 mix
+7 4 crate
+14 1 crate
+12 0 mix
+5 2 hay
+13 0 crate
+7 2 mix
+10 4 crate 7
+10 5 mix 8
+6 6 hay
+15 3 hay
+14 1 hay
+4 3 crate
+6 4 hay
+10 6 hay 9
+6 7 hay
+18 0 hay
+4 3 mix
+6 6 crate
+5 7 crate
+5 7 crate
+18 0 crate
+10 3 crate
+10 5 mix 9
+25 0 crate
+9 4 crate
+10 5 crate 8
+10 6 hay 9
+6 7 crate
+saws
+discos
+16.8 4.45
+40.8 3.25
+48.3 2.05
+66.3 3.1
+71.7 3.7
+81.3 6.25
+87.3 4.45
+100.8 2.65
+104.4 3.85
+116.4 3.25
+153.3 1.45
+155.1 2.05
+156.9 2.65
+179.1 4.45
+185.4 2.05
+193.2 1.45
+240.6 2.05
+249 4.45
+304.2 3.7
+307.5 1.45
+309.3 2.05
+311.1 2.65
+336.9 4.3

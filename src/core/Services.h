@@ -15,7 +15,12 @@ enum class Sfx { Lay, Crack, Perfect, Corn, Land, Squawk, Empty, Smash, SurgeSta
                  Cheer,     // recorded applause (assets/sfx), crossing the finish line
                  Firework,   // a shell bursting (variant: 0 sphere, 1 ring, 2 crackling willow)
                  // the jet droid's raid on the stack (GameDroid.cpp): it warps in, charges its laser, and zaps an egg
-                 DroidWarp, DroidCharge, DroidLaser };
+                 DroidWarp, DroidCharge, DroidLaser,
+                 // saw blades (GameSaw.cpp): a whine as one comes up ahead; the cut (variant 0: the blade bites the
+                 // bottom egg, 1: the egg falls apart in two halves, 2: the blade catches the hen)
+                 SawWhirr, SawCut,
+                 // maze gauntlets (GameGauntlet.cpp): off a bumper (variant 0), the entry's door shutting behind her (1)
+                 Bounce };
 
 // Web Audio replacement. The web build synthesizes every sound live (see docs/PORTING.md, "Audio");
 // a native backend (AAudio/Oboe, AVAudioEngine) implements this with the same synth graph.

@@ -6,6 +6,7 @@ using namespace cs;
 using namespace test;
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     {   // ---- AdPolicy: interstitial rules
         FakeStorage st;
         FakeClock clock;

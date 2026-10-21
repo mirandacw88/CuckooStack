@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en" class="wiki">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Level Editor Wiki · Cuckoo Stack</title>
+  <link rel="stylesheet" href="/static/editor.css">
+  <link rel="stylesheet" href="/wiki/wiki.css">
+  <script type="module" src="/wiki/figures.js"></script>
+</head>
+<!--
+  The level editor's wiki: every feature of tools/level_editor, for whoever designs levels with it or changes it next.
+  Keep it true: a change to the editor (a tool, hazard, check, panel, button, shortcut, file format) updates its section
+  here, its figure (figures.js: drawn live by the editor's own code), its tip (static/js/tips.js) and the changelog, in
+  the same change. tests/wiki.test.mjs checks every tips.js key has its section here (id="tip-<key>").
+-->
+<body class="wiki">
+  <header class="wiki-top">
+    <div class="brand"><div class="mark">CUCKOO <b>STACK</b></div><div class="title">Level editor · wiki</div></div>
+    <label class="wiki-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="M20 20l-4-4" /></svg><input id="search" type="search" placeholder="Search the wiki (a tool, a key, a check…)" autocomplete="off"></label>
+    <a class="wiki-open" href="/" target="cuckoo-level-editor">Open the editor ↗</a>
+  </header>
+
+  <nav class="wiki-toc" id="toc" aria-label="Contents">
+    <a href="#start-here">Start here</a>
+    <a href="#at-a-glance">The editor at a glance</a>
+    <a href="#top-bar">The top bar</a>
+    <a href="#levels-view">Levels view</a>
+    <a class="sub" href="#level-picker">The level picker</a>
+    <a class="sub" href="#course">The course</a>
+    <a class="sub" href="#level-tools">Its tools</a>
+    <a class="sub" href="#wall-kinds">Wall kinds</a>
+    <a class="sub" href="#level-overlays">Overlays</a>
+    <a class="sub" href="#level-inspector">The inspector</a>
+    <a class="sub" href="#level-replay">The bot’s run, replayed</a>
+    <a href="#gauntlets-view">Gauntlets view</a>
+    <a class="sub" href="#gauntlet-tabs">Tabs, new gauntlets</a>
+    <a class="sub" href="#cells">Cells</a>
+    <a class="sub" href="#gauntlet-tools">Its tools</a>
+    <a class="sub" href="#gauntlet-overlays">Overlays</a>
+    <a class="sub" href="#gauntlet-checks">Checks, signatures, near misses</a>
+    <a class="sub" href="#gauntlet-replay">The replay</a>
+    <a href="#hazards">Pieces and hazards</a>
+    <a href="#checks">Checks and the tests</a>
+    <a href="#saving">Saving, history, revert</a>
+    <a href="#testing">Testing a level</a>
+    <a href="#shortcuts">Keyboard shortcuts</a>
+    <a href="#files">Files and formats</a>
+    <a href="#changing">Changing the editor</a>
+    <a href="#changelog">Changelog</a>
+  </nav>
+
+  <main class="wiki-main" id="main">
+
+    <!-- ===================================================================================================== -->
+    <section id="start-here" class="wsec">
+      <h1>The level editor</h1>
+      <p class="lede">Cuckoo Stack’s campaign is 30 hand-tuned levels, and every other level from 11 plays a <b>maze gauntlet</b>. The level editor is a web app on your own machine for designing them: a level’s whole course, every hazard on it, which gauntlet it plays and where, and each gauntlet’s grid cell by cell. The game’s own checkers judge every edit as you make it, and the game’s bot plays each level a moment after you stop. What the editor calls <b>Ready to ship</b> is exactly what the game’s tests will check before a commit.</p>
+      <div class="wcols">
+        <div class="wcard">
+          <h3>Run it</h3>
+          <pre class="code">python3 tools/level_editor/server.py --open</pre>
+          <p>It builds the checkers and the desktop game first (<code>cmake --build build</code>), then opens <code>http://127.0.0.1:8765</code>. It listens on this machine only. <code>--no-build</code> skips the build; <code>--port</code> picks another port.</p>
+        </div>
+        <div class="wcard">
+          <h3>Where things are saved</h3>
+          <p>Levels: <code>assets/levels/level_NN.txt</code>. Gauntlets: <code>assets/gauntlets/&lt;name&gt;.txt</code>. Saving also rebuilds the game’s two layouts files (<code>src/core/LevelLayouts.inc</code>, <code>GauntletLayouts.inc</code>). <b>Rebuild the game</b> to ship them; <b>Play</b> plays your edits straight away, saved or not.</p>
+        </div>
+      </div>
+      <h2>The workflow</h2>
+      <div class="flow" data-fig="flow"></div>
+      <ol class="steps">
+        <li><b>Edit</b> a level’s course in the <a href="#levels-view">Levels view</a>, or a gauntlet’s grid in the <a href="#gauntlets-view">Gauntlets view</a>.</li>
+        <li><b>Check.</b> The inspector’s <a href="#tip-card.verdict">Ready to ship</a> card lists every check the tests make; red items block commits.</li>
+        <li><b>Play</b> it in the desktop game, or <b>Watch the bot</b> play it, from a <a href="#testing">start point</a> near your edit.</li>
+        <li><b>Save</b> (⌘S): every unsaved edit, together, into the game’s files. The <a href="#saving">History</a> shows what you’d save, or revert.</li>
+        <li><b>Rebuild and commit.</b> The pre-commit hook runs every test; a level or gauntlet that isn’t ready blocks the commit.</li>
+      </ol>
+      <h2>Words used here</h2>
+      <dl class="gloss">
+        <dt>Cell</dt><dd>The grid’s unit: 0.6 m along, and one egg high. Walls, saws and gauntlets all line up to cells.</dd>
+        <dt>Row</dt><dd>A height in cells (eggs). Row 0 is the street.</dd>
+        <dt>Wall</dt><dd>A run of columns of the same height and kind (crates, hay, or hay-topped crates). She climbs one if her egg stack is as high as it.</dd>
+        <dt>Barrier</dt><dd>A girder over a wall: her head must pass under it, so it caps her stack.</dd>
+        <dt>Saw</dt><dd>A blade set in a wall top: each crossing saws off her bottom egg; with no egg under her, it gets her.</dd>
+        <dt>Disco ball</dt><dd>A pickup: +5 points and an egg and a half for her meter.</dd>
+        <dt>Gauntlet</dt><dd>A maze laid into a level’s course: she runs it on her own at full speed, turned back by bumpers and gates. The course brings her to its door on a <b>forecourt</b>, under a <b>lintel</b> as low as the door, and takes her on from a <b>porch</b>.</dd>
+        <dt>Egg meter</dt><dd>The eggs she can lay, refilling as she runs. The checker’s <b>egg budget</b> is what a careful player holds along the course.</dd>
+        <dt>Near misses</dt><dd>PERFECT (a climb with no egg to spare), CLOSE SHAVE (a blade takes her last egg), CLOSE CALL (a squeeze under a roof, her head brushing it).</dd>
+        <dt>The bot</dt><dd>The game’s own player: it lays an egg only when it needs one. The editor runs it headless through every level to check it can be cleared.</dd>
+        <dt>Start point</dt><dd>Where Play and Watch the bot start, so you can test an edit without playing from the beginning.</dd>
+      </dl>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="at-a-glance" class="wsec">
+      <h1>The editor at a glance</h1>
+      <p>Two views share one top bar. <b>Levels</b> edits a level’s whole course; <b>Gauntlets</b> edits a maze’s grid. <kbd class="keycap">⇧</kbd><kbd class="keycap">G</kbd> switches between a level and its gauntlet. Click a number to jump to its section.</p>
+      <figure class="map" data-fig="map" data-view="levels"><figcaption>The Levels view</figcaption></figure>
+      <figure class="map" data-fig="map" data-view="gauntlets"><figcaption>The Gauntlets view</figcaption></figure>
+      <p class="hint">Hover anything in the editor for a moment and a card says what it does (and its key). Every card’s text is in <code>static/js/tips.js</code>; this wiki shows the same text.</p>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="top-bar" class="wsec">
+      <h1>The top bar</h1>
+      <p>The same in both views: the view switch, where you are (a level or a gauntlet), and the actions. Hover these buttons: they show the editor’s own tooltips.</p>
+      <div class="figure-live" data-fig="topbar"></div>
+      <div class="ref">
+        <div class="tipref" id="tip-view.levels"></div>
+        <div class="tipref" id="tip-view.gauntlets"></div>
+        <div class="tipref" id="tip-level.prev"></div>
+        <div class="tipref" id="tip-level.picker"></div>
+        <div class="tipref" id="tip-level.next"></div>
+        <div class="tipref" id="tip-top.unsaved"></div>
+        <div class="tipref" id="tip-top.undo"></div>
+        <div class="tipref" id="tip-top.redo"></div>
+        <div class="tipref" id="tip-top.revert"></div>
+        <div class="tipref" id="tip-top.save"></div>
+        <div class="tipref" id="tip-top.play"></div>
+        <div class="tipref" id="tip-top.watch"></div>
+        <div class="tipref" id="tip-top.sim"></div>
+        <div class="tipref" id="tip-top.help"></div>
+        <div class="tipref" id="tip-top.start"></div>
+      </div>
+      <div class="callout"><b>Tip.</b> The <b>unsaved</b> count is everything not yet saved, in both views. Save saves all of it together, because some edits belong together (a gauntlet moved from one level to another changes both).</div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="levels-view" class="wsec">
+      <h1>Levels view</h1>
+      <p>A campaign level’s whole course, side on, as the game lays it, in its zone’s look (the neon city, Neon Egypt, Neon Japan). Everything in the level file is editable here: its walls, barriers, saws, disco balls, finish line, difficulty, the droid’s raids, its description, and which maze gauntlet it plays.</p>
+
+      <h2 id="level-picker">The level picker</h2>
+      <p>The number in the top bar opens it (or press <kbd class="keycap">L</kbd>): every level by zone, each with its state (green ready, red not ready, pulsing still checking), a miniature of its course, its gauntlet, and a dot if it has unsaved edits. <kbd class="keycap">⌥</kbd><kbd class="keycap">←</kbd> and <kbd class="keycap">⌥</kbd><kbd class="keycap">→</kbd> go to the level before and after. The editor checks every level in the background, so the picker’s dots are the whole campaign’s state.</p>
+      <div class="figure-live" data-fig="picker"></div>
+
+      <h2 id="course">The course</h2>
+      <p>What the canvas shows, left to right along the course (a cell is 0.6 m; the ruler at the top is in metres, the one at the left in rows):</p>
+      <figure class="figure-canvas"><canvas data-fig="course" data-scene="overview"></canvas><figcaption>Walls of crates and hay, their tops the disco dance floor; a barrier under its red laser curtain; saw blades spinning in the wall tops; disco balls; the maze gauntlet’s grid in its span; the finish line; the bot’s run.</figcaption></figure>
+      <ul class="bullets">
+        <li><b>Scroll</b> to look along it; <b>⌘-scroll</b> or pinch zooms at the pointer; <b>Space-drag</b> pans. <kbd class="keycap">F</kbd> fits the height; <kbd class="keycap">[</kbd> <kbd class="keycap">]</kbd> zoom.</li>
+        <li><b>The minimap</b> above it is the whole course; click or drag it to look along.</li>
+        <li><b>The line at the bottom left</b> says where the pointer is: metres, column, row, and what’s there.</li>
+        <li><b>Hover a hazard</b> (a saw, a barrier, a disco ball, the gauntlet, a note, the finish, the start) and a card says what it is and does there: <span class="hazard-sample" data-fig="hazardcard"></span></li>
+      </ul>
+      <div class="ref">
+        <div class="tipref" id="tip-lview.minimap"></div>
+        <div class="tipref" id="tip-view.zoom"></div>
+      </div>
+
+      <h2 id="level-tools">Its tools</h2>
+      <p>The tools column on the left. A tool’s key picks it; <kbd class="keycap">⌥</kbd> or a right click with most tools takes away instead (down to the street, barriers off, a saw removed).</p>
+      <div class="ref">
+        <div class="tipref" id="tip-ltool.wall"></div>
+        <div class="tipref" id="tip-ltool.paint"></div>
+        <div class="tipref" id="tip-ltool.ceil"></div>
+        <div class="tipref" id="tip-ltool.saw"></div>
+        <div class="tipref" id="tip-ltool.disco"></div>
+        <div class="tipref" id="tip-ltool.cols"></div>
+        <div class="tipref" id="tip-ltool.select"></div>
+        <div class="tipref" id="tip-ltool.gauntlet"></div>
+        <div class="tipref" id="tip-ltool.start"></div>
+      </div>
+      <div class="wcols figs">
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="walls"></canvas><figcaption><b>Walls</b> and <b>Kind</b>: drag across columns. The brush shows the wall it would make, dashed.</figcaption></figure>
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="barrier"></canvas><figcaption><b>Barrier</b>: its underside at a row, at least 2 eggs over the wall under it.</figcaption></figure>
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="saws"></canvas><figcaption><b>Saw</b>: near another blade it snaps a blade’s gap (1.8 m) away, so blades sit back to back.</figcaption></figure>
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="columns"></canvas><figcaption><b>Columns</b>: the band is what’s copied in after itself (red: taken out); what’s after it moves on.</figcaption></figure>
+        <figure class="figure-canvas span"><canvas data-fig="course" data-scene="gauntlet"></canvas><figcaption><b>Gauntlet</b>: drag its span along; its forecourt, lintel and porch come with it. Double-click it to edit its grid.</figcaption></figure>
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="start"></canvas><figcaption><b>Start</b>: where Play and Watch the bot start. Drag the flag along; ⌥ click clears it.</figcaption></figure>
+      </div>
+      <div class="callout"><b>Gauntlet columns are the grid’s.</b> Walls, saws and column edits stop at a gauntlet’s span: edit its grid instead (double-click it). A level plays one gauntlet at most, and a gauntlet plays in one level at most.</div>
+
+      <h2 id="wall-kinds">Wall kinds</h2>
+      <p>The swatches at the top of the tools column (keys <kbd class="keycap">1</kbd> <kbd class="keycap">2</kbd> <kbd class="keycap">3</kbd>). The kind picked is what new walls are made of, and what the Kind brush paints.</p>
+      <div class="ref">
+        <div class="tipref" id="tip-kind.crate"></div>
+        <div class="tipref" id="tip-kind.hay"></div>
+        <div class="tipref" id="tip-kind.mix"></div>
+      </div>
+
+      <h2 id="level-overlays">Overlays</h2>
+      <p>The chips at the top right of the course turn layers on and off.</p>
+      <div class="ref">
+        <div class="tipref" id="tip-lover.bot"></div>
+        <div class="tipref" id="tip-lover.notes"></div>
+        <div class="tipref" id="tip-lover.changes"></div>
+        <div class="tipref" id="tip-lover.grid"></div>
+      </div>
+      <div class="wcols figs">
+        <figure class="figure-canvas span"><canvas data-fig="course" data-scene="bot"></canvas><figcaption><b>The bot’s run</b>: its egg stack all along (cyan), its near misses (P, C), a cross where it crashed.</figcaption></figure>
+        <figure class="figure-canvas span"><canvas data-fig="course" data-scene="changes"></canvas><figcaption><b>Changes</b>: the saved course as a dashed ghost, columns put in outlined green, a saw added ringed green and one removed ghosted in red, the saved finish line as a ghost flag.</figcaption></figure>
+      </div>
+
+      <h2 id="level-inspector">The inspector</h2>
+      <p>The cards on the right, top to bottom.</p>
+      <div class="wcard" id="tip-card.verdict">
+        <h3>Ready to ship</h3>
+        <p>Every check the game’s tests make on a level, item by item (<a href="#checks">which test checks what</a>). Green: it passes. Red: the tests fail, and block commits, until it does. Orange: a warning (the egg budget running short, a note) that no test fails on, but worth a look. Click an item with a place (a crash, a note, a door) to see it on the course; its gauntlet’s item opens the gauntlet.</p>
+      </div>
+      <div class="wcard" id="tip-card.history">
+        <h3>History</h3>
+        <p>Every edit to this level, newest first: what it did in words (“Saw added at 92.1 m”) and how long ago. The one you’re at is highlighted; edits you’ve undone are dimmed (click one to make it again); <span class="badge-saved">SAVED</span> marks what’s saved. <b>Click</b> an edit to go back to just after it. <b>Hover</b> one and its spot pulses on the course; its target button looks there without going back. The heading says what’s changed since the save. More in <a href="#saving">Saving, history, revert</a>.</p>
+        <div class="hist-demo" data-fig="history"></div>
+      </div>
+      <div class="wcard">
+        <h3>The level</h3>
+        <div class="ref">
+        <div class="tipref" id="tip-prop.finish"></div>
+        <div class="tipref" id="tip-prop.difficulty"></div>
+        <div class="tipref" id="tip-prop.raids"></div>
+        <div class="tipref" id="tip-prop.gauntlet"></div>
+        <div class="tipref" id="tip-prop.edit"></div>
+        <div class="tipref" id="tip-prop.new"></div>
+      </div>
+        <p>Under Difficulty, the speed and egg refill the band gives, from the level’s start to its finish (from Neon Egypt on, the curve is flat at 12.4 m/s and an egg every 0.40 s). The zone is set by the level’s number.</p>
+      </div>
+      <div class="wcard">
+        <h3>In the game, the course, notes, description</h3>
+        <p><b>In the game</b>: the bot’s headless run, cleared in how many seconds with how many near misses, or where it crashed (“show me”). <b>The course</b>: its numbers (walls, barriers, the tallest wall, saws and disco balls, the least eggs a careful player holds). <b>Notes</b>: where the checker finds it unfair, each clickable. <b>Description</b>: the notes at the top of the level’s file.</p>
+      </div>
+
+      <h2 id="level-replay">The bot’s run, replayed</h2>
+      <p>The footer replays the bot’s run in the game along the course: the hen and her egg stack, at 0.5× to 4×. The track is the run metre by metre: the eggs a careful player holds (the checker’s egg budget, cyan), the bot’s stack (volt), its near misses (dots), and where it crashed (red). Click or drag the track to look. <kbd class="keycap">P</kbd> plays, <kbd class="keycap">,</kbd> <kbd class="keycap">.</kbd> step, <kbd class="keycap">Home</kbd> <kbd class="keycap">End</kbd> go to its ends.</p>
+      <div class="ref">
+        <div class="tipref" id="tip-lreplay.play"></div>
+        <div class="tipref" id="tip-lreplay.start"></div>
+        <div class="tipref" id="tip-lreplay.follow"></div>
+        <div class="tipref" id="tip-lreplay.speed"></div>
+        <div class="tipref" id="tip-lreplay.track"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="gauntlets-view" class="wsec">
+      <h1>Gauntlets view</h1>
+      <p>A maze gauntlet’s grid, cell by cell, as the level laying it plays it. The game’s own solver checks every edit (one way through, no traps, the egg meter, near misses), and the game’s bot plays it a moment later.</p>
+
+      <h2 id="gauntlet-tabs">Tabs, new gauntlets</h2>
+      <p>One tab a gauntlet, by the level it’s in (“NO LEVEL” if none lays it yet), with its state and an unsaved dot. <b>New gauntlet</b> asks for a name (lower case letters, digits, _: it names its file) and starts it as a plain room with a door each side. A new gauntlet is in no level until a level’s <a href="#tip-prop.gauntlet">Gauntlet</a> setting puts it in one; never saved, <a href="#saving">Revert</a> throws it away.</p>
+      <div class="figure-live" data-fig="newgauntlet"></div>
+
+      <h2 id="cells">Cells</h2>
+      <p>The swatches: the first cell (volt) paints with a click, the second (cyan, dashed) with a right click; <kbd class="keycap">X</kbd> swaps them. Keys <kbd class="keycap">1</kbd>–<kbd class="keycap">0</kbd>.</p>
+      <div class="ref">
+        <div class="tipref" id="tip-cell.air"></div>
+        <div class="tipref" id="tip-cell.stone"></div>
+        <div class="tipref" id="tip-cell.cube"></div>
+        <div class="tipref" id="tip-cell.bumper"></div>
+        <div class="tipref" id="tip-cell.gate-right"></div>
+        <div class="tipref" id="tip-cell.gate-left"></div>
+        <div class="tipref" id="tip-cell.saw"></div>
+        <div class="tipref" id="tip-cell.cube-saw"></div>
+        <div class="tipref" id="tip-cell.entry"></div>
+        <div class="tipref" id="tip-cell.exit"></div>
+      </div>
+      <figure class="figure-canvas"><canvas data-fig="grid" data-scene="cells"></canvas><figcaption>A small gauntlet with every cell: stone floors edged in gold, cyber cubes in cyan, bumpers and gates in pink and violet, blades red-hot in the floors, the entry (green) and exit (yellow) doors.</figcaption></figure>
+      <div class="callout"><b>The rules a grid keeps</b> (the game’s parser): a door on each edge, the entry on the left; the top row solid; each door on a floor with room for her (2 cells); one entry, one exit. A grid that breaks one doesn’t parse, and is never saved.</div>
+
+      <h2 id="gauntlet-tools">Its tools</h2>
+      <div class="ref">
+        <div class="tipref" id="tip-gtool.brush"></div>
+        <div class="tipref" id="tip-gtool.rect"></div>
+        <div class="tipref" id="tip-gtool.select"></div>
+        <div class="tipref" id="tip-gtool.cols"></div>
+        <div class="tipref" id="tip-gtool.rows"></div>
+        <div class="tipref" id="tip-gtool.pick"></div>
+        <div class="tipref" id="tip-gtool.start"></div>
+      </div>
+
+      <h2 id="gauntlet-overlays">Overlays</h2>
+      <div class="ref">
+        <div class="tipref" id="tip-gover.path"></div>
+        <div class="tipref" id="tip-gover.misses"></div>
+        <div class="tipref" id="tip-gover.reach"></div>
+        <div class="tipref" id="tip-gover.changes"></div>
+        <div class="tipref" id="tip-gover.grid"></div>
+      </div>
+      <figure class="figure-canvas"><canvas data-fig="grid" data-scene="way"></canvas><figcaption>The bot’s way (cyan going right, pink going left, a dot where it lays an egg), its near-miss badges, the cells changed since the save outlined, and a start point: the green hen.</figcaption></figure>
+
+      <h2 id="gauntlet-checks">Checks, signatures, near misses</h2>
+      <p>Its Ready to ship card lists: a valid grid; out by stacking alone; one way through (every cell on it unavoidable); no traps (a dead end must end her run, never bounce her forever); out with the meter at its hardest (refilling 1.25× slower, 2 eggs at the door); 15 or more near misses; unlike every other gauntlet (mirror images count); <b>its design’s signature</b> (each Egypt gauntlet is built round one: the Grand Gallery’s 15 one-egg steps, the wells, the labyrinth’s forks, the ascent’s passage; <code>src/core/GauntletDesigns.cpp</code>); on its level’s course; and the game’s bot getting out, showing the solver’s near misses.</p>
+
+      <h2 id="gauntlet-replay">The replay</h2>
+      <p>The solver’s bot through the grid, move by move, with the egg meter at the level’s refill or 1.25× or 1.4× slower: the hen and her stack on the grid, the meter and her stack over time on the track.</p>
+      <div class="ref">
+        <div class="tipref" id="tip-greplay.play"></div>
+        <div class="tipref" id="tip-greplay.prev"></div>
+        <div class="tipref" id="tip-greplay.next"></div>
+        <div class="tipref" id="tip-greplay.speed"></div>
+        <div class="tipref" id="tip-greplay.rate"></div>
+        <div class="tipref" id="tip-greplay.track"></div>
+        <div class="tipref" id="tip-gview.minimap"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="hazards" class="wsec">
+      <h1>Pieces and hazards</h1>
+      <p>What each piece of a course does in the game, as the course view draws it. Hover them in the editor for these cards.</p>
+      <div class="ref big">
+        <div class="tipref" id="tip-hazard.saw"></div>
+        <div class="tipref" id="tip-hazard.cube-saw"></div>
+        <div class="tipref" id="tip-hazard.barrier"></div>
+        <div class="tipref" id="tip-hazard.disco"></div>
+        <div class="tipref" id="tip-hazard.wall"></div>
+        <div class="tipref" id="tip-hazard.gauntlet"></div>
+        <div class="tipref" id="tip-hazard.finish"></div>
+        <div class="tipref" id="tip-hazard.start"></div>
+        <div class="tipref" id="tip-hazard.note"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="checks" class="wsec">
+      <h1>Checks and the tests</h1>
+      <p>The pre-commit hook and the build’s CI run every test; a failure blocks the commit. These are the tests that hold every level and gauntlet to a standard, and the Ready to ship items that show them first.</p>
+      <table class="wtable">
+        <thead><tr><th>Ready to ship says</th><th>The test that checks it</th></tr></thead>
+        <tbody>
+          <tr><td>A valid level (it parses)</td><td><code>LevelData_test</code>: every level 1–30 reads, and writes back as it reads</td></tr>
+          <tr><td>The game’s bot clears it (within 150 s), and 3+ close calls from level 11</td><td><code>GameDev_test refillKeepsUp</code></td></tr>
+          <tr><td>No gauntlet in two levels</td><td><code>LevelData_test</code>, <code>Campaign_test</code></td></tr>
+          <tr><td>Its gauntlet’s door on its course (the forecourt at the door’s row, the porch at the exit’s)</td><td><code>GameGauntlet_test everyLevel</code></td></tr>
+          <tr><td>Its gauntlet: out by stacking, one way, no traps, unlike every other</td><td><code>Gauntlet_test registry</code></td></tr>
+          <tr><td>Out with the meter at its hardest, 15+ near misses</td><td><code>Gauntlet_test levels</code></td></tr>
+          <tr><td>Its design’s signature</td><td><code>Gauntlet_test designs</code></td></tr>
+          <tr><td>The game’s bot gets out, showing the solver’s near misses</td><td><code>GameGauntlet_test everyLevel</code></td></tr>
+          <tr><td>The egg budget; notes (warnings)</td><td>None: the checker’s advice (a careful player’s meter; fair saws, landings and doors)</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><b>Tests of how the game plays</b> (the tomb’s tunnel, a saw’s cut, the camera in a maze) run on frozen copies of the levels and gauntlets (<code>tests/fixtures</code>), so tuning content never breaks them. Only the tests above look at the levels you edit.</div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="saving" class="wsec">
+      <h1>Saving, history, revert</h1>
+      <h2>Save</h2>
+      <p><b>Save</b> (<kbd class="keycap">⌘</kbd><kbd class="keycap">S</kbd>) saves <b>every</b> unsaved level and grid together, each checked as the game will read it. Nothing is written if any of it doesn’t parse, or if a gauntlet would be in two levels. A level whose gauntlet’s grid grew or shrank is refitted (what’s after its span moves on or back). Saving writes the files and both layouts files; if something fails its checks it asks first, since the tests will block commits until it passes.</p>
+      <h2>History</h2>
+      <p>Every level and every grid keeps its own history: each edit described in words, when, and where. Undo and Redo step along it (their tooltips name the step); the <a href="#tip-card.history">History card</a> shows all of it and jumps anywhere in it. Reverting is an edit of its own (“Back to the save”), so what came before it stays to go back to. Histories are kept in this browser across reloads, beside your unsaved drafts.</p>
+      <h2>Changes</h2>
+      <p>The <a href="#tip-lover.changes">Changes</a> overlay shows what’s changed since the save on the canvas: the saved course as a dashed ghost, columns put in outlined green, columns taken out marked “−N”, saws and disco balls added ringed green and removed ones ghosted red, the saved finish line as a ghost flag. In a grid, changed cells are outlined, and hovering one says what it was.</p>
+      <h2>Revert</h2>
+      <p><b>Revert</b>, or clicking the unsaved count, lists every unsaved edit with the ones on screen ticked (in the Levels view, the level and the gauntlet it lays). Each says what’s changed and expands to its edits since the save. <b>Revert</b> takes the ticked ones back to what’s saved; <b>Show</b> opens one with Changes on; <b>Save all</b> saves them.</p>
+      <div class="figure-live" data-fig="revert"></div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="testing" class="wsec">
+      <h1>Testing a level</h1>
+      <div class="wcols">
+        <div class="wcard"><h3>Play</h3><p>Opens the desktop game on the level as edited, saved or not: you play (tap or Space lays an egg). In the Gauntlets view, every run starts at the gauntlet’s door unless it has a start point.</p></div>
+        <div class="wcard"><h3>Watch the bot</h3><p>The desktop game, the game’s bot playing the level as edited.</p></div>
+      </div>
+      <h2 id="start-points">Start points</h2>
+      <p>To test an edit without playing from the beginning, set a <b>start point</b> with the Start tool (<kbd class="keycap">T</kbd>), in either view. Play and Watch the bot then start every run there, and a chip in the canvas’s corner says where (✕ clears it).</p>
+      <div class="wcols figs">
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="start"></canvas><figcaption><b>On the course</b>: a green flag. She starts on the wall there with a full egg meter and no stack. It’s kept 1 m clear of saws (with no eggs, a blade would get her). Drag it along with any tool.</figcaption></figure>
+        <figure class="figure-canvas"><canvas data-fig="course" data-scene="mazestart"></canvas><figcaption><b>In a maze</b>: click a cell in the gauntlet. She starts standing there with no eggs, running right; click her again to turn her round. She needs a floor (not a blade) and two cells of air.</figcaption></figure>
+      </div>
+      <p>While you test from a start point, clearing the level plays it again from there rather than moving on to the next. Start points are a testing aid kept in your browser, not part of the level. An edit that leaves one in a wall or a span moves it to the nearest good spot, or clears it.</p>
+      <h2>The Simulator</h2>
+      <p><b>Simulator</b> builds the iOS app with what’s saved and installs it on every running iOS Simulator (a few minutes; it offers to save first). It starts at the level’s beginning: in the game, Developer menu → Course level, then Jump to gauntlet.</p>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="shortcuts" class="wsec">
+      <h1>Keyboard shortcuts</h1>
+      <div class="wcols">
+        <div class="wcard"><h3>Both views</h3><div data-fig="keys" data-set="both"></div></div>
+        <div class="wcard"><h3>Levels view</h3><div data-fig="keys" data-set="level"></div></div>
+        <div class="wcard"><h3>Gauntlets view</h3><div data-fig="keys" data-set="gauntlet"></div></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="files" class="wsec">
+      <h1>Files and formats</h1>
+      <h2>A level: <code>assets/levels/level_NN.txt</code></h2>
+      <pre class="code annotated">; Level 13, Neon Egypt: the gallery at 40% of the way.   <i>its description: the notes at its top</i>
+length 420                                               <i>the finish line, metres</i>
+difficulty 420 0.35                                      <i>the difficulty curve read at 420 + 0.35 a metre: her speed, the egg refill</i>
+raids auto                                               <i>the droid's raids: auto, none, or how many</i>
+course                                                   <i>its walls, one a line, from the start:</i>
+16 0 crate                                               <i>  cells long, how high (eggs), its kind</i>
+4 2 hay 6                                                <i>  ...a barrier's underside (eggs up) if there's one</i>
+212 0 gauntlet gallery                                   <i>  a gauntlet's span: its width, 0, gauntlet, its name</i>
+saws                                                     <i>each saw's hub, metres along</i>
+14.1 22.5
+discos                                                   <i>each disco ball: metres along, metres up</i>
+10.5 1.45</pre>
+      <h2>A gauntlet: <code>assets/gauntlets/&lt;name&gt;.txt</code></h2>
+      <pre class="code annotated">; The tomb: five floors from 4 to 15 high ...    <i>its description</i>
+##############################                    <i>rows top first, one character a cell (the top row solid):</i>
+#............................#                    <i>  # stone   H cyber cube   B bumper</i>
+#.......HHHH.................#                    <i>  R L gates (passed running right, left)</i>
+#.............................                    <i>  . air   (over each door: room for her, 2 cells)</i>
+............R.........B......X                    <i>  X the exit (right edge, on a floor)</i>
+>............................#                    <i>  > the entry (left edge, on a floor)</i>
+##########S###################                    <i>  S a saw in stone, C in a cube: in a floor, blade up</i></pre>
+      <p>Both are plain text: you can edit them by hand too. Then run <code>python3 scripts/levels/build_levels.py</code> and <code>python3 scripts/gauntlets/build_gauntlets.py</code> to rebuild the layouts files (the editor’s Save does it for you). The format is in <code>src/core/LevelData.h</code> and <code>src/core/Gauntlet.h</code>; the design rules in <code>docs/LEVEL_DESIGN.md</code>.</p>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="changing" class="wsec">
+      <h1>Changing the editor</h1>
+      <p>For whoever extends the editor next: how it’s built, how to add to it, and the one rule.</p>
+      <div class="arch" data-fig="arch"></div>
+      <h2>Its parts</h2>
+      <table class="wtable">
+        <thead><tr><th>File</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><code>tools/level_editor/server.py</code></td><td>The local server: serves the app and this wiki, runs the checkers (<code>build/level_check</code>, <code>build/gauntlet_check</code>), saves files, opens the desktop game, builds for the Simulator. Python’s standard library only.</td></tr>
+          <tr><td><code>static/js/app.js</code></td><td>The shell: the two views, the top bar, Save, Revert, the keyboard.</td></tr>
+          <tr><td><code>static/js/levels.js</code>, <code>courseview.js</code>, <code>course.js</code></td><td>The Levels view; its canvas; the course model (a level file read into columns, every edit).</td></tr>
+          <tr><td><code>static/js/gauntlets.js</code>, <code>view.js</code>, <code>grid.js</code></td><td>The Gauntlets view; its canvas; the grid model.</td></tr>
+          <tr><td><code>static/js/history.js</code>, <code>describe.js</code>, <code>historycard.js</code></td><td>Each item’s history; what an edit did in words, and what’s changed since the save; the History card.</td></tr>
+          <tr><td><code>static/js/tools.js</code>, <code>tips.js</code>, <code>tooltip.js</code></td><td>The tools, kinds and overlays; every tooltip’s text; the tooltip card.</td></tr>
+          <tr><td><code>static/js/store.js</code>, <code>dialog.js</code>, <code>util.js</code></td><td>What both views share; the in-page dialogs; small helpers.</td></tr>
+          <tr><td><code>tests/level_check.cpp</code>, <code>tests/gauntlet_check.cpp</code></td><td>The checkers: the game’s own code judging a level or a grid (<code>--json</code> for the editor, <code>--game</code> to play it headless).</td></tr>
+          <tr><td><code>wiki/</code></td><td>This wiki (<code>index.html</code>, <code>wiki.css</code>, <code>figures.js</code>: its pictures, drawn by the editor’s own code).</td></tr>
+        </tbody>
+      </table>
+      <h2>Its server’s API</h2>
+      <table class="wtable">
+        <tbody>
+          <tr><td><code>GET /api/levels</code>, <code>GET /api/gauntlets</code></td><td>Every level’s and grid’s file as saved.</td></tr>
+          <tr><td><code>POST /api/levels/check</code></td><td>A level’s text checked (<code>game: true</code>: the bot plays it too).</td></tr>
+          <tr><td><code>POST /api/check</code></td><td>A grid checked, as its level plays it.</td></tr>
+          <tr><td><code>POST /api/save</code></td><td>Levels and grids saved together.</td></tr>
+          <tr><td><code>POST /api/play</code></td><td>The desktop game on a level as edited, from a start point.</td></tr>
+          <tr><td><code>POST /api/simulator</code></td><td>The iOS app built and installed on the running Simulators.</td></tr>
+        </tbody>
+      </table>
+      <h2>Recipes</h2>
+      <div class="wcols">
+        <div class="wcard"><h3>Add a tool</h3><ol><li>Its icon, key and label in <code>tools.js</code>; its tip in <code>tips.js</code>.</li><li>What it does on the canvas in <code>levels.js</code> (or <code>gauntlets.js</code>): its <code>pointerdown</code> case, and an edit through <code>commit(L, kind)</code>.</li><li>Its words in the History: a <code>kind</code> case in <code>describe.js</code>.</li><li>Its model in <code>course.js</code> / <code>grid.js</code>, tested in <code>tests/*.test.mjs</code>.</li><li>Its section here, with a figure, and a changelog line.</li></ol></div>
+        <div class="wcard"><h3>Add a hazard</h3><ol><li>The game first: its code, its place in the level file (<code>LevelData.h</code>) and the checker (<code>level_check.cpp</code>).</li><li>The course model (<code>course.js</code>: read, write, edit) and its drawing (<code>courseview.js</code>).</li><li>A tool for it, its hover card (<code>hazardAt</code> in <code>levels.js</code>) and its tip.</li><li>Its card in this wiki’s <a href="#hazards">Pieces and hazards</a>.</li></ol></div>
+        <div class="wcard"><h3>Add a check</h3><ol><li>The test that enforces it, in the game’s tests.</li><li>The checker reporting it in its JSON.</li><li>An item in the view’s <code>verdict()</code>, so Ready to ship says what the test will.</li><li>A row in <a href="#checks">Checks and the tests</a>.</li></ol></div>
+      </div>
+      <h2>Its tests</h2>
+      <p><code>ctest</code> runs them with the game’s: <code>level_editor</code> (the server: serving, checking, saving, playing, what it turns away) and <code>level_editor_js</code> (in Node: the course and grid models, the history and its words, and <b>this wiki</b>, which must have a section for every tip).</p>
+      <div class="callout rule"><b>The rule.</b> Every change to the editor (a tool, hazard, check, panel, button, shortcut, file format) updates this wiki in the same change: its section, its figure, its tip in <code>tips.js</code>, and a line in the changelog. The <code>level_editor_js</code> test fails when a tip has no section here (<code>id="tip-&lt;key&gt;"</code>), so an undocumented feature blocks commits.</div>
+    </section>
+
+    <!-- ===================================================================================================== -->
+    <section id="changelog" class="wsec">
+      <h1>Changelog</h1>
+      <ul class="changelog">
+        <li><time>2026-10-18</time> <b>History, tooltips, start points, this wiki.</b> Every edit labelled in words with when and where; the History card (jump to any edit, see where it was); Changes shows the saved course as a ghost; Revert lists each item’s edits. Tooltips in the page for every control, and hover cards for the hazards on the canvases. Start points (the Start tool, T): Play and Watch the bot start on the course or at a cell in a maze, and a cleared level replays from there. This wiki, with live figures, and a test that keeps it complete. Fixed on the way: a saw or disco ball put on or taken off no longer reads as columns put in and taken out (columns are lined up at least cost); a History row with the SAVED badge stays on one line; undone back past the save, the History heading says so.</li>
+        <li><time>2026-10-18</time> <b>Revert lists every unsaved edit.</b> Dialogs drawn in the page (the browser’s own don’t show everywhere).</li>
+        <li><time>2026-10-18</time> <b>The Levels view.</b> Every level’s whole course is editable; which gauntlet a level plays is the level’s data, so gauntlets move between levels; new gauntlets start as a plain room; Save saves every edit together; the bot plays every level headless in the background.</li>
+        <li><time>2026-10-18</time> <b>The editor.</b> The Gauntlets view: a grid painted cell by cell, the game’s solver checking every edit, the bot’s run replayed, Play in the desktop game, Simulator.</li>
+      </ul>
+    </section>
+  </main>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

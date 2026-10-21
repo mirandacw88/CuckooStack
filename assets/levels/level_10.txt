@@ -1,0 +1,117 @@
+; Level 10, the neon city.
+length 390
+difficulty 315 0.35
+raids auto
+course
+16 0 crate
+5 3 hay
+4 4 crate
+3 8 crate
+4 8 mix
+4 8 crate
+3 8 crate
+5 8 crate
+4 8 crate
+3 8 hay
+3 8 crate
+3 8 mix
+5 8 crate
+3 8 mix
+3 8 mix
+4 8 hay
+5 8 hay
+16 5 mix
+5 7 mix
+19 1 hay
+14 0 crate
+4 3 crate
+11 5 mix 9
+11 7 mix 11
+11 8 hay 11
+3 8 hay
+5 8 hay
+3 8 crate
+3 8 mix
+20 0 mix
+5 1 mix
+11 5 hay 8
+11 6 mix 9
+11 7 hay 10
+4 8 hay
+3 8 hay
+20 0 mix
+12 0 crate
+11 4 mix 8
+11 5 mix 9
+11 7 crate 10
+3 8 mix
+4 8 crate
+5 8 crate
+4 8 hay
+4 8 crate
+5 8 mix
+15 6 hay
+4 7 mix
+18 2 hay
+5 4 crate
+11 6 hay 9
+3 7 mix
+11 8 mix 11
+3 8 mix
+4 8 mix
+5 8 hay
+4 8 crate
+4 8 crate
+4 8 hay
+3 8 crate
+5 8 mix
+3 8 hay
+4 8 hay
+4 8 crate
+16 5 hay
+3 7 crate
+19 1 hay
+3 3 mix
+5 6 hay
+5 8 hay
+3 8 crate
+20 0 crate
+5 3 hay
+11 5 hay 8
+18 0 mix
+3 2 hay
+11 3 mix 6
+15 1 hay
+32 4 crate
+11 8 mix 11
+20 1 crate
+3 2 crate
+saws
+discos
+22.5 6.25
+27.6 6.25
+29.7 6.25
+31.5 6.85
+33.3 6.25
+35.7 6.85
+42 7.45
+104.1 7.45
+108.3 6.25
+145.2 7.45
+161.7 1.45
+163.5 2.05
+165.3 2.65
+186.3 4.9
+188.1 6.25
+195.6 6.25
+262.5 6.25
+278.7 6.85
+299.7 7.45
+302.1 1.45
+303.9 2.05
+305.7 2.65
+313.5 3.85
+333.9 2.65
+345.9 2.65
+351.9 4.45
+382.2 2.65

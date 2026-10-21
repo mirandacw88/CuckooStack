@@ -179,6 +179,37 @@ int main() {
         check(len > 0 && len < 1.3, "after the background: the encoder restarts and records");
         timed(len > 0.7, "after the background: most of the second is recorded");
 
+        // a revive's cut at the instant of a frame: the crash marked microseconds before a frame, and the revived run's
+        // first frame pushed microseconds after capture resumes. Frame times are stored on a 1/90000 s grid, so that
+        // frame and the mark share a tick; it must still be cut, and the revived frame come strictly after what's kept.
+        // (Once, against an unrounded mark, the crash's first frame rounded down before it, survived the cut and shared
+        // its time with the revived run's first: the clip failed to write.) Twenty times: where in a tick the mark
+        // falls is chance.
+        r.resetWindow();
+        r.setCapturing(true);
+        play(r, 0.5);
+        int written = 0, rose = 0;
+        for (int k = 0; k < 20; ++k) {
+            r.markCrash();
+            r.push(pixels.data(), W, H); // the crash's first frame, right after the mark
+            play(r, 0.1);
+            r.setCapturing(false);
+            r.dropSinceMark();
+            r.setCapturing(true);
+            r.push(pixels.data(), W, H); // the revived run's first frame, right as the timeline resumes
+            play(r, 0.1);
+            r.setCapturing(false);
+            settle();
+            const double l = r.writeLast(15.0, path);
+            const Clip cut = read(path);
+            written += l > 0;
+            rose += cut.frames > 0 && cut.rising;
+            r.setCapturing(true);
+        }
+        r.setCapturing(false);
+        check(written == 20, ("a cut at the instant of a frame: every clip written (" + std::to_string(written) + " of 20)").c_str());
+        check(rose == 20, ("...its frames' times strictly rising across the cut (" + std::to_string(rose) + " of 20)").c_str());
+
         r.stop();
         check(r.writeLast(15.0, path) == 0, "stopped: no clip");
         std::remove(path.c_str());

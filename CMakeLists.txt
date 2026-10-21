@@ -71,7 +71,8 @@ include(cmake/Shaders.cmake)
 
 # ---------------------------------------------------------------- fonts: embedded TTFs (assets/fonts, SIL OFL 1.1)
 set(CS_FONT_SOURCES "")
-foreach(pair "display:CuckooDisplay-Black" "body:ChakraPetch-Medium" "body_bold:ChakraPetch-Bold" "japanese:NotoSansJP-Bold-signs")
+foreach(pair "display:CuckooDisplay-Black" "body:ChakraPetch-Medium" "body_bold:ChakraPetch-Bold" "japanese:NotoSansJP-Bold-signs"
+             "hieroglyphs:NotoSansEgyptianHieroglyphs-tomb")
   string(REPLACE ":" ";" parts ${pair})
   list(GET parts 0 sym)
   list(GET parts 1 file)
@@ -93,6 +94,15 @@ add_custom_command(OUTPUT ${_hud_cpp}
   COMMENT "Embedding HUD sprites"
   VERBATIM)
 list(APPEND CS_FONT_SOURCES ${_hud_cpp})
+# Neon Egypt's backdrop atlas (scripts/backdrop/build_egypt_backdrop.py), embedded the same way
+set(_egypt_png ${CMAKE_CURRENT_SOURCE_DIR}/assets/backdrop/egypt_backdrop.png)
+set(_egypt_cpp ${CMAKE_CURRENT_BINARY_DIR}/fonts/egypt_backdrop.cpp)
+add_custom_command(OUTPUT ${_egypt_cpp}
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${_egypt_png} -DOUTPUT=${_egypt_cpp} -DSYMBOL=egypt_backdrop -DNAMESPACE=cs::assets -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+  DEPENDS ${_egypt_png} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFile.cmake
+  COMMENT "Embedding the Egypt backdrop"
+  VERBATIM)
+list(APPEND CS_FONT_SOURCES ${_egypt_cpp})
 # the hen model (scripts/models/build_hen_mesh.py), embedded the same way
 set(_hen_mesh ${CMAKE_CURRENT_SOURCE_DIR}/assets/models/hen.mesh)
 set(_hen_cpp ${CMAKE_CURRENT_BINARY_DIR}/fonts/hen_mesh.cpp)
@@ -168,19 +178,21 @@ add_library(cs_core STATIC
   src/core/FileStorage.cpp
   src/core/Font.cpp
   src/core/Game.cpp
-  src/core/GameDroid.cpp src/core/GameBot.cpp
+  src/core/GameDroid.cpp src/core/GameBot.cpp src/core/GameSaw.cpp
+  src/core/Gauntlet.cpp src/core/Gauntlets.cpp src/core/GauntletDesigns.cpp src/core/GameGauntlet.cpp
   src/core/GameHud.cpp
   src/core/GameSurge.cpp
   src/core/GameUi.cpp
   src/core/HudImage.cpp
   src/core/Geometry.cpp
   src/core/Hen.cpp
-  src/core/Level.cpp
+  src/core/Level.cpp src/core/LevelData.cpp
   src/core/Meta.cpp
   src/core/Monetization.cpp
   src/core/Reminders.cpp
   src/core/Tuning.cpp
   src/core/World.cpp
+  src/core/WorldEgypt.cpp
   src/core/audio/Music.cpp
   src/core/audio/MiniaudioImpl.cpp
   src/core/audio/Synth.cpp)
@@ -191,7 +203,8 @@ if(CS_PLATFORM STREQUAL "desktop")
   set_source_files_properties(src/core/audio/MiniaudioImpl.cpp PROPERTIES COMPILE_DEFINITIONS CS_MA_DEVICE_IO)
 endif()
 set_source_files_properties(src/core/audio/MiniaudioImpl.cpp PROPERTIES COMPILE_OPTIONS "-O2;-w") # decode fast even in Debug
-target_link_libraries(cs_core PUBLIC glm PRIVATE cs_fonts)
+find_package(Threads REQUIRED) # (Neon Egypt's backdrop art is decoded off the main thread)
+target_link_libraries(cs_core PUBLIC glm Threads::Threads PRIVATE cs_fonts)
 # the SDF atlas bake (stb_truetype) runs at startup: keep it optimised even in Debug builds
 set_source_files_properties(src/core/Font.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 target_compile_options(cs_core PRIVATE ${CS_WARNINGS} ${CS_OPT})
@@ -442,9 +455,12 @@ if(CS_PLATFORM STREQUAL "desktop")
   endfunction()
 
   foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
-            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev HudImg)
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev HudImg GameSaw Gauntlet GameGauntlet LevelData)
     cs_test(src/core/${f})
   endforeach()
+  # the bot plays every level through (all 30, their gauntlets too): 3 minutes or so on a laptop, past the 120 s the
+  # pre-commit hook and CI give a test by default (`ctest --timeout 120`), so these have their own
+  set_tests_properties(GameDev GameDroid PROPERTIES TIMEOUT 600)
   target_include_directories(HudImg_test SYSTEM PRIVATE ${TP}/stb) # (stb_image: the PNGs, to compare with the atlas)
   foreach(f AudioParam Mp3 Music Synth)
     cs_test(src/core/audio/${f})
@@ -462,13 +478,35 @@ if(CS_PLATFORM STREQUAL "desktop")
             LIBS "-framework Foundation" "-framework AVFoundation" "-framework VideoToolbox" "-framework CoreMedia"
                  "-framework CoreVideo" "-framework QuartzCore")
     target_compile_options(IOSVideoRecorder_test PRIVATE -fobjc-arc)
+    # it records in real time (frames pushed at 30 fps, its clips measured against the clock): it runs alone, so the
+    # other tests of a `ctest -j` can't starve its encoder and fail its speed checks
+    set_tests_properties(IOSVideoRecorder PROPERTIES RUN_SERIAL TRUE)
   endif()
   add_executable(render_audio tests/render_audio.cpp)
   target_link_libraries(render_audio PRIVATE cs_core)
+  # the gauntlet designer's checker (scripts/gauntlets): a gauntlet's way through, near misses and egg meter
+  add_executable(gauntlet_check tests/gauntlet_check.cpp)
+  target_include_directories(gauntlet_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gauntlet_check PRIVATE cs_core)
+  # ...and the level designer's (assets/levels): a level's course checked, played by the bot; or baked by the generator
+  add_executable(level_check tests/level_check.cpp)
+  target_include_directories(level_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(level_check PRIVATE cs_core)
   # the asset scripts (scripts/tests): the droid mesh format, and the Daily Drop sprites and HUD atlas reproducing the
   # committed files (those image tests skip themselves without Pillow and numpy)
   find_package(Python3 COMPONENTS Interpreter)
   if(Python3_Interpreter_FOUND)
     add_test(NAME scripts COMMAND ${Python3_EXECUTABLE} -W error::ResourceWarning -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/scripts/tests)
+    # the level editor (tools/level_editor): its server's API, checking and saving levels and grids with the checkers
+    add_test(NAME level_editor COMMAND ${Python3_EXECUTABLE} -W error::ResourceWarning -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools/level_editor/tests)
+    set_tests_properties(level_editor PROPERTIES ENVIRONMENT LEVEL_EDITOR_BUILD=${CMAKE_CURRENT_BINARY_DIR})
+  endif()
+  # ...and its models, in Node (when there's one): a gauntlet's grid, a level's course, the history and its words; and
+  # its wiki, which must document every feature (a tooltip with no section there fails)
+  find_program(NODE_EXECUTABLE node)
+  if(NODE_EXECUTABLE)
+    set(_editor_js ${CMAKE_CURRENT_SOURCE_DIR}/tools/level_editor/tests)
+    add_test(NAME level_editor_js COMMAND ${NODE_EXECUTABLE} --test ${_editor_js}/grid.test.mjs ${_editor_js}/course.test.mjs
+             ${_editor_js}/history.test.mjs ${_editor_js}/wiki.test.mjs)
   endif()
 endif()

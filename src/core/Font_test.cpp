@@ -1,7 +1,9 @@
-// Text (Font.cpp): the SDF font atlas (Latin fonts plus the Japanese sign glyphs), measuring with letter spacing and
-// uppercase, CSS-style wrapping (greedy and text-wrap: balance), alignment, text-shadow order, and UTF-8 decoding.
+// Text (Font.cpp): the SDF font atlas (Latin fonts, the Japanese sign glyphs and the tombs' hieroglyphs), measuring
+// with letter spacing and uppercase, CSS-style wrapping (greedy and text-wrap: balance), alignment, text-shadow order,
+// one glyph fitted to a box (a hieroglyph on a tomb's wall), and UTF-8 decoding.
 #include "TestUtil.h"
 #include "core/Font.h"
+#include "core/Hieroglyphs.h"
 
 using namespace cs;
 using namespace test;
@@ -33,6 +35,16 @@ void atlasBuilt() {
     check(jp, "the neon signs' Japanese words, falling back to the Japanese font");
     check(atlas.glyph(FontId::Body, 0x00B7) && atlas.glyph(FontId::Body, 0x2026) && atlas.glyph(FontId::Body, 0x2014), "the extras: · … —");
     check(atlas.glyph(FontId::Body, 0x1F600) == nullptr, "a glyph nobody has: none (skipped, not a crash)");
+    bool hiero = true;
+    for (uint32_t cp : hieroglyphs::kColumns) {
+        FontId got = FontId::Body;
+        const FontAtlas::Glyph* g = atlas.glyph(FontId::Hieroglyphs, cp, &got);
+        hiero = hiero && g && got == FontId::Hieroglyphs && g->size.x > 0.5f && g->size.y > 0.5f;
+    }
+    const FontAtlas::Glyph* star = atlas.glyph(FontId::Hieroglyphs, hieroglyphs::kStar);
+    bool name = true;
+    for (uint32_t cp : hieroglyphs::kCuckoo) name = name && atlas.glyph(FontId::Hieroglyphs, cp);
+    check(hiero && star && star->size.x > 0.5f && name, "every hieroglyph the tombs draw (their columns, stars and cartouche names)");
 }
 
 void measuring() {
@@ -127,12 +139,41 @@ void utf8() {
 
 } // namespace
 
+void fitting() {
+    // a hieroglyph on a tomb's wall: its ink (not its SDF padding) fills the box, centred, in the plane's units
+    const TextLayout tl(atlas);
+    TextStyle s = st(FontId::Hieroglyphs, 99);
+    s.weight = 0.04f;
+    s.shadows = {{{0.f, 0.f}, 0.07f, glm::vec3(1.f), 0.5f}};
+    const float pad = 2.f * FontAtlas::kPadPx / FontAtlas::kBakePx;
+    bool fits = true, centred = true, styled = true;
+    for (uint32_t cp : {hieroglyphs::kColumns[0], hieroglyphs::kColumns[23], hieroglyphs::kStar}) { // (a chick, a lion, a star)
+        std::vector<Instance> out;
+        tl.drawGlyphFit(out, cp, s, {3.f, 2.f}, 0.4f, compose({0.f, 0.f, -0.5f}, glm::vec3(1.f)));
+        const FontAtlas::Glyph* g = atlas.glyph(FontId::Hieroglyphs, cp);
+        if (out.size() != 1 || !g) { fits = false; continue; }
+        const float perEm = out[0].model[0].x / g->size.x; // (the quad: the glyph's padded box, scaled)
+        const float ink = std::max(g->size.x - pad, g->size.y - pad) * perEm;
+        fits = fits && std::abs(ink - 0.4f) < 1e-4f && std::abs(out[0].model[1].y / g->size.y - perEm) < 1e-4f;
+        centred = centred && std::abs(out[0].model[3].x - 3.f) < 1e-5f && std::abs(out[0].model[3].y - 2.f) < 1e-5f &&
+                  std::abs(out[0].model[3].z + 0.5f) < 1e-5f;
+        styled = styled && out[0].params.y == 0.04f && out[0].params.x > 0.f && out[0].rim.a == 0.5f;
+    }
+    check(fits, "one glyph fitted to a box: its ink fills the box (the wider way), its shape kept");
+    check(centred, "...centred where it's put, on the plane it's drawn on");
+    check(styled, "...with the style's weight (strokes filled out) and glow");
+    std::vector<Instance> none;
+    tl.drawGlyphFit(none, 0x1F600, s, {0.f, 0.f}, 0.4f);
+    check(none.empty(), "...and nothing for a glyph the font hasn't got");
+}
+
 int main() {
     atlas.build();
     atlasBuilt();
     measuring();
     wrapping();
     drawing();
+    fitting();
     utf8();
     return finish("Font");
 }

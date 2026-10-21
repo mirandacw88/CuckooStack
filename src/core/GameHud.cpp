@@ -406,7 +406,11 @@ void Game::buildHud() {
             const float centerY = px.y + (yPct + 50.f) / 100.f * box; // translate(-50%, y%) around the anchor point
             s.size *= sc;
             s.opacity = op;
-            hudText(p.text, s, px.x, centerY - text_->lineBox(s) / 2);
+            // kept on screen: in a maze the camera leads her way, so she runs near an edge ("CLOSE SHAVE x12 +24"
+            // centred on her would run off it)
+            const float half = text_->measure(s.uppercase ? toUpperAscii(p.text) : p.text, s) / 2 + 10;
+            const float cx = half * 2 < W ? clampf(px.x, half, W - half) : W / 2;
+            hudText(p.text, s, cx, centerY - text_->lineBox(s) / 2);
         }
 
     // #flash
@@ -455,7 +459,7 @@ void Game::buildHud() {
                 constexpr float BW = 150.f, BH = 4.f;
                 const float barY = top + box + 4 + text_->lineBox(corn) + 6 + BH / 2;
                 barBottom_ = barY + 7; // the flag's pole hangs to here
-                const float frac = clampf(float(x_ / level_.finish()), 0.f, 1.f);
+                const float frac = clampf(float(furthest() / level_.finish()), 0.f, 1.f);
                 hudRect({W / 2, barY}, {BW + 4, BH + 4}, css("#0a0818"), 0.7f);
                 hudRect({W / 2, barY}, {BW, BH}, kMuted, 0.35f);                         // the track still to run
                 if (frac > 0.f) hudRect({W / 2 - BW / 2 + BW * frac / 2, barY}, {BW * frac, BH}, glm::mix(kNeon, kVolt, frac), 1.f);

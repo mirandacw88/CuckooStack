@@ -27,6 +27,7 @@ void run(cs::Game& g, float seconds) { for (int i = 0; i < int(seconds * 60); ++
 } // namespace
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     using namespace cs;
     {   // 3. surge: invulnerable, smashes walls, x1.35 speed, points per block
         Env env;

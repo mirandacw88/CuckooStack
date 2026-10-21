@@ -1,0 +1,95 @@
+; Level 8, the neon city.
+length 370
+difficulty 245 0.35
+raids auto
+course
+16 0 crate
+4 3 mix
+4 6 crate
+5 7 crate
+6 7 crate
+17 2 crate
+13 1 hay
+13 0 mix
+6 4 mix
+6 7 hay
+4 7 crate
+6 7 mix
+5 7 mix
+5 7 hay
+6 7 hay
+6 7 mix
+6 7 mix
+4 7 crate
+10 8 hay 12
+6 8 crate
+6 8 mix
+6 8 crate
+3 8 mix
+3 8 crate
+5 8 crate
+18 3 hay
+5 5 crate
+16 2 hay
+13 1 mix
+3 3 hay
+5 5 hay
+16 2 hay
+3 6 hay
+3 8 mix
+20 0 crate
+8 3 mix
+36 4 crate
+3 8 hay
+4 8 hay
+20 0 crate
+19 1 hay
+11 5 crate 8
+11 6 crate 9
+11 7 crate 10
+11 8 hay 12
+20 1 mix
+18 4 crate
+11 7 crate 10
+11 8 crate 12
+3 8 crate
+5 8 hay
+3 8 crate
+20 1 mix
+4 2 crate
+15 0 crate
+4 4 mix
+14 3 crate
+3 4 crate
+11 5 mix 9
+11 7 crate 11
+20 0 crate
+28 4 hay
+4 8 mix
+20 0 hay
+saws
+discos
+13.2 5.05
+15.9 6.85
+55.2 6.85
+58.2 6.25
+71.4 6.85
+75 5.65
+96.9 7.45
+121.2 3.25
+129.9 3.25
+137.1 5.05
+150.9 6.85
+153.3 1.45
+155.1 2.05
+156.9 2.65
+193.2 7.45
+200.4 1.45
+250.2 3.25
+257.7 3.85
+302.7 1.45
+304.5 2.05
+306.3 2.65
+328.5 3.7
+334.8 4.9
+349.5 4.45

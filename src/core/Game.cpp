@@ -8,9 +8,11 @@
 #include "Materials.h"
 #include "Reminders.h"
 
+#include <atomic>
 #include <cctype>
 #include <ctime>
 #include <sstream>
+#include <thread>
 
 namespace cs {
 
@@ -22,6 +24,22 @@ struct Palette {
 };
 const Palette& C() { static const Palette p; return p; }
 
+// Neon Egypt's backdrop art (assets/backdrop/egypt_backdrop.png, 4096 x 2048): decoded once per process, off the main
+// thread, as soon as Egypt is near (start: the title on level 9 or later, or the zone switching to it); null till it's
+// ready (the backdrop isn't drawn till then)
+const HudImage* egyptBackdropArt(bool start) {
+    struct Art {
+        HudImage image;
+        std::atomic<int> state{0}; // 0 not wanted yet, 1 decoding, 2 ready, 3 failed
+        std::thread worker;
+        ~Art() { if (worker.joinable()) worker.join(); }
+    };
+    static Art art;
+    int idle = 0;
+    if (start && art.state.compare_exchange_strong(idle, 1)) art.worker = std::thread([] { art.state = art.image.buildEgyptBackdrop() ? 2 : 3; });
+    return art.state.load() == 2 ? &art.image : nullptr;
+}
+
 struct Grade { glm::vec3 fog, mid, bot, haze, light; };
 const Grade& grade(int i) {
     static const Grade g[] = {
@@ -29,7 +47,7 @@ const Grade& grade(int i) {
         {hexColor("#061b2c"), hexColor("#06203a"), hexColor("#0d3f60"), hexColor("#22c4ff"), hexColor("#29e7ff")}, // ice blue
         {hexColor("#26081a"), hexColor("#2a0a22"), hexColor("#62162c"), hexColor("#ff5a3d"), hexColor("#ff6a3d")}, // red dusk
         {hexColor("#120a3a"), hexColor("#140a40"), hexColor("#2c1a7c"), hexColor("#9a5bff"), hexColor("#9a5bff")}, // violet
-        {hexColor("#0d0b24"), hexColor("#0a1030"), hexColor("#3a2240"), hexColor("#ff9a3a"), hexColor("#29e7ff")}, // desert night (Neon Egypt)
+        {hexColor("#06121e"), hexColor("#06162a"), hexColor("#0b2a3c"), hexColor("#1fb4c8"), hexColor("#29e7ff")}, // desert night, teal (Neon Egypt)
         {hexColor("#140a26"), hexColor("#120a32"), hexColor("#3c1446"), hexColor("#ff7ab8"), hexColor("#ff5aa8")}, // sakura night (Neon Japan)
     };
     return g[i % 6];
@@ -72,7 +90,8 @@ const glm::vec3 kCapOk = glow("#ffbe3a", 1.5f), kCapDanger = glow("#ff2a3a", 2.2
 } // namespace
 
 Game::Game(const GameServices& services)
-    : svc_(withDefaults(services)), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1), dda_(svc_.storage), world_(rng_),
+    : svc_(withDefaults(services)), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1),
+      sceneRng_(static_cast<uint64_t>(std::time(nullptr)) * 40503ull + 7), dda_(svc_.storage), world_(sceneRng_),
       profile_(svc_.storage, svc_.clock), wallet_(svc_.storage, svc_.analytics), adPolicy_(svc_.storage, svc_.clock, tune_),
       prog_(svc_.storage, tune_), dayStreak_(svc_.storage, svc_.clock), missions_(svc_.storage, svc_.clock), drop_(svc_.storage, svc_.clock),
       campaign_(svc_.storage) {
@@ -85,6 +104,7 @@ Game::Game(const GameServices& services)
     if (!fonts_.build()) CS_LOGE("Font atlas could not be built; text disabled");
     text_ = std::make_unique<TextLayout>(fonts_);
     if (!hudIcons_.buildIcons()) CS_LOGE("HUD sprites could not be decoded");
+    if (campaign_.level() >= 9) egyptBackdropArt(true); // (Egypt is near: its art decodes behind the splash)
     resize(390, 844);
     coinShown_ = float(wallet_.coins());
     applyCosmetics();
@@ -247,6 +267,11 @@ void Game::reset() {
     rollDay();
     dda_.newDay("level:" + std::to_string(campaign_.level())); // death zones belong to one course
     campaign_.applyTo(level_);                                 // the current level: seed, difficulty, finish line
+    if (debugSaws_) { // (developer menu: the generator's course, with a saw about every 25 m)
+        debugSaws_ = false;
+        campaign_.applyGenerated(level_);
+        level_.setSaws(std::max(Campaign::sawsOf(campaign_.level()), int(campaign_.length() / 25)));
+    }
     level_.generateUntil(60); level_.rebuildBlocks();
     clearT_ = -1; runCleared_ = false;
     x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
@@ -254,6 +279,9 @@ void Game::reset() {
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
     hen_.nodes[hen_.root].pos = glm::vec3(0.f);
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0; sawSlash_.t = -1; sawZoom_ = 0;
+    gIn_ = {}; gDir_ = 1; gK_ = 0; gLead_ = 1; henYaw_ = 0; gFlash_ = 0; maxX_ = 0;
+    gSqueezeFrom_ = -1; gSqueezeCols_ = 0; nearMissT_ = sawCutT_ = -10; nearChain_ = 0;
     resetSurge();
 }
 
@@ -274,17 +302,47 @@ void Game::start() {
     dayStreak_.played();
     if (dayStreak_.count() != streakBefore) track("streak_update", {{"count", std::to_string(dayStreak_.count())}});
     const bool fromTitle = state_ == State::Title;
+    if (playTest_.level > 0 && campaign_.level() != playTest_.level) campaign_.debugSetLevel(playTest_.level); // (the play-test's level, cleared or not)
     reset();
     state_ = State::Play;
     if (fromTitle) beginDroidExit(); // the title droid peels off and boosts away
     planRaids(); // this run's droid raids on the stack
     beat_.start(); svc_.audio->musicStart(true); // a new run: the song from the top
     day_.attempts++; saveDay(); campaign_.attempt(); placeGate();
+    if (debugNearGauntlet_) { // developer menu: straight to the level's maze gauntlet (10 m before its door)
+        debugNearGauntlet_ = debugNearGauntletEvery_;
+        level_.generateUntil(level_.finish() > 0 ? level_.finish() : 600);
+        if (!level_.gauntlets.empty()) {
+            x_ = level_.gauntlets.front().x0 - 10.0;
+            level_.dropBehind(x_); level_.rebuildBlocks();
+            baseY_ = level_.heightAt(x_) * U;
+        }
+    }
     if (debugNearFinish_) { // developer menu: test the finish quickly
         debugNearFinish_ = false;
         x_ = std::max(0.0, level_.finish() - 30.0);
         level_.generateUntil(x_ + 45); level_.dropBehind(x_); level_.rebuildBlocks();
         baseY_ = level_.heightAt(x_) * U;
+    }
+    if (playTest_.level > 0 && playTest_.col >= 0) { // the level editor's play-test: from a cell of the level's maze
+        level_.generateUntil(level_.finish() > 0 ? level_.finish() + 20 : 600);
+        if (!level_.gauntlets.empty()) {
+            const PlacedGauntlet p = level_.gauntlets.front();
+            x_ = p.x0 + (std::clamp(playTest_.col, 0, p.g->cols() - 1) + 0.5) * U;
+            baseY_ = std::clamp(playTest_.row, 0, p.g->rows() - 1) * U;
+            level_.dropBehind(p.x0 - 10); level_.rebuildBlocks();
+            enterGauntlet(p);
+            gDir_ = playTest_.dir < 0 ? -1 : 1;
+        }
+    } else if (playTest_.level > 0 && playTest_.x > 0) { // ...or from x along its course, on the wall there
+        x_ = level_.finish() > 0 ? std::min(playTest_.x, std::max(0.0, level_.finish() - 5)) : playTest_.x;
+        level_.generateUntil(x_ + 60); level_.dropBehind(x_); level_.rebuildBlocks();
+        baseY_ = level_.heightAt(x_) * U;
+    }
+    if (x_ > 0) { // (a run started along the course: what's behind her is passed, its sectors and planned raids too)
+        maxX_ = x_;
+        sector_ = static_cast<int>(std::floor(x_ / SECTOR)) + 1;
+        while (raidNext_ < raidPlan_.size() && raidPlan_[raidNext_] < x_) ++raidNext_;
     }
     overDelay_ = -1;
     for (float& p : popT_) p = 0;
@@ -633,10 +691,11 @@ void Game::knock(int k) {
         const Egg e = eggs_.front();
         eggs_.erase(eggs_.begin());
         const glm::vec3 p = e.pos;
-        debris_.push_back({DebrisKind::Egg, p, e.rot, e.scale, {-speed_ * 0.5f - rng_.range(0.8f, 2.4f), rng_.range(2.5f, 5.5f), rng_.range(-1.6f, 1.6f)},
+        const float back = -float(gDir_); // (behind her: in a maze she may be running left)
+        debris_.push_back({DebrisKind::Egg, p, e.rot, e.scale, {back * (speed_ * 0.5f + rng_.range(0.8f, 2.4f)), rng_.range(2.5f, 5.5f), rng_.range(-1.6f, 1.6f)},
                            {rng_.range(-10, 10), rng_.range(-4, 4), rng_.range(-10, 10)}, 3, 0, e.ring});
-        spawnShards(p, 4, -speed_ * 0.4f);
-        burst(p + glm::vec3(0.2f, 0, 0), 26, {C().cyan, C().white, C().pink}, 2.5f, 7, 0.5f, 0.08f, 0, -speed_ * 0.3f);
+        spawnShards(p, 4, back * speed_ * 0.4f);
+        burst(p - glm::vec3(back * 0.2f, 0, 0), 26, {C().cyan, C().white, C().pink}, 2.5f, 7, 0.5f, 0.08f, 0, back * speed_ * 0.3f);
         puff({p.x + 0.2f, p.y - 0.2f, 0}, 3, C().smoke, 1, 0.45f);
         rings_.spawn({p.x + 0.25f, p.y, 0.7f}, C().pink, 0.7f, 0.28f, true);
     }
@@ -646,6 +705,7 @@ void Game::knock(int k) {
 }
 
 void Game::perfect(float top) {
+    nearMissT_ = time_; // (a near miss: a squeeze it came in isn't a CLOSE CALL too)
     streak_++;
     run_.perfects++;
     missionProgress(missions_.record(MissionKind::Perfects));
@@ -659,18 +719,27 @@ void Game::perfect(float top) {
     if (streak_ >= 3) { flashScreen(srgbColor("#ff2bd6"), 0.16f); chromaKick_ = std::max(chromaKick_, 0.6f); }
 }
 
-void Game::closeCall(float top) {
-    bonus_ += 2;
+// A near miss: points, a popup, a chime and a beat of slow motion. In quick succession (within 1.2 s) they chain,
+// "CLOSE SHAVE x3": more points each, and the slow motion only on the chain's first, so a rhythm of them stays quick
+void Game::closeCall(float top, const char* label) {
+    const bool chained = time_ - nearMissT_ < kNearChain && nearChain_ > 0;
+    nearChain_ = chained ? nearChain_ + 1 : 1;
+    nearMissT_ = time_;
+    const int pts = 2 * nearChain_;
+    bonus_ += pts;
     run_.closeCalls++;
     missionProgress(missions_.record(MissionKind::CloseCalls));
-    popup("CLOSE CALL +2", {float(x_), top + 0.9f, 0}, PopKind::Perfect);
-    sfx(Sfx::Perfect, 7); timeScale_ = std::min(timeScale_, 0.4f);
+    popup(std::string(label) + (nearChain_ > 1 ? " \u00d7" + std::to_string(nearChain_) : std::string()) + " +" + std::to_string(pts),
+          {float(x_), top + 0.9f, 0}, PopKind::Perfect);
+    sfx(Sfx::Perfect, std::min(7 + nearChain_ - 1, 12));
+    if (!chained) timeScale_ = std::min(timeScale_, 0.4f);
     rings_.spawn({float(x_), top, 0.3f}, C().white, 1.4f, 0.4f, true);
     burst({float(x_), top, 0}, 22, {C().white, C().cyan}, 2, 5, 0.4f, 0.07f, 0, 0, false, 2.5f, 3);
 }
 
 void Game::die(bool ceiling) {
     state_ = State::Dead; deadT_ = 0;
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0;
     surging_ = false; graceT_ = 0; surgeSpeedMul_ = 1; beat_.setParty(false);
     glm::vec3 p = hen_.nodes[hen_.root].pos; p.y += 0.55f;
     if (ceiling) { henV_ = {-1.5f - speed_ * 0.2f, -3, rng_.range(1, 2.5f)}; henW_ = {rng_.range(-3, 3), rng_.range(-4, 4), -6}; }
@@ -716,12 +785,14 @@ void Game::revive() {
     run_.continues++;
     state_ = State::Play; deadT_ = 0; overDelay_ = -1;
     eggs_.clear();
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0;
     meter_ = MAXE; prevFull_ = MAXE;
     baseY_ = std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U; vy_ = 0; hop_ = 0; hopV_ = 0;
+    if (gIn_.g) { x_ = gIn_.x0 + 0.3; baseY_ = gIn_.g->entryRow() * U; gDir_ = 1; gSqueezeFrom_ = -1; } // a crash in a maze: back in at its door
     hen_.nodes[hen_.root].pos = {float(x_), float(baseY_), 0};
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
-    graceT_ = 2.2f;   // surge grace: smashes the wall that killed her, so no instant second death
+    graceT_ = gIn_.g ? 0.f : 2.2f; // surge grace: smashes the wall that killed her, so no instant second death (a maze: none, she's at its door)
     timeScale_ = 1; freeze_ = 0; danger_ = 0; shake_ = 0.3f;
     beat_.start(); svc_.audio->musicStart(false); // a revive: the song carries on where the crash stopped it
     svc_.replay->revived(); // the crash we came back from is cut out of the clip
@@ -743,13 +814,13 @@ void Game::finishRun(bool cleared) {
     dda_.record(float(x_), float(pbBefore));
     if (x_ > day_.bestDist) day_.bestDist = x_;
     saveDay();
-    const bool levelBest = campaign_.recordRun(cleared ? campaign_.length() : x_);
+    const bool levelBest = campaign_.recordRun(cleared ? campaign_.length() : furthest());
     runCleared_ = cleared;
     if (isBest) { best_ = score_; if (svc_.storage) svc_.storage->set("cluckstack-best", std::to_string(best_)); }
-    finalScore_ = score_; finalDist_ = static_cast<int>(std::floor(x_));
+    finalScore_ = score_; finalDist_ = static_cast<int>(std::floor(furthest()));
     newBestRun_ = (isBest || levelBest) && score_ > 0;
     {
-        const int toGo = int(std::ceil(campaign_.lengthOf(levelPlayed) - x_));
+        const int toGo = int(std::ceil(campaign_.lengthOf(levelPlayed) - furthest()));
         std::string hook;
         if (cleared) hook = attempts <= 1 ? std::string("First try!") : "Cleared on attempt " + std::to_string(attempts);
         else if (pbBefore <= 0) hook = "First run of level " + std::to_string(levelPlayed);
@@ -1209,8 +1280,20 @@ void Game::update(double rawDt) {
     if (state_ == State::Play) updatePlay(dt, rdt);
     else danger_ += (0 - danger_) * std::min(1.f, dt * 6);
 
+    // after a saw or a zap: the stack (or the hen) drops the egg's height onto what's left, then squashes and jiggles
+    animateSaws(rdt);
+    gFlash_ = std::max(0.f, gFlash_ - rdt / 0.3f);
+    if (sawDrop_ > 0) {
+        sawDropV_ -= 60 * dt; sawDrop_ += sawDropV_ * dt;
+        if (sawDrop_ <= 0) {
+            sawDrop_ = sawDropV_ = 0;
+            squash_ = 0.22f;
+            for (size_t i = 0; i < eggs_.size(); ++i) { eggs_[i].jig = 1; eggs_[i].jd = i * 0.035f; }
+            puff({float(x_), float(baseY_) + 0.05f, 0}, 3, C().steam, 1.f, 0.35f);
+        }
+    }
     // stack layout: each egg grows from zero so the hen rides it up
-    float cursor = float(baseY_);
+    float cursor = float(baseY_) + sawDrop_;
     for (size_t i = 0; i < eggs_.size(); ++i) {
         Egg& e = eggs_[i];
         e.age += dt;
@@ -1335,7 +1418,7 @@ void Game::update(double rawDt) {
         replayTooShort_ = run_.seconds < kMinReplaySeconds; // a blink of a run: no clip (the results say so)
         if (!replayTooShort_) {
             ReplayMeta m;
-            m.distance = int(std::floor(x_)); m.score = score_;
+            m.distance = int(std::floor(furthest())); m.score = score_;
             const int lvl = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
             m.label = "LEVEL " + std::to_string(lvl) + (runCleared_ ? " CLEARED" : "");
             m.newBest = newBestRun_; // (finishRun has already recorded the run's bests)
@@ -1404,7 +1487,7 @@ void Game::updatePlay(float dt, float rdt) {
         graceT_ = std::max(0.f, graceT_ - rdt);
         if (graceT_ <= 0 && clearT_ < 0) shedAfterSurge(); // (past the finish the grace never ends: no shedding there)
     }
-    x_ += speed_ * dt;
+    if (!gIn_.g) x_ += speed_ * dt; // (in a maze gauntlet, updateGauntlet moves her)
     const float overclock = runBoost_ == Boost::Overclock ? 0.6f : 1.f; // boost: eggs refill faster all run
     meter_ = std::min(float(MAXE), meter_ + dt / (float(cv.regen) * dda_.regenMul(float(x_)) * overclock));
     const int fullNow = std::min(MAXE, static_cast<int>(std::floor(meter_)));
@@ -1419,7 +1502,8 @@ void Game::updatePlay(float dt, float rdt) {
         sfx(Sfx::Perfect); flashScreen(srgbColor("#29e7ff"), 0.18f); chromaKick_ = std::max(chromaKick_, 0.5f);
         rings_.spawn({float(x_), top + 0.5f, 0.5f}, C().cyan, 3, 0.7f, true);
     }
-    if (level_.generateUntil(x_ + 45)) { level_.dropBehind(x_); level_.rebuildBlocks(); }
+    if (level_.generateUntil(x_ + 45)) { if (!gIn_.g) level_.dropBehind(x_); level_.rebuildBlocks(); } // (in a maze she can turn back)
+    maxX_ = std::max(maxX_, x_);
     // the finish line: the hen runs on (invulnerable) through a burst of fireworks, then the level is cleared
     if (level_.finish() > 0 && clearT_ < 0 && x_ >= level_.finish()) {
         clearT_ = 0;
@@ -1439,6 +1523,19 @@ void Game::updatePlay(float dt, float rdt) {
     }
 
     if ((autoSurge_ || runBoost_ == Boost::Surge) && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
+    // a maze gauntlet: in through its door, and its own rules till she's out (GameGauntlet.cpp)
+    if (!gIn_.g && clearT_ < 0)
+        if (const PlacedGauntlet* p = level_.gauntletAt(x_ + 0.22)) enterGauntlet(*p);
+    if (gIn_.g) {
+        updateGauntlet(dt);
+        if (state_ != State::Play) return;
+        updateSaws(dt);
+        if (state_ != State::Play) return;
+        danger_ += (0 - danger_) * std::min(1.f, dt * 10);
+        score_ = static_cast<int>(std::floor(maxX_)) + bonus_;
+        if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
+        return;
+    }
     if (smashing()) smashAhead();
     const double hb = 0.22;
     const double hFront = level_.heightAt(x_ + hb) * U;
@@ -1489,6 +1586,8 @@ void Game::updatePlay(float dt, float rdt) {
                 if (sg.minHead < 0.35) closeCall(float(sg.ceil * U));
             }
     }
+    updateSaws(dt); // saw blades: the bottom egg sawn off, or the hen caught (GameSaw.cpp)
+    if (state_ != State::Play) return;
     // danger: the next wall is taller than the stack (judged by where the stack will land)
     const double landBase = std::min(baseY_, support), topNow = landBase + eggs_.size() * U;
     double wallH = 0;
@@ -1497,6 +1596,13 @@ void Game::updatePlay(float dt, float rdt) {
         if (s.x0 > x_ + 1.2 + speed_ * 0.75) break;
         wallH = std::max(wallH, s.h * U);
         if (s.ceil) break; // never look past the first overhead barrier
+    }
+    int sawsBefore = cutSawX_ >= 0 ? 1 : 0; // a saw ahead needs an egg over it (one more on a wall top: after the
+    for (const Saw& w : level_.saws) {      // climb), and one more for each blade before it in a row
+        if (w.state != Saw::State::Armed || w.x - Level::kSawReach <= x_) continue;
+        if (w.x - Level::kSawReach > x_ + 1.2 + speed_ * 0.75) break;
+        wallH = std::max(wallH, (w.y + 1 + sawsBefore) * U);
+        ++sawsBefore;
     }
     for (const Segment& sg : level_.segs)
         if (sg.ceil && x_ + 0.25 >= sg.x0 && x_ + 0.22 < sg.x1)
@@ -1535,7 +1641,7 @@ void Game::updatePlay(float dt, float rdt) {
             corns[i].missed = true; // counted once; a miss no longer breaks the count: any 10 balls in a run trigger a surge
         }
     }
-    const int s = static_cast<int>(std::floor(x_)) + bonus_;
+    const int s = static_cast<int>(std::floor(maxX_)) + bonus_;
     score_ = s;
     if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
 }
@@ -1591,7 +1697,9 @@ void Game::updateHen(float dt) {
         lean_ += (leanT - lean_) * std::min(1.f, dt * 8);
         // showroom: a slow turn left and right so the outfit and the trail streaming off it are seen from both sides
         const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
-        root.rot = {0, std::sin(time_ * 0.55f) * 0.75f * lk, lean_ * (1 - lk)};
+        // she turns round when a maze's bumper sends her back (quick, eased)
+        henYaw_ += ((gDir_ < 0 && state_ == State::Play ? kPi : 0.f) - henYaw_) * std::min(1.f, dt * 16);
+        root.rot = {0, std::sin(time_ * 0.55f) * 0.75f * lk + henYaw_ * (1 - lk), lean_ * (1 - lk)};
         for (int k = 0; k < 2; ++k) {
             const float s = k == 0 ? -1.f : 1.f;
             float& rx = hen_.nodes[hen_.wings[k]].rot.x;
@@ -1628,10 +1736,11 @@ void Game::updateHen(float dt) {
         if (show && state_ != State::Play) emitTrail(dt);                            // try the trail on in place
         // jet trail from the battery pack
         if (state_ == State::Play) {
-            const float px = root.pos.x - 0.26f, py = root.pos.y + 0.82f;
+            const float face = std::cos(henYaw_); // (+1 facing right, -1 left)
+            const float px = root.pos.x - 0.26f * face, py = root.pos.y + 0.82f;
             for (int i = 0; i < 2; ++i)
                 fxAdd_.emit({px + rng_.range(-0.03f, 0.03f), py + rng_.range(-0.03f, 0.03f), rng_.range(-0.05f, 0.05f)},
-                            {rng_.range(-1.2f, -0.4f), rng_.range(-0.1f, 0.4f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.11f, 0.01f,
+                            {rng_.range(-1.2f, -0.4f) * face, rng_.range(-0.1f, 0.4f), rng_.range(-0.2f, 0.2f)}, rng_.range(0.3f, 0.5f), 0.11f, 0.01f,
                             rng_.next01() < 0.75f ? C().cyan : C().pink, 0.9f, 1.5f, -0.5f);
             emitTrail(dt);
             emitAura(dt);
@@ -1649,7 +1758,7 @@ void Game::updateHen(float dt) {
             fxAdd_.emit(root.pos + glm::vec3(0, 0.4f, 0.1f), {rng_.range(-1, 1), rng_.range(0, 1.5f), rng_.range(-1, 1)}, rng_.range(0.2f, 0.4f), 0.08f, 0,
                         rng_.next01() < 0.5f ? C().ember : C().cyan, 1, 2, 4);
         if (rng_.next01() < 0.25f) puff(root.pos + glm::vec3(0, 0.3f, 0), 1, C().smoke, 0.6f, 0.5f);
-        const float floorY = level_.heightAt(root.pos.x) * Uf + 0.25f;
+        const float floorY = float(level_.groundBelow(root.pos.x, root.pos.y + 0.3f)) + 0.25f;
         if (root.pos.y < floorY && henV_.y < 0) { root.pos.y = floorY; henV_ *= 0.35f; henV_.y = std::abs(henV_.y) * 0.4f; henW_ *= 0.5f; }
     }
     // visor turns red when the next wall is too tall
@@ -1672,20 +1781,31 @@ void Game::updateDebris(float dt) {
         } else {
             d.v.y -= 22 * dt; d.pos += d.v * dt; d.rot += d.w * dt;
             if (d.kind == DebrisKind::Egg) fxAdd_.emit(d.pos, glm::vec3(0.f), 0.3f, 0.12f, 0, C().cyan, 0.7f, 0, 0);
-            const float fy = std::abs(d.pos.z) < DEPTH / 2 ? level_.heightAt(d.pos.x) * Uf : 0.f;
-            if (d.pos.y < fy + 0.05f && d.v.y < 0) {
-                if (d.kind == DebrisKind::Egg) {
+            if (d.zapped && d.life > 3.f - 0.5f) // (zapped: crackling blue for half a second)
+                for (int k = 0; k < 2; ++k)
+                    fxAdd_.emit(d.pos + glm::vec3(rng_.range(-0.25f, 0.25f), rng_.range(-0.2f, 0.2f), rng_.range(-0.2f, 0.2f)),
+                                {rng_.range(-3, 3), rng_.range(-3, 3), rng_.range(-1, 3)}, rng_.range(0.1f, 0.2f), 0.06f, 0,
+                                rng_.next01() < 0.5f ? glow("#9fe7ff", 3.f) : glow("#3a8cff", 3.f), 1, 0, 6);
+            if (d.kind == DebrisKind::Yolk) fxAdd_.emit(d.pos, glm::vec3(0.f), 0.25f, 0.09f, 0, glow("#ffc23a", 2.5f), 0.8f, 0, 0);
+            const float fy = std::abs(d.pos.z) < DEPTH / 2 ? float(level_.groundBelow(d.pos.x, d.pos.y + 0.3f)) : 0.f;
+            const float rest = d.kind == DebrisKind::EggHalf ? 0.12f : d.kind == DebrisKind::Blade ? Level::kSawR * 0.5f : 0.05f;
+            if (d.pos.y < fy + rest && d.v.y < 0) {
+                if (d.kind == DebrisKind::Egg || d.kind == DebrisKind::Yolk) { // a splat (with its yolk)
                     spawnSplat(d.pos.x, fy);
                     const glm::vec3 p = d.pos;
-                    spawnShards({p.x, fy + 0.1f, p.z}, 4, 0);
-                    burst({p.x, fy + 0.08f, p.z}, 16, {C().volt, C().cyan}, 1.5f, 4, 0.45f, 0.07f, 1.2f, 0, false, 2.5f, 9);
+                    if (d.kind == DebrisKind::Egg) spawnShards({p.x, fy + 0.1f, p.z}, 4, 0);
+                    burst({p.x, fy + 0.08f, p.z}, 16, {C().volt, d.kind == DebrisKind::Yolk ? glow("#ffc23a", 3.f) : C().cyan}, 1.5f, 4, 0.45f, 0.07f, 1.2f, 0, false, 2.5f, 9);
                     rings_.spawn({p.x, fy + 0.015f, p.z}, C().volt, 0.7f, 0.4f, false);
                     debris_[i].life = 0;
-                } else { d.pos.y = fy + 0.05f; d.v *= 0.3f; d.v.y *= -0.5f; }
+                } else {
+                    d.pos.y = fy + rest; d.v *= 0.3f; d.v.y *= -0.5f;
+                    if (d.kind == DebrisKind::EggHalf || d.kind == DebrisKind::Blade) d.w *= 0.5f;
+                }
             }
         }
         Debris& dd = debris_[i];
-        if (dd.life < 0.3f && dd.kind != DebrisKind::Egg) dd.scale = glm::vec3(std::max(0.001f, dd.life / 0.3f));
+        const bool fadesItself = dd.kind == DebrisKind::Egg || dd.kind == DebrisKind::EggHalf || dd.kind == DebrisKind::Yolk || dd.kind == DebrisKind::Blade;
+        if (dd.life < 0.3f && !fadesItself) dd.scale = glm::vec3(std::max(0.001f, dd.life / 0.3f));
         if (dd.life <= 0) debris_.erase(debris_.begin() + static_cast<long>(i));
     }
 }
@@ -1694,11 +1814,19 @@ void Game::updateCamera(float rdt) {
     const glm::vec3 hp = hen_.nodes[hen_.root].pos;
     const float lookAhead = state_ == State::Play ? speed_ * 0.12f : 0;
     const float dz = state_ == State::Dead ? std::min(1.f, deadT_ / 0.9f) : 0, dze = dz * dz * (3 - 2 * dz);
-    const float focusX = state_ == State::Dead ? lerp(float(x_) + 1.7f, hp.x + 0.5f, dze) : hp.x + 1.7f + lookAhead;
+    // in a maze gauntlet the camera eases out to follow her both ways and up and down: further back than on the run (more
+    // of the maze in view) and leading her way by 2 m (lookAhead makes up for its follow lag), so she sees what's coming
+    // (over half a second ahead at level 11's speed, on a phone held upright). The lead swings round with her, eased so
+    // bouncing about a shaft doesn't whip it from side to side
+    gK_ += ((gIn_.g ? 1.f : 0.f) - gK_) * std::min(1.f, rdt * 3.f);
+    const float gk = gK_ * gK_ * (3 - 2 * gK_);
+    gLead_ += (float(gDir_) - gLead_) * std::min(1.f, rdt * 4.f);
+    const float runFocus = lerp(hp.x + 1.7f + lookAhead, hp.x + gLead_ * (2.f + lookAhead), gk);
+    const float focusX = state_ == State::Dead ? lerp(float(x_) + 1.7f * (1 - gk), hp.x + 0.5f, dze) : runFocus;
     camX_ += (focusX - camX_) * std::min(1.f, rdt * 8);
     const float top = state_ == State::Dead ? lerp(float(baseY_), std::max(0.3f, hp.y), dze) : hp.y;
-    const float wantY = std::max(1.3f, (float(baseY_) + top) * 0.5f + 1.2f);
-    camY_ += (wantY - camY_) * std::min(1.f, rdt * 3.5f);
+    const float wantY = lerp(std::max(1.3f, (float(baseY_) + top) * 0.5f + 1.2f), (float(baseY_) + top) * 0.5f + 0.55f, gk);
+    camY_ += (wantY - camY_) * std::min(1.f, rdt * lerp(3.5f, 7.f, gk));
     shake_ = std::max(0.f, shake_ - rdt * 1.4f);
     const float sx = (rng_.next01() - 0.5f) * shake_ * 0.35f, sy = (rng_.next01() - 0.5f) * shake_ * 0.35f;
     const float drift = state_ == State::Title ? std::sin(time_ * 0.35f) : 0;
@@ -1708,8 +1836,8 @@ void Game::updateCamera(float rdt) {
     // locker open: frame the hen in the top part of the screen, above the sheet, a little closer
     lockerK_ += ((screen_ == Screen::Locker ? 1.f : 0.f) - lockerK_) * std::min(1.f, rdt * 6.f);
     const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
-    camera_.setFovBoost(surge::FOV_ADD * partyK_);
-    const float dist = camera_.followDistance();
+    camera_.setFovBoost(surge::FOV_ADD * partyK_ - 7.f * sawZoom_ * sawZoom_ * (3 - 2 * sawZoom_)); // (a sawn egg: a punch in)
+    const float dist = camera_.followDistance() * (1.f + 0.2f * gk);
     const glm::vec3 eye{camX_ + sx + drift * 0.8f - camKick_ - ie * 3, camY_ + 1.9f + sy + drift * 0.3f + ie * 4.5f,
                         dist * (1 - 0.38f * dze) - std::abs(drift) * 0.8f + ie * 6};
     const glm::vec3 look{camX_ + drift * 0.3f - camKick_ * 0.5f, camY_ + 0.1f + ie * 1.2f + dze * 0.3f, 0};
@@ -1750,6 +1878,27 @@ void Game::updateAmbient(float dt) {
 }
 
 // ---------- output ----------
+// The zone's walls: the city's crates and hazard bales; Neon Egypt's sandstone with glowing edges and a glyph band
+// (its cyber cubes gold-capped stone); Neon Japan's dark lacquer, pink-edged (its cubes vermilion-edged)
+void Game::wallMaterials(float pz, LitMaterial& crate, LitMaterial& hay, float& courses) const {
+    const glm::vec3 wallRim = hexColor("#29e7ff"); // a cool cyan edge, with the neon trims (was amber)
+    crate = {}; crate.color = glm::vec3(1.f); crate.emissive = glm::vec3(1.4f + pz * 0.36f); crate.metalness = 0.45f; crate.roughness = 0.5f;
+    crate.rimColor = wallRim; crate.rimStrength = 0.25f; crate.rimPow = 3.f; crate.pattern = Pattern::Container;
+    hay = crate; hay.emissive = glm::vec3(1.3f + pz * 0.3f); hay.metalness = 0.2f; hay.roughness = 0.55f; hay.pattern = Pattern::Hazard;
+    courses = 1.f;
+    if (world_.zone() == Zone::Egypt) {
+        crate = {}; crate.color = hexColor("#3a2c1c"); crate.metalness = 0.35f; crate.roughness = 0.55f; crate.pattern = Pattern::Stone;
+        crate.emissive = glow("#ffb43a", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ffb43a"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
+        hay = crate; hay.color = hexColor("#1c1a2a"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#29e7ff", 1.f) * (1.1f + pz * 0.35f);
+        courses = 0.f;
+    } else if (world_.zone() == Zone::Japan) {
+        crate = {}; crate.color = hexColor("#24141e"); crate.metalness = 0.4f; crate.roughness = 0.4f; crate.pattern = Pattern::Stone;
+        crate.emissive = glow("#ff5aa8", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ff5aa8"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
+        hay = crate; hay.color = hexColor("#1c1424"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#ff4a3a", 1.f) * (1.1f + pz * 0.35f);
+        courses = 0.f;
+    }
+}
+
 void Game::buildRenderList() {
     list_.clear();
     RenderList& out = list_;
@@ -1757,22 +1906,9 @@ void Game::buildRenderList() {
     const float x = float(x_);
 
     // walls: crates and hazard bales, tinted per block
-    const glm::vec3 wallRim = hexColor("#29e7ff"); // a cool cyan edge, with the neon trims (was amber)
-    LitMaterial crate; crate.color = glm::vec3(1.f); crate.emissive = glm::vec3(1.4f + pz * 0.36f); crate.metalness = 0.45f; crate.roughness = 0.5f;
-    crate.rimColor = wallRim; crate.rimStrength = 0.25f; crate.rimPow = 3.f; crate.pattern = Pattern::Container;
-    LitMaterial hay = crate; hay.emissive = glm::vec3(1.3f + pz * 0.3f); hay.metalness = 0.2f; hay.roughness = 0.55f; hay.pattern = Pattern::Hazard;
+    LitMaterial crate, hay;
     float wallCourses = 1.f; // (Stone: 0 = the glyph band)
-    if (world_.zone() == Zone::Egypt) { // Neon Egypt: sandstone blocks with glowing edges and a glyph band; the cyber cubes gold-capped stone
-        crate = {}; crate.color = hexColor("#3a2c1c"); crate.metalness = 0.35f; crate.roughness = 0.55f; crate.pattern = Pattern::Stone;
-        crate.emissive = glow("#ffb43a", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ffb43a"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
-        hay = crate; hay.color = hexColor("#1c1a2a"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#29e7ff", 1.f) * (1.1f + pz * 0.35f);
-        wallCourses = 0.f;
-    } else if (world_.zone() == Zone::Japan) { // Neon Japan: dark lacquered blocks, pink edges and glyph band; the cubes vermilion-edged
-        crate = {}; crate.color = hexColor("#24141e"); crate.metalness = 0.4f; crate.roughness = 0.4f; crate.pattern = Pattern::Stone;
-        crate.emissive = glow("#ff5aa8", 1.f) * (1.1f + pz * 0.35f); crate.rimColor = hexColor("#ff5aa8"); crate.rimStrength = 0.2f; crate.rimPow = 3.f;
-        hay = crate; hay.color = hexColor("#1c1424"); hay.metalness = 0.6f; hay.roughness = 0.35f; hay.emissive = glow("#ff4a3a", 1.f) * (1.1f + pz * 0.35f);
-        wallCourses = 0.f;
-    }
+    wallMaterials(pz, crate, hay, wallCourses);
     const glm::vec3 blockSize{Uf * 0.985f, Uf * 0.985f, DEPTH};
     for (const Level::Block& b : level_.blocks) {
         if (b.pos.x < x - 16 || b.pos.x > x + 48) continue;
@@ -1816,6 +1952,8 @@ void Game::buildRenderList() {
     for (const Level::Curtain& c : level_.curtains)
         if (c.pos.x > x - 20 && c.pos.x < x + 50)
             out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(c.pos + glm::vec3(0, 3.5f, 0), {c.width, 7, 1}), glow("#ff2a3a", 1.1f), 1, Shape::Curtain);
+    emitGauntlets(out, pz); // maze gauntlets (GameGauntlet.cpp)
+    emitSaws(out, pz);      // saw blades (GameSaw.cpp)
 
     // disco balls
     {
@@ -1860,25 +1998,29 @@ void Game::buildRenderList() {
     const bool onStreet = !lite_ && level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0;
     const auto stackMark = out.litMark();
     for (size_t i = 0; i < eggs_.size(); ++i) {
-        const Egg& e = eggs_[i];
-        const float sgn = i % 2 ? 1.f : -1.f;
-        const float roll = sgn * (float(x_) / 0.3f) + e.sway;
-        const glm::vec3 s{e.scale.x * 1.12f, e.scale.z * 1.12f, e.scale.y * 1.3f}; // x, height, long axis
-        const glm::mat4 m = compose(e.pos, {0, sgn * 1.22f, 0}, glm::vec3(1.f)) * compose({}, {0, 0, roll}, glm::vec3(1.f)) *
-                            compose({}, {kPi / 2, 0, 0}, glm::vec3(1.f)) * compose({}, {s.x, s.z, s.y});
+        const glm::mat4 m = stackEggMatrix(i);
         out.add(Pass::Lit, MeshId::Egg) = makeLit(m, egg);
-        out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(m * compose({}, {1.02f, 1.17f, 1.02f}), ringCol[e.ring]);
+        out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(m * compose({}, {1.02f, 1.17f, 1.02f}), ringCol[eggs_[i].ring]);
     }
     if (onStreet) out.reflectSince(stackMark);
     LitMaterial shell; shell.color = hexColor("#d4dbe8"); shell.metalness = 1; shell.roughness = 0.24f;
     for (const Debris& d : debris_) {
         switch (d.kind) {
-        case DebrisKind::Egg: emitEgg(d.pos, d.rot, d.scale, d.ring, 0); break;
+        case DebrisKind::Egg: {
+            // a zapped egg: swollen and glowing blue as it leaves the stack, both fading over half a second
+            const float zap = d.zapped ? std::max(0.f, 1.f - (3.f - d.life) / 0.5f) : 0.f;
+            emitEgg(d.pos, d.rot, d.scale * (1.f + 0.22f * zap * zap), d.ring, 0);
+            if (zap > 0)
+                out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(d.pos + glm::vec3(0, 0, 0.3f), glm::vec3(0.9f + 0.6f * zap)),
+                                                                   glow("#59b3ff", 1.8f), 0.75f * zap, Shape::RadialGlow);
+            break;
+        }
         case DebrisKind::Shard: out.add(Pass::Lit, MeshId::Box) = makeLit(compose(d.pos, d.rot, d.scale * 0.07f), shell); break;
         case DebrisKind::Spark: out.add(Pass::Lit, MeshId::Box) = makeEmissive(compose(d.pos, d.rot, d.scale * glm::vec3(0.025f, 0.025f, 0.14f)), glow("#29e7ff", 4)); break;
         case DebrisKind::Feather:
             out.add(Pass::UnlitAlpha, MeshId::Plane) = makeUnlit(compose(d.pos, d.rot, d.scale * glm::vec3(0.1f, 0.2f, 1)), {0.85f, 0.95f, 1.05f}, 1, Shape::Feather);
             break;
+        case DebrisKind::EggHalf: case DebrisKind::Yolk: case DebrisKind::Blade: emitSawDebris(out, d); break;
         }
     }
     for (const Splat& s : splats_) {
@@ -1936,6 +2078,7 @@ void Game::buildRenderList() {
                          std::to_string(challenge_->meters) + " m", hexColor("#ff2bd6"));
     out.fontAtlas = fonts_.built() ? &fonts_ : nullptr;
     out.hudImage = hudIcons_.built() ? &hudIcons_ : nullptr;
+    out.worldImage = world_.zone() == Zone::Egypt ? egyptBackdropArt(true) : nullptr;
     rings_.emitTo(out);
     fxAdd_.emitTo(out.particlesAdd);
     fxSmoke_.emitTo(out.particlesSmoke);
@@ -1946,7 +2089,8 @@ void Game::buildRenderList() {
     f.lite = lite_;
     f.fogColor = fog_; f.fogDensity = 0.016f;
     f.skyTop = hexColor("#03030c"); f.skyMid = skyMid_; f.skyBot = skyBot_; f.skyHaze = skyHaze_;
-    f.moonDir = glm::normalize(glm::vec3(0.35f, 0.42f, -0.84f));
+    f.moonDir = world_.zone() == Zone::Egypt ? glm::vec3(0, -1, 0) // (Neon Egypt has its own, in its backdrop: the sky's is hidden)
+                                             : glm::normalize(glm::vec3(0.35f, 0.42f, -0.84f));
     f.hemiSky = hexColor("#5d4cb0"); f.hemiGround = hexColor("#140a1e"); f.hemiIntensity = 0.85f;
     f.sunDir = glm::normalize(glm::vec3(-7, 14, 9)); f.sunColor = hexColor("#a9b8ff") * 1.1f;
     const glm::vec3 hp = hen_.nodes[hen_.root].pos;

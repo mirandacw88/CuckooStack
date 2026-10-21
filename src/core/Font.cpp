@@ -1,5 +1,6 @@
 #include "Font.h"
 #include "FontData.h"
+#include "Hieroglyphs.h"
 #include "Log.h"
 #include "Materials.h"
 
@@ -62,11 +63,14 @@ bool FontAtlas::build() {
             if (std::find(jp.begin(), jp.end(), cp) == jp.end()) jp.push_back(cp);
         }
     }
+    std::vector<uint32_t> hiero(hieroglyphs::kColumns.begin(), hieroglyphs::kColumns.end());
+    hiero.push_back(hieroglyphs::kStar);
     const std::array<Source, size_t(FontId::Count)> sources = {{
         {fontdata::display, fontdata::display_size, latin},
         {fontdata::body, fontdata::body_size, latin},
         {fontdata::body_bold, fontdata::body_bold_size, latin},
         {fontdata::japanese, fontdata::japanese_size, jp},
+        {fontdata::hieroglyphs, fontdata::hieroglyphs_size, hiero},
     }};
 
     struct Pending { FontId font; uint32_t cp; unsigned char* sdf; int w, h, xoff, yoff; Glyph g; };
@@ -219,7 +223,7 @@ void TextLayout::emitGlyphs(std::vector<Instance>& out, std::string_view text, c
             inst.color = color;
             inst.emissive = g->uv;
             inst.rim = glow;
-            inst.params = glm::vec4(glowSpread, 0.f, 0.f, 0.f);
+            inst.params = glm::vec4(glowSpread, s.weight, 0.f, 0.f);
             out.push_back(inst);
         }
         penX += (g->advance + s.letterSpacing) * s.size;
@@ -264,6 +268,28 @@ void TextLayout::drawBaseline(std::vector<Instance>& out, std::string_view text,
         emitGlyphs(out, str, s, x0 + o.x, baseline + o.y, yDown, world, glm::vec4(sh.color, sh.alpha * s.opacity), glm::vec4(0.f), 0.f);
     }
     emitGlyphs(out, str, s, x0, baseline, yDown, world, glm::vec4(s.color, s.opacity), glow, spread);
+}
+
+void TextLayout::drawGlyphFit(std::vector<Instance>& out, uint32_t cp, const TextStyle& s, glm::vec2 center, float box,
+                              const glm::mat4& world) const {
+    const FontAtlas::Glyph* g = atlas_.glyph(s.font, cp);
+    if (!g || g->size.x <= 0.f) return;
+    const float pad = 2.f * FontAtlas::kPadPx / FontAtlas::kBakePx; // (the SDF's spread round the ink, both sides, em)
+    const float size = box / std::max({g->size.x - pad, g->size.y - pad, 1e-3f}); // units per em
+    glm::vec4 glow(0.f);
+    float spread = 0.f;
+    for (const TextShadow& sh : s.shadows)
+        if (sh.blur > 0.f) {
+            const float sp = std::min(0.5f, sh.blur * (FontAtlas::kBakePx / size) / (2.f * FontAtlas::kPadPx));
+            if (sp > spread) { spread = sp; glow = glm::vec4(sh.color, sh.alpha * s.opacity); }
+        }
+    Instance inst;
+    inst.model = world * compose({center, 0.f}, {g->size.x * size, g->size.y * size, 1.f}); // (the ink sits centred in its padding)
+    inst.color = glm::vec4(s.color, s.opacity);
+    inst.emissive = g->uv;
+    inst.rim = glow;
+    inst.params = glm::vec4(spread, s.weight, 0.f, 0.f);
+    out.push_back(inst);
 }
 
 float TextLayout::drawLines(std::vector<Instance>& out, const std::vector<std::string>& lines, const TextStyle& s, float centerX,

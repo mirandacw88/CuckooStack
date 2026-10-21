@@ -102,8 +102,8 @@ bool Game::droidVisible() const {
 }
 
 // A run's raids: none before level 5 (Remote Config "droid_level"), then where along the level the droid tries to
-// strike (one on its first two levels, then one or two), spread over its middle; an endless course gets one every
-// 180-260 m
+// strike (one on its first two levels, then one or two; or as many as the level says: LevelData.h), spread over its
+// middle; an endless course gets one every 180-260 m
 void Game::planRaids() {
     raid_ = DroidRaid{};
     raidPlan_.clear();
@@ -114,13 +114,15 @@ void Game::planRaids() {
         for (double x = 20; x < 5000; x += 35) raidPlan_.push_back(x);
         return;
     }
-    if (!tune_.droidRaids || campaign_.level() < tune_.droidFirstLevel) return; // (it's introduced a few levels in)
+    const int authored = Campaign::raidsOf(campaign_.level()); // (a level may say how many: LevelData.h)
+    if (!tune_.droidRaids || authored == 0 || (authored < 0 && campaign_.level() < tune_.droidFirstLevel)) return; // (it's introduced a few levels in)
     const double finish = level_.finish();
     if (finish <= 0) {
         for (double x = 180 + 80 * rng_.next01(); x < 5000; x += 180 + 80 * rng_.next01()) raidPlan_.push_back(x);
         return;
     }
-    const int n = campaign_.level() < tune_.droidFirstLevel + 2 ? 1 : (rng_.next01() < 0.5f ? 2 : 1); // (one raid on its first two levels)
+    const int n = authored > 0 ? authored
+                               : campaign_.level() < tune_.droidFirstLevel + 2 ? 1 : (rng_.next01() < 0.5f ? 2 : 1); // (one raid on its first two levels)
     for (int i = 0; i < n; ++i) {
         // (each in its own part of the level, so two never come close together)
         const double lo = 0.18 + 0.67 * double(i) / n, hi = 0.18 + 0.67 * double(i + 1) / n;
@@ -129,7 +131,7 @@ void Game::planRaids() {
 }
 
 bool Game::raidAllowed(int shots) const {
-    return state_ == State::Play && !smashing() && clearT_ < 0 && !raid_.on && eggs_.size() >= 2 && meter_ >= float(shots) + 0.5f;
+    return state_ == State::Play && !smashing() && clearT_ < 0 && !raid_.on && !gIn_.g && eggs_.size() >= 2 && meter_ >= float(shots) + 0.5f;
 }
 
 void Game::startRaid(int shots) {
@@ -150,22 +152,25 @@ void Game::startRaid(int shots) {
 
 void Game::debugDroidRaid(int shots) { if (droidModel().ok && raidAllowed(shots)) startRaid(shots); }
 
-// the laser hits the bottom egg: it bursts and the stack drops a level
+// the laser hits the bottom egg: it flashes and swells, then pops out of the stack sideways (back from her and toward
+// the camera, so it's seen going), tumbling and crackling blue, whole till it splats on the ground behind her; the
+// eggs above settle down into its place (the settle after a saw), so the gap it leaves is seen too. It leaves the stack
+// at once (her egg count, and so the run, is as before): only how it looks takes its time
 void Game::zapEgg(int shot) {
     if (eggs_.empty()) return;
     const Egg e = eggs_.front();
     eggs_.erase(eggs_.begin());
     const glm::vec3 p = e.pos;
-    debris_.push_back({DebrisKind::Egg, p, e.rot, e.scale, {-speed_ * 0.3f + rng_.range(-1.5f, 1.5f), rng_.range(3.f, 6.f), rng_.range(1.f, 3.f)},
-                       {rng_.range(-12, 12), rng_.range(-4, 4), rng_.range(-12, 12)}, 3, 0, e.ring});
-    spawnShards(p, 5, -speed_ * 0.3f);
+    Debris d{DebrisKind::Egg, p, e.rot, e.scale, {speed_ - 5.5f, 5.5f, 3.f}, {rng_.range(-5, 5), rng_.range(-3, 3), -11.f}, 3, 0, e.ring};
+    d.zapped = true;
+    debris_.push_back(d);
     burst(p, 34, {glow("#3a8cff", 2.5f), glow("#9fe7ff", 2.f), glm::vec3(1.f)}, 3, 9, 0.5f, 0.08f, 0, -speed_ * 0.2f);
     rings_.spawn({p.x, p.y, 0.6f}, glow("#3a8cff", 2.f), 1.1f, 0.3f, true);
     puff({p.x, p.y - 0.15f, 0}, 4, hexColor("#3a3150"), 1, 0.5f);
-    for (size_t i = 0; i < eggs_.size(); ++i) { eggs_[i].jig = 1; eggs_[i].jd = float(i) * 0.03f; }
+    sawDrop_ = std::max(sawDrop_, Uf); sawDropV_ = 0; // (the stack settles into the gap, then jiggles: Game::update)
     sfx(Sfx::DroidLaser, shot); sfx(Sfx::Crack); buzz(22);
-    shake_ = std::max(shake_, 0.24f); chromaKick_ = std::max(chromaKick_, 1.f);
-    flashScreen(srgbColor("#59b3ff"), 0.22f);
+    shake_ = std::max(shake_, 0.24f); chromaKick_ = std::max(chromaKick_, 0.45f); // (a light fringe: the pop must read)
+    flashScreen(srgbColor("#59b3ff"), 0.14f);
     popup(shot ? "ZAP ×2!" : "ZAP!", {p.x + 0.4f, p.y + 0.9f, 0}, PopKind::Groove);
 }
 
@@ -183,15 +188,20 @@ void Game::updateDroid(float rdt) {
     }
     if (!raid_.on) return;
     raid_.t += rdt;
-    // it holds still to shoot: from just before a shot until the beam has faded it stops circling (and doesn't sink
-    // with the stack), so the beam stays put between its eye and the egg
-    // (it glides from its circle to its firing spot in the 0.45 s before a shot, and back after the beam's gone)
-    bool firing = raid_.beamT[0] >= 0 || raid_.beamT[1] >= 0;
+    // it holds still to shoot: from just before a shot until the beam has faded it stops circling, and while a beam is
+    // on it doesn't rise or sink with the stack either, so the beam stays put between its eye and the egg
+    // (it glides from its circle to its firing spot in the 0.45 s before a shot, and back after the beam's gone; as it
+    // glides in it keeps up with the stack, so it fires from just over it however she's climbed)
+    const bool beamOn = raid_.beamT[0] >= 0 || raid_.beamT[1] >= 0;
+    bool firing = beamOn;
     if (raid_.fired < raid_.shots && raid_.t >= raid_.fireAt[raid_.fired] - 0.45f) firing = true;
     raid_.lock = std::clamp(raid_.lock + (firing && raid_.leaving < 0 ? rdt / 0.4f : -rdt / 0.5f), 0.f, 1.f);
+    const float top = stackTop(baseY_, eggs_.size()) + sawDrop_; // (the stack as drawn: settling after a zap)
     if (!firing || raid_.leaving >= 0) {
         raid_.orbitT += rdt;
-        raid_.topY += (stackTop(baseY_, eggs_.size()) - raid_.topY) * std::min(1.f, rdt * 3.f);
+        raid_.topY += (top - raid_.topY) * std::min(1.f, rdt * 3.f);
+    } else if (!beamOn) {
+        raid_.topY += (top - raid_.topY) * std::min(1.f, rdt * 8.f);
     }
     for (float& b : raid_.beamT) if (b >= 0) { b += rdt; if (b > kBeamLife) b = -1; }
     if (raid_.leaving >= 0) {
@@ -210,12 +220,21 @@ void Game::updateDroid(float rdt) {
     if (raid_.fired < raid_.shots && raid_.t >= raid_.fireAt[raid_.fired]) {
         // hold fire if it would leave her short for a wall coming up too soon to re-stack: within a third of a second
         // (0.8 s if it takes her last egg: she has more to lay back). With eggs to spare it fires even right before a
-        // wall. Otherwise it waits, then fires
-        bool wallAhead = eggs_.empty();
+        // wall. Otherwise it waits, then fires.
+        // Saws count too: from each one she meets on the way, she needs an egg more (it saws one off). And it never
+        // zaps the egg a blade is sawing
+        bool wallAhead = eggs_.empty() || cutSawX_ >= 0;
         const double reach = std::max(1.0, double(speed_) * (eggs_.size() < 2 ? 0.8 : 0.35));
-        const double after = baseY_ + double(eggs_.size() - (eggs_.empty() ? 0 : 1)) * U; // her stack top once it's zapped
-        for (double d = 0.22; d < reach && !wallAhead; d += 0.15)
-            wallAhead = level_.heightAt(x_ + d) * U > after + 0.05;
+        const double land = std::min(baseY_, std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U); // (where a drop lands her)
+        const double after = land + double(eggs_.size() - (eggs_.empty() ? 0 : 1)) * U; // her stack top once it's zapped
+        for (double d = 0.22; d < reach && !wallAhead; d += 0.15) {
+            int saws = 0;
+            for (const Saw& w : level_.saws) {
+                if (w.x - Level::kSawReach > x_ + d) break;
+                saws += w.state == Saw::State::Armed && w.x + Level::kSawReach >= x_;
+            }
+            wallAhead = (level_.heightAt(x_ + d) + saws) * U > after + 0.05;
+        }
         if (wallAhead && raid_.t < kRaidHold) {
             raid_.fireAt[raid_.fired] = raid_.t + 0.05f;
             if (raid_.fired + 1 < raid_.shots) raid_.fireAt[raid_.fired + 1] = raid_.fireAt[raid_.fired] + 0.3f;
@@ -223,7 +242,6 @@ void Game::updateDroid(float rdt) {
             raid_.shots = raid_.fired; // called off
         } else {
             const int i = raid_.fired++;
-            const DroidPose p = droidPose();
             const glm::vec3 h{float(x_), 0.f, 0.f};
             raid_.beamTo[i] = eggs_.front().pos - h;                        // to the bottom egg
             raid_.beamT[i] = 0;

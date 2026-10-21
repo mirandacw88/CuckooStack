@@ -1,5 +1,6 @@
 #version 450
-// SDF glyph quads (HUD and world). Per instance: model, colour, atlas UV rect (emissive slot), glow (rim slot).
+// SDF glyph quads (HUD and world), and the world's sprites (sprite.frag). Per instance: model, colour, atlas UV rect
+// (emissive slot), glow (rim slot), params x, y, z (text: glow spread, weight; sprites: neon, additive, silhouette).
 layout(push_constant) uniform Push { mat4 viewProj; vec4 extra; } P;
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -16,6 +17,8 @@ layout(location = 0) out vec2 vUv;
 layout(location = 1) flat out vec4 vColor;
 layout(location = 2) flat out vec4 vGlow;
 layout(location = 3) flat out float vSpread;
+layout(location = 4) flat out float vWeight;
+layout(location = 5) flat out float vSil;
 void main() {
     mat4 model = mat4(iModel0, iModel1, iModel2, iModel3);
     // mesh uv.y = 1 at the top of the quad; atlas rows grow downward
@@ -23,5 +26,7 @@ void main() {
     vColor = iColor;
     vGlow = iGlow;
     vSpread = iParams.x;
+    vWeight = iParams.y;
+    vSil = iParams.z;
     gl_Position = P.viewProj * (model * vec4(inPos, 1.0));
 }

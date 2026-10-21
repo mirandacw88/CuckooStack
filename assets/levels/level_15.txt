@@ -1,0 +1,78 @@
+; Level 15, Neon Egypt: the wells at 40% of the way.
+length 440
+difficulty 490 0.35
+raids auto
+course
+16 0 crate
+3 1 mix
+14 0 mix
+5 2 crate
+5 3 crate
+3 6 crate
+3 8 mix
+4 8 mix
+3 8 hay
+4 8 hay
+5 8 hay
+3 8 crate
+5 8 hay
+5 8 crate
+4 8 hay
+20 1 mix
+24 0 mix
+3 1 mix
+3 3 crate
+11 5 mix 8
+11 6 crate 10
+32 0 hay
+3 2 hay
+14 1 mix
+3 3 mix
+11 5 hay 8
+4 6 crate
+11 8 mix 11
+17 4 mix
+3 8 crate
+24 0 crate
+18 4 crate
+4 6 crate
+20 6 crate
+3 6 crate 9
+234 0 gauntlet wells
+22 1 crate
+11 4 mix 7
+30 5 mix
+23 1 crate
+27 5 hay
+4 8 crate
+5 8 mix
+4 8 mix
+5 8 mix
+15 6 mix
+5 8 crate
+4 8 hay
+16 5 mix
+5 8 hay
+4 8 hay
+saws
+69.44 105.07 362.84 364.64
+discos
+10.5 3.25
+28.5 6.25
+34.8 6.85
+37.5 6.85
+42.3 6.25
+45.3 6.85
+55.2 2.65
+65.4 2.65
+84.9 3.7
+112.5 3.25
+117.6 2.65
+150.3 6.85
+152.7 1.45
+154.5 2.05
+156.3 2.65
+354.3 4.45
+402 7.45
+424.8 7.45
+430.8 5.05

@@ -142,11 +142,11 @@ MeshData torus(float R, float r, int radialSegments, int tubularSegments, float 
     return m;
 }
 
-MeshData lathe(const std::vector<glm::vec2>& pts, int segments) {
+MeshData lathe(const std::vector<glm::vec2>& pts, int segments, float phiLength) {
     MeshData m;
     const size_t n = pts.size();
     for (int i = 0; i <= segments; ++i) {
-        const float phi = float(i) / segments * 2 * kPi, s = std::sin(phi), c = std::cos(phi);
+        const float phi = float(i) / segments * phiLength, s = std::sin(phi), c = std::cos(phi);
         for (size_t j = 0; j < n; ++j) {
             // analytic profile normal: perpendicular to the local tangent of the profile
             const glm::vec2 t = pts[std::min(j + 1, n - 1)] - pts[j == 0 ? 0 : j - 1];
@@ -160,6 +160,66 @@ MeshData lathe(const std::vector<glm::vec2>& pts, int segments) {
             const size_t base = j + i * n, a = base, b = base + n, c = base + n + 1, d = base + 1;
             m.indices.insert(m.indices.end(), {idx(a), idx(b), idx(d), idx(c), idx(d), idx(b)});
         }
+    return m;
+}
+
+MeshData latheCap(const std::vector<glm::vec2>& pts) {
+    MeshData m;
+    float lo = 1e9f, hi = -1e9f, r = 1e-6f;
+    for (const glm::vec2& p : pts) { lo = std::min(lo, p.y); hi = std::max(hi, p.y); r = std::max(r, p.x); }
+    for (const glm::vec2& p : pts) // (the turn's two ends: phi = 0 at +z, phi = pi at -z)
+        for (float side : {1.f, -1.f})
+            m.vertices.push_back({{0, p.y, side * p.x}, {-1, 0, 0}, {0.5f + side * p.x / (2 * r), (p.y - lo) / std::max(1e-6f, hi - lo)}});
+    for (size_t j = 0; j + 1 < pts.size(); ++j) {
+        const size_t a = 2 * j, b = 2 * j + 1, c = 2 * j + 2, d = 2 * j + 3; // a, c: the +z edge; b, d: the -z edge
+        m.indices.insert(m.indices.end(), {idx(a), idx(c), idx(d), idx(a), idx(d), idx(b)});
+    }
+    return m;
+}
+
+MeshData sawTeeth(int teeth, float gullet, float inner, float thickness) {
+    MeshData m;
+    // the outline, counter-clockwise: per tooth its gullet, its tip just past it (the steep cutting face, leading as the
+    // blade turns clockwise), and a point on its back sloping down to the next gullet (slightly bowed out)
+    std::vector<glm::vec2> rim;
+    std::vector<float> ang;
+    const float step = 2 * kPi / float(teeth);
+    for (int k = 0; k < teeth; ++k) {
+        const float a0 = float(k) * step;
+        const float r[3] = {gullet, 1.f, gullet + (1.f - gullet) * 0.58f}, f[3] = {0.f, 0.1f, 0.55f};
+        for (int i = 0; i < 3; ++i) {
+            const float a = a0 + f[i] * step;
+            rim.push_back({r[i] * std::cos(a), r[i] * std::sin(a)});
+            ang.push_back(a);
+        }
+    }
+    const size_t n = rim.size();
+    const float h = thickness * 0.5f;
+    for (float side : {1.f, -1.f}) { // the two faces: rings of (hole edge, outline) pairs
+        const size_t base = m.vertices.size();
+        for (size_t i = 0; i <= n; ++i) {
+            const size_t k = i % n;
+            const glm::vec2 in{inner * std::cos(ang[k]), inner * std::sin(ang[k])};
+            const float u = float(i) / float(n);
+            m.vertices.push_back({{in.x, in.y, side * h}, {0, 0, side}, {u, 0}});
+            m.vertices.push_back({{rim[k].x, rim[k].y, side * h}, {0, 0, side}, {u, 1}});
+        }
+        for (size_t i = 0; i < n; ++i) {
+            const size_t a = base + 2 * i, b = a + 1, c = a + 3, d = a + 2; // in, out, next out, next in
+            if (side > 0) m.indices.insert(m.indices.end(), {idx(a), idx(b), idx(c), idx(a), idx(c), idx(d)});
+            else m.indices.insert(m.indices.end(), {idx(a), idx(c), idx(b), idx(a), idx(d), idx(c)});
+        }
+    }
+    for (size_t i = 0; i < n; ++i) { // the outline's edge, a flat quad per stretch, facing out
+        const glm::vec2 p = rim[i], q = rim[(i + 1) % n], e = q - p;
+        const glm::vec3 nrm = glm::normalize(glm::vec3(e.y, -e.x, 0));
+        const size_t base = m.vertices.size();
+        m.vertices.push_back({{p.x, p.y, h}, nrm, {0, 0}});
+        m.vertices.push_back({{p.x, p.y, -h}, nrm, {0, 1}});
+        m.vertices.push_back({{q.x, q.y, -h}, nrm, {1, 1}});
+        m.vertices.push_back({{q.x, q.y, h}, nrm, {1, 0}});
+        m.indices.insert(m.indices.end(), {idx(base), idx(base + 1), idx(base + 2), idx(base), idx(base + 2), idx(base + 3)});
+    }
     return m;
 }
 
@@ -218,7 +278,10 @@ std::vector<MeshData> buildMeshLibrary() {
             pts.push_back({std::max(0.0001f, std::sin(t) * R * (1 + 0.13f * std::cos(t))), -std::cos(t) * h});
         }
         at(MeshId::Egg) = geo::lathe(pts, 40);
+        at(MeshId::EggHalf) = geo::lathe(pts, 20, kPi);   // sawn lengthwise (GameSaw.cpp)
+        at(MeshId::EggHalfCap) = geo::latheCap(pts);
     }
+    at(MeshId::SawTeeth) = geo::sawTeeth(16, 0.84f, 0.74f, 0.1f);
     at(MeshId::EggRing) = geo::torus(0.254f, 0.022f, 10, 48, 2 * kPi);
     at(MeshId::Visor) = geo::torus(0.188f, 0.04f, 12, 40, 2.5f);
     at(MeshId::SmallRing) = geo::torus(0.075f, 0.018f, 8, 20, 2 * kPi);

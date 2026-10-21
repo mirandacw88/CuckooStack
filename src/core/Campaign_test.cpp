@@ -2,6 +2,10 @@
 #include "TestUtil.h"
 #include "core/HudStyle.h"
 #include "core/Campaign.h"
+#include "core/Gauntlet.h"
+#include "core/LevelData.h"
+
+#include <set>
 
 using namespace cs;
 using test::check;
@@ -35,6 +39,28 @@ bool same(const std::vector<Segment>& a, const std::vector<Segment>& b) {
 } // namespace
 
 int main() {
+    {   // ---- gauntlets (the game's own levels): which level plays which is the levels' data (assets/levels: the level
+        // editor moves them), every one a gauntlet in the game, none in two levels, each before its level's finish line;
+        // past the authored levels, none
+        std::set<const Gauntlet*> seen;
+        bool named = true, once = true, before = true;
+        int with = 0;
+        for (int l = 1; l <= 40; ++l) {
+            const Gauntlet* g = Campaign::gauntletOf(l);
+            std::string want;
+            if (const LevelData* d = levelData(l))
+                for (const LevelData::Wall& w : d->course) if (!w.gauntlet.empty()) { want = w.gauntlet; break; }
+            named = named && (want.empty() ? g == nullptr : g != nullptr && g == gauntletNamed(want));
+            if (!g) continue;
+            ++with;
+            once = once && seen.insert(g).second;
+            before = before && Campaign::gauntletAt(l) > 0 && Campaign::gauntletAt(l) + g->cols() * U < Campaign::lengthOf(l);
+        }
+        check(with > 0 && named, "gauntlets: each level's is the one its data names (assets/levels), and none past the authored levels");
+        check(once, "...none plays in two levels");
+        check(before, "...each one before its level's finish line");
+    }
+    test::useFixtures(); // (from here: the levels these tests are written round, tests/fixtures)
     {   // ---- zones: the city, then Neon Egypt on levels 11-20, then the city again
         bool city = true, egypt = true, japan = true, after = true;
         for (int l = 1; l <= 10; ++l) city = city && zoneOf(l) == Zone::City;

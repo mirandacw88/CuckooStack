@@ -4,7 +4,7 @@
 # assets/shaders/compile_shaders.sh after editing a shader).
 
 set(CS_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
-set(CS_SHADERS sky.vert sky.frag lit.vert lit.frag lit_reflect.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag)
+set(CS_SHADERS sky.vert sky.frag lit.vert lit.frag lit_reflect.frag unlit.vert unlit.frag particle.vert particle.frag fullscreen.vert composite.frag bloom.frag text.vert text.frag image.frag sprite.frag)
 
 set(_hints "")
 if(DEFINED ENV{VULKAN_SDK})

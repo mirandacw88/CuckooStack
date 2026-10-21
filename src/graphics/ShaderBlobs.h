@@ -26,5 +26,6 @@ CS_DECLARE_SHADER(bloom_frag)
 CS_DECLARE_SHADER(text_vert)
 CS_DECLARE_SHADER(text_frag)
 CS_DECLARE_SHADER(image_frag)
+CS_DECLARE_SHADER(sprite_frag)
 
 #undef CS_DECLARE_SHADER

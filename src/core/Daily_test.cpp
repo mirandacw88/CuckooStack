@@ -9,6 +9,7 @@ using namespace cs;
 using namespace test;
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     {   // ---- calendar maths
         check(civilDate(civilDay("2026-10-08")) == "2026-10-08", "civilDay round-trips");
         check(civilDay("2026-03-01") - civilDay("2026-02-28") == 1, "month boundary");

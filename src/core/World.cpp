@@ -4,7 +4,7 @@
 namespace cs {
 
 namespace {
-constexpr int kRain = 900, kSpeedLines = 42;
+constexpr int kRain = 900, kSpeedLines = 42, kGoldDust = 460;
 constexpr float kStreakP = 60, kLaneP = 48, kLampP = 54, kVentP = 52;
 const glm::vec3 kVents[] = {{6, 0.142f, -2.6f}, {19, 0.004f, 2.1f}, {33, 0.142f, -2.6f}, {45, 0.004f, 2.15f}};
 const float kLamps[] = {8, 26, 44};
@@ -59,6 +59,15 @@ World::World(FastRandom& rng) : rng_(rng) {
     for (int i = 0; i < kSpeedLines; ++i) speed_.push_back({rng_.range(-14, 14), rng_.range(-2, 5), rng_.range(1.6f, 5.5f), rng_.range(0.7f, 1.6f)});
     buildEgypt();
     buildJapan();
+    // Neon Egypt's gold dust, from its own seed: through the backdrop's near half and round the street (most of it,
+    // where it's seen best), a few specks just in front of the camera, and a few right at it (big and soft, out of focus)
+    FastRandom d(0xD057u);
+    for (int i = 0; i < kGoldDust; ++i) {
+        const float k = d.next01(), z = k < 0.3f ? d.range(-18, -6) : k < 0.78f ? d.range(-6, 2) : k < 0.9f ? d.range(2, 5) : d.range(5, 8);
+        // (no speck smaller than the screen's colour fringe spreads it: else it splits into red, green and blue dots)
+        const float size = z < -6 ? d.range(0.2f, 0.3f) : z < 2 ? d.range(0.13f, 0.21f) : z < 5 ? d.range(0.1f, 0.15f) : d.range(0.18f, 0.28f);
+        dust_.push_back({{d.range(-20, 30), d.range(-2, 11), z}, size, d.next01() * 6.28f, d.next01()});
+    }
 }
 
 // Neon Japan's skyline, from its own fixed seed: far, neon-edged mountains (one snow-capped peak each); middle,
@@ -72,7 +81,7 @@ void World::buildJapan() {
     const char* vWords[] = {"\u30cb\u30ef\u30c8\u30ea", "\u30bf\u30de\u30b4", "\u5375\u5c4b", "\u990a\u9d8f\u5834", "\u30b3\u30b1\u30b3\u30c3\u30b3\u30fc"};
     for (int ri = 0; ri < 3; ++ri) {
         const RowDef& d = defs[ri];
-        ERow row{d.z, d.P, d.par, {}, {}, {}, {}};
+        ERow row{d.z, d.P, d.par, {}, {}, {}};
         float bx = r.range(0, 6);
         while (bx < d.P - 8) {
             if (ri == 2) { // mountains, overlapping in ranges
@@ -111,59 +120,6 @@ void World::buildJapan() {
             }
         }
         japan_.push_back(std::move(row));
-    }
-}
-
-// Neon Egypt's skyline, laid out from its own fixed seed (the game's random stream is left as it was): the same
-// three parallax rows as the city's towers. Far: pyramids. Middle: obelisks and temple pylons (pairs flanking a gate)
-// with cartouches and signs. Near: palms, small obelisks and pylons with signs.
-void World::buildEgypt() {
-    FastRandom r(0xE6E1u);
-    struct RowDef { float z, P, par; };
-    const RowDef defs[] = {{-16, 150, 0.12f}, {-32, 170, 0.3f}, {-58, 190, 0.5f}};
-    const char* cols[] = {"#ffb43a", "#29e7ff", "#ffd36a", "#2bffd2", "#ff7a3a"};
-    const char* hWords[] = {"RA\u00b7CORP", "NILE", "SPHINX 24H", "SCARAB", "PHARAOH", "ANKH BAR"};
-    for (int ri = 0; ri < 3; ++ri) {
-        const RowDef& d = defs[ri];
-        ERow row{d.z, d.P, d.par, {}, {}, {}, {}};
-        float bx = r.range(0, 6);
-        while (bx < d.P - 8) {
-            if (ri == 2) { // pyramids, overlapping like Giza's, a beacon on each capstone
-                const float w = r.range(26, 54), h = w * 0.62f;
-                row.monuments.push_back({Monument::Pyramid, {bx + w / 2, h / 2, 0}, {w, h, std::min(w * 0.6f, 28.f)}, r.next01() * 100.f});
-                row.beacons.push_back({{bx + w / 2, h + 0.4f, 0}, r.next01() * 6.f});
-                bx += w * r.range(0.55f, 0.95f);
-                continue;
-            }
-            const float pick = r.next01();
-            if (ri == 0 && pick < 0.4f) { // a palm
-                const float h = r.range(6, 11);
-                row.monuments.push_back({Monument::Palm, {bx + 1, h / 2, 0}, {0.35f, h, 0.35f}, r.next01() * 100.f});
-                bx += r.range(2.5f, 5);
-            } else if (pick < (ri == 0 ? 0.62f : 0.42f)) { // an obelisk
-                const float w = ri == 0 ? r.range(0.9f, 1.3f) : r.range(1.3f, 2.2f), h = ri == 0 ? r.range(5, 8) : r.range(14, 24);
-                row.monuments.push_back({Monument::Obelisk, {bx + w / 2, h / 2, 0}, {w, h, w}, r.next01() * 100.f});
-                bx += w + r.range(2, 6);
-            } else { // a pair of temple pylons flanking a gate, a cartouche or a sign on each
-                const float w = ri == 0 ? r.range(5, 7) : r.range(7, 11), h = ri == 0 ? r.range(4.5f, 6.5f) : r.range(10, 16), dz = ri == 0 ? 2.5f : 4;
-                for (int k = 0; k < 2; ++k) {
-                    const float cx = bx + w / 2 + k * (w + 2.6f);
-                    row.monuments.push_back({Monument::Pylon, {cx, h / 2, 0}, {w, h, dz}, r.next01() * 100.f});
-                    if (r.next01() < 0.55f) {
-                        const float ch = ri == 0 ? 3.6f : 6.2f;
-                        Cartouche c{{cx + r.range(-w / 4, w / 4), std::min(h - ch / 2 - 0.4f, r.range(ch / 2 + 0.8f, 8)), dz / 2 + 0.1f}, ch, {}, r.next01() * 10.f};
-                        for (int i = 0; i < 4; ++i) c.icons[i] = r.index(4);
-                        if (c.pos.y > ch / 2 + 0.4f) row.cartouches.push_back(c);
-                    } else {
-                        const float sw = std::min(w * 0.7f, 6.f), sh = sw / 4;
-                        row.signs.push_back({{cx, std::min(h - sh, r.range(5, 9)), dz / 2 + 0.1f}, {sw, sh}, hexColor(cols[r.index(5)]),
-                                             r.next01() < 0.3f, 0.f, 1.f, hWords[r.index(6)], false});
-                    }
-                }
-                bx += 2 * w + 2.6f + r.range(3, 8);
-            }
-        }
-        egypt_.push_back(std::move(row));
     }
 }
 
@@ -220,16 +176,37 @@ void World::update(float dt, float time, float camX, float camY, float speed, bo
         r.x = off + std::floor((camX - off - 0.3f * r.P) / r.P) * r.P;
         r.y = (camY - 1.3f) * r.par * 0.7f;
     }
-    for (ERow& r : japan ? japan_ : egypt_) {
-        for (Sign& s : r.signs) {
-            if (!s.flicker) continue;
-            s.t -= dt;
-            if (s.t <= 0) { s.opacity = rng_.next01() < 0.25f ? 0.15f : 1.f; s.t = rng_.range(0.04f, s.opacity < 1 ? 0.12f : 1.6f); }
+    if (japan)
+        for (ERow& r : japan_) {
+            for (Sign& s : r.signs) {
+                if (!s.flicker) continue;
+                s.t -= dt;
+                if (s.t <= 0) { s.opacity = rng_.next01() < 0.25f ? 0.15f : 1.f; s.t = rng_.range(0.04f, s.opacity < 1 ? 0.12f : 1.6f); }
+            }
+            const float off = camX * r.par;
+            r.x = off + std::floor((camX - off - 0.3f * r.P) / r.P) * r.P;
+            r.y = (camY - 1.3f) * r.par * 0.7f;
         }
-        const float off = camX * r.par;
-        r.x = off + std::floor((camX - off - 0.3f * r.P) / r.P) * r.P;
-        r.y = (camY - 1.3f) * r.par * 0.7f;
+    if (egypt) moon_ = {camX + 26.f, 27.f + (camY - 1.3f) * 0.9f, -190.f}; // (up and to the right, far behind the ridge; under a notched phone's HUD)
+    if (egypt) { // gold dust on the desert wind: blown along (faster in a gust, and lifted), bobbing as it goes
+        const float wind = 1.6f + 6.f * gust_;
+        for (Dust& d : dust_) {
+            d.p.x -= wind * (0.7f + 0.6f * d.rate) * dt;
+            d.p.y += (0.35f * std::sin(time * (0.6f + d.rate) + d.phase) + 0.6f * gust_ - 0.05f) * dt;
+            d.p.z += 0.2f * std::cos(time * 0.5f + d.phase * 1.3f) * dt;
+            // blown out of sight behind, it comes again ahead (and wherever the camera's jumped to: a new run)
+            const float half = 18.f + std::max(0.f, -d.p.z) * 0.9f, lo = camX - half, span = 2 * half + 8; // (in sight at its depth, and some)
+            if (d.p.x < lo || d.p.x > lo + span) d.p.x = lo + std::fmod(std::fmod(d.p.x - lo, span) + span, span);
+            if (d.p.y < camY - 3 || d.p.y > camY + 13) d.p.y = camY - 3 + std::fmod(std::fmod(d.p.y - camY + 3, 16.f) + 16.f, 16.f);
+        }
     }
+    if (egypt) // (the backdrop's layers and its sky, each wrapping at its own period and parallax; the layers stand on
+               // the ground, the sky drifts up and down with the camera a little)
+        for (Layer* l : [&] { std::vector<Layer*> v{&starLayer_}; for (Layer& e : egypt_) v.push_back(&e); return v; }()) {
+            const float off = camX * l->par;
+            l->x = off + std::floor((camX - off - 0.3f * l->P) / l->P) * l->P;
+            l->y = l == &starLayer_ ? (camY - 1.3f) * l->par * 0.7f : 0.f;
+        }
     ventWorld_.clear();
     if (!egypt && !japan) // (no steam vents in the desert or old Japan)
         for (const glm::vec3& v : kVents) ventWorld_.push_back({wrapX(v.x, camX, kVentP), v.y, v.z});
@@ -265,7 +242,7 @@ void World::emitSignText(RenderList& out, const TextLayout& text, const Sign& s,
 }
 
 void World::emit(RenderList& out, float camX, float camY, float time, float pz, const glm::vec3& gradeLight, const TextLayout* text, float windowBoost) const {
-    if (zone_ == Zone::Egypt) emitEgypt(out, camX, camY, time, pz, text);
+    if (zone_ == Zone::Egypt) emitEgypt(out, camX, time, pz);
     else if (zone_ == Zone::Japan) emitJapan(out, camX, camY, time, pz, text);
     else emitCity(out, camX, time, pz, gradeLight, text, windowBoost);
     // speed lines (both zones)
@@ -373,31 +350,9 @@ void World::emitCity(RenderList& out, float camX, float time, float pz, const gl
     }
 }
 
-// A cartouche icon, from flat shapes in additive light (in the sign's plane, facing the camera): 0 the ankh, 1 the
-// eye of Horus, 2 the sun disc, 3 a scarab
-void World::emitIcon(RenderList& out, int kind, glm::vec3 c, float s, const glm::vec3& col, float a) const {
-    auto box = [&](glm::vec2 o, glm::vec2 sz, float rot = 0) {
-        out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(c + glm::vec3(o * s, 0.01f), {0, 0, rot}, {sz.x * s, sz.y * s, 1}), col, a);
-    };
-    auto ring = [&](glm::vec2 o, glm::vec2 sz) {
-        out.add(Pass::UnlitAdd, MeshId::RingFlat) = makeUnlit(compose(c + glm::vec3(o * s, 0.01f), {sz.x * s, sz.y * s, 1}), col, a);
-    };
-    auto disc = [&](glm::vec2 o, glm::vec2 sz) {
-        out.add(Pass::UnlitAdd, MeshId::Circle) = makeUnlit(compose(c + glm::vec3(o * s, 0.01f), {sz.x * s, sz.y * s, 1}), col, a);
-    };
-    switch (kind) {
-    case 0: ring({0, 0.22f}, {0.2f, 0.26f}); box({0, -0.16f}, {0.09f, 0.52f}); box({0, 0.0f}, {0.56f, 0.08f}); break; // ankh
-    case 1: ring({0, 0.05f}, {0.42f, 0.2f}); disc({0, 0.05f}, {0.1f, 0.1f}); box({-0.12f, -0.2f}, {0.06f, 0.3f}, 0.4f);
-            box({0.18f, -0.18f}, {0.3f, 0.06f}, -0.5f); break;                                                           // eye
-    case 2: disc({0, 0}, {0.24f, 0.24f}); ring({0, 0}, {0.4f, 0.4f}); break;                                             // sun
-    default: disc({0, -0.02f}, {0.18f, 0.26f}); disc({0, 0.3f}, {0.09f, 0.08f}); box({-0.24f, 0.04f}, {0.3f, 0.07f}, 0.6f);
-             box({0.24f, 0.04f}, {0.3f, 0.07f}, -0.6f); break;                                                           // scarab
-    }
-}
-
-void World::emitEgypt(RenderList& out, float camX, float camY, float time, float pz, const TextLayout* text) const {
+void World::emitEgypt(RenderList& out, float camX, float time, float pz) const {
     const float gx = std::floor(camX / 6) * 6;
-    const glm::vec3 gold = glow("#ffb43a", 1.f), cyan = glow("#29e7ff", 1.f);
+    const glm::vec3 gold = glow("#ffb43a", 1.f);
     LitMaterial stone; stone.color = hexColor("#10121f"); stone.metalness = 0.6f; stone.roughness = 0.35f; stone.pattern = Pattern::Stone;
     auto stoneOf = [&](const glm::vec3& edge, float courses, const glm::mat4& m, float seed, Pass pass = Pass::Lit, MeshId mesh = MeshId::Box) {
         LitMaterial mat = stone; mat.emissive = edge;
@@ -441,98 +396,7 @@ void World::emitEgypt(RenderList& out, float camX, float camY, float time, float
             }
         }
     }
-    // the sun disc of Ra, low behind the pyramids: gold to ember, cut by gaps that drift down (a Tron sunset)
-    {
-        const glm::vec3 c{camX * 0.96f + 10.f, 9.f + camY * 0.3f, -96};
-        const float R = 15;
-        out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(c, glm::vec3(R * 3.f)), glow("#ff9a3a", 0.35f), 0.4f, Shape::RadialGlow);
-        const int kBands = 40;
-        const float drift = std::fmod(time * 0.35f, 1.f);
-        for (int i = 0; i < kBands; ++i) {
-            const float y0 = 1.f - 2.f * (float(i) + 0.f) / kBands, y1 = 1.f - 2.f * (float(i) + 1.f) / kBands; // top .. bottom
-            const float mid = (y0 + y1) / 2;
-            // the lower half: gaps that widen toward the bottom, drifting down
-            float fill = 1.f;
-            if (mid < 0.1f) { const float g = (0.1f - mid) / 1.1f; fill = clampf(1.f - g * 0.9f - 0.12f * std::sin((mid + drift * 0.18f) * 40.f), 0.15f, 1.f); }
-            const float hy = (y0 - y1) * R * fill, w = 2.f * R * std::sqrt(std::max(0.f, 1.f - mid * mid));
-            const glm::vec3 col = glm::mix(glow("#ffc24a", 0.75f), glow("#ff3d6a", 0.7f), clampf(0.5f - mid * 0.5f, 0.f, 1.f));
-            const float shimmer = 0.9f + 0.1f * std::sin(time * 3.f + i);
-            out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(c + glm::vec3(0, mid * R, 0), {w, hy, 1}), col * shimmer, 0.7f);
-        }
-    }
-    // the skyline: pyramids (far), obelisks and pylons (middle), palms, obelisks and pylons (near); two copies per row
-    {
-        const glm::vec3 beacon = glow("#29e7ff", 1.3f);
-        for (const ERow& r : egypt_)
-            for (int k = 0; k < 2; ++k) {
-                const glm::vec3 o{r.x + k * r.P, r.y, r.z};
-                for (const Monument& m : r.monuments) {
-                    const glm::vec3 p = o + m.pos;
-                    switch (m.kind) {
-                    case Monument::Pyramid: stoneOf(gold * (0.9f + pz * 0.3f), 18, compose(p, m.size), m.seed, Pass::Lit, MeshId::Pyramid); break;
-                    case Monument::Obelisk: {
-                        stoneOf(gold * 0.9f, 1, compose(p, m.size), m.seed, Pass::Lit, MeshId::Frustum);
-                        const float tip = m.size.x * 0.7f;
-                        out.add(Pass::Lit, MeshId::Pyramid) = makeEmissive(compose(p + glm::vec3(0, m.size.y / 2 + tip * 0.6f, 0), {tip, tip * 1.2f, tip}),
-                                                                           glow("#ffd36a", 1.6f) * (0.85f + 0.3f * std::sin(time * 2.f + m.seed)));
-                        break;
-                    }
-                    case Monument::Pylon: stoneOf(cyan * 0.75f + gold * 0.25f, 9, compose(p, m.size), m.seed, Pass::Lit, MeshId::Frustum); break;
-                    case Monument::Palm: {
-                        LitMaterial trunk = metal("#141220"); trunk.roughness = 0.6f;
-                        out.add(Pass::Lit, MeshId::Cylinder) = makeLit(compose(p, m.size), trunk);
-                        const glm::vec3 top = p + glm::vec3(0, m.size.y / 2, 0);
-                        for (int f = 0; f < 5; ++f) { // fronds: a glowing spine drooping from the crown, swaying
-                            const float yaw = f * (2 * kPi / 5) + m.seed, sway = 0.08f * std::sin(time * 1.1f + m.seed + f);
-                            const glm::mat4 fr = compose(top, {0, yaw, -0.55f - sway}, {1, 1, 1});
-                            out.add(Pass::Lit, MeshId::Box) = makeLit(fr * compose({1.1f, 0, 0}, {2.2f, 0.06f, 0.5f}), trunk);
-                            out.add(Pass::Lit, MeshId::Box) = makeEmissive(fr * compose({1.1f, 0.04f, 0}, {2.2f, 0.03f, 0.04f}), glow("#2bffd2", 0.9f));
-                        }
-                        break;
-                    }
-                    }
-                }
-                for (const Beacon& b : r.beacons) { // capstone lights, each sweeping a beam across the sky
-                    const glm::vec3 p = o + b.pos;
-                    out.add(Pass::Lit, MeshId::Sphere) = makeEmissive(compose(p, glm::vec3(0.6f)), beacon * (0.8f + 0.4f * std::sin(time * 2.2f + b.phase)));
-                    const float ang = 0.55f * std::sin(time * 0.35f + b.phase);
-                    out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(p, {0, 0, ang}, {1.f, 1.f, 1.f}) * compose({0, 28, 0}, {1.4f, 56, 1}),
-                                                                       glow("#29e7ff", 0.7f), 0.1f, Shape::BottomFade);
-                }
-                for (const Sign& s : r.signs) {
-                    Instance frame = makeUnlit(compose(o + s.pos, {s.size.x, s.size.y, 1}), s.color * 0.96f, s.opacity, Shape::PillOutline, 0.06f);
-                    frame.params.x = s.size.x; frame.params.y = s.size.y;
-                    out.add(Pass::UnlitAlpha, MeshId::Plane) = frame;
-                    if (text) emitSignText(out, *text, s, o);
-                }
-                for (const Cartouche& c : r.cartouches) { // a rounded gold frame; its icons light up one after another
-                    const glm::vec3 p = o + c.pos;
-                    const glm::vec3 col = glow("#ffb43a", 1.1f);
-                    const float cw = c.h * 0.27f;
-                    Instance frame = makeUnlit(compose(p, {cw, c.h, 1}), col, 0.95f, Shape::PillOutline, 0.06f);
-                    frame.params.x = cw; frame.params.y = c.h;
-                    out.add(Pass::UnlitAlpha, MeshId::Plane) = frame;
-                    const float seq = std::fmod(time * 0.5f + c.seed, 3.f) * 2.f; // 0..6: icons come on in turn, all hold, then reset
-                    for (int i = 0; i < 4; ++i) {
-                        const float on = clampf(seq - float(i), 0.f, 1.f), a = 0.25f + 0.75f * on;
-                        emitIcon(out, c.icons[i], p + glm::vec3(0, c.h * 0.36f - i * c.h * 0.24f, 0), c.h * 0.2f, glow(i % 2 ? "#29e7ff" : "#ffd36a", 1.2f), a);
-                    }
-                }
-            }
-    }
-    // solar barques gliding across the sky: dark hulls, upswept gold prow and stern, a cyan keel glow
-    {
-        LitMaterial hull; hull.color = hexColor("#1a1726"); hull.metalness = 0.9f; hull.roughness = 0.25f;
-        const glm::vec3 trim = glow("#ffb43a", 1.2f);
-        for (const Car& c : cars_) {
-            const glm::mat4 g = compose(c.pos, {0, c.flip ? kPi : 0.f, 0}, {1, 1, 1});
-            out.add(Pass::Lit, MeshId::Sphere) = makeLit(g * compose({0, 0, 0}, {1.3f, 0.2f, 0.34f}), hull);
-            out.add(Pass::Lit, MeshId::Box) = makeEmissive(g * compose({0, 0.14f, 0}, {2.4f, 0.04f, 0.4f}), trim);
-            out.add(Pass::Lit, MeshId::Box) = makeEmissive(g * compose({1.35f, 0.32f, 0}, {0, 0, -0.7f}, {0.7f, 0.06f, 0.08f}), trim);
-            out.add(Pass::Lit, MeshId::Box) = makeEmissive(g * compose({-1.35f, 0.32f, 0}, {0, 0, 0.7f}, {0.7f, 0.06f, 0.08f}), trim);
-            out.add(Pass::Lit, MeshId::Box) = makeEmissive(g * compose({0, -0.22f, 0}, {1.8f, 0.03f, 0.5f}), glow("#29e7ff", 1.f));
-        }
-    }
+    emitEgyptBackdrop(out, camX, time); // the artist's sprites: sky, pyramids, temples, guardians, canal, plaza (WorldEgypt.cpp)
     // brazier columns: stone shafts with gold edges, a bowl, and a flickering fire on top
     {
         LitMaterial bowl = metal("#2a2116");
@@ -552,6 +416,22 @@ void World::emitEgypt(RenderList& out, float camX, float camY, float time, float
         for (const Drop& d : rain_)
             if (rainOn_) out.add(Pass::UnlitAlpha, MeshId::Plane) =
                 makeUnlit(compose(rainOrigin_ + d.p + glm::vec3(0, 4, 0), {0.22f, 0.012f, 1}), sand, 0.2f);
+    }
+    // gold dust blowing in the air, each speck twinkling as it turns, and every several seconds catching the light: a
+    // white-gold flash, at its height a small four-point sparkle; the ones right in front of the camera big, soft and
+    // faint (out of focus). Noticeable, never busy. Lite mode: a quarter of it
+    {
+        const glm::vec3 gold = glow("#ffd98a", 1.f), hot = glow("#fff6dc", 1.f); // (a pale gold: a deep one burns orange when bright)
+        for (size_t i = 0; i < dust_.size(); i += rainOn_ ? 1 : 4) {
+            const Dust& d = dust_[i];
+            const float glint = std::pow(std::max(0.f, std::sin(time * (0.35f + 0.6f * d.rate) + d.phase * 7.f)), 14.f);
+            const float twinkle = 0.6f + 0.4f * std::sin(time * (2.f + 3.f * d.rate) + d.phase);
+            const bool soft = d.p.z > 5; // (out of focus: faint, all gold)
+            const glm::vec3 c = soft ? gold * 1.2f : glm::mix(gold, hot, glint) * (1.2f + 2.6f * glint);
+            out.particlesAdd.push_back({glm::vec4(d.p, d.size * (soft ? 1.f : 1.f + 0.5f * glint)), glm::vec4(c, (soft ? 0.14f : 0.7f) * twinkle)});
+            if (i % 3 == 0 && !soft && d.p.z < 3 && glint > 0.8f) // (the sparkle: a flake, one speck in three, at the glint's height; never at the camera)
+                out.particlesSparkle.push_back({glm::vec4(d.p, d.size * (2.f + 2.5f * glint)), glm::vec4(hot * (0.9f + 1.6f * glint), 0.85f * glint)});
+        }
     }
 }
 

@@ -1,0 +1,112 @@
+; Level 18, Neon Egypt.
+length 470
+difficulty 595 0.35
+raids auto
+course
+16 0 crate
+4 1 crate
+14 0 mix
+5 2 mix
+15 0 crate
+5 4 mix
+3 5 hay
+11 8 hay 12
+3 8 hay
+19 3 hay
+9 7 crate
+5 8 crate
+14 7 crate
+24 0 crate
+5 1 hay
+11 3 mix 7
+4 4 hay
+11 5 crate 8
+3 6 mix
+16 3 crate
+16 5 hay
+11 8 hay 12
+24 8 hay
+3 8 crate
+20 0 crate
+24 4 mix
+11 8 mix 11
+4 8 hay
+21 3 crate
+21 7 crate
+24 0 crate
+5 4 hay
+14 3 crate
+18 4 hay
+9 7 crate
+11 8 hay 11
+4 8 crate
+49 2 hay
+9 6 crate
+11 7 hay 11
+25 0 crate
+27 4 hay
+11 7 mix 10
+11 8 mix 11
+4 8 hay
+3 8 crate
+4 8 crate
+4 8 mix
+3 8 hay
+4 8 hay
+4 8 crate
+20 0 crate
+5 4 crate
+11 7 mix 10
+4 8 mix
+3 8 hay
+3 8 crate
+3 8 crate
+4 8 crate
+5 8 hay
+3 8 crate
+4 8 crate
+5 8 crate
+4 8 crate
+3 8 crate
+4 8 crate
+4 8 mix
+20 1 crate
+3 2 crate
+11 5 crate 8
+11 6 mix 10
+11 8 mix 11
+4 8 hay
+20 0 crate
+5 3 crate
+11 5 mix 8
+saws
+82.04 142.64 205.019 272.303 274.103 275.903
+discos
+27.9 2.05
+79.8 1.45
+96.6 2.5
+99 3.85
+107.7 6.25
+113.4 4.45
+119.7 4.45
+132.9 5.5
+152.1 1.45
+153.9 2.05
+155.7 2.65
+227.1 5.05
+292.8 6.25
+305.1 1.45
+306.9 2.05
+308.7 2.65
+319.5 4.45
+339.9 4.9
+388.5 6.85
+390.3 6.85
+392.1 6.25
+404.1 7.45
+447.3 5.5
+449.4 6.25
+452.1 1.45
+453.9 2.05
+455.7 2.65
+470.7 3.7

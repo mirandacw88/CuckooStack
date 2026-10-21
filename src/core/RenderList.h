@@ -35,6 +35,10 @@ enum class MeshId : uint8_t {
     Circle,      // r=1 disc in XY
     Pyramid,     // square pyramid: base 1x1 at y = -0.5, apex at y = 0.5 (Neon Egypt's pyramids, pyramidions)
     Frustum,     // tapered square block: base 1x1 at y = -0.5, top 0.7x0.7 at y = 0.5 (obelisk shafts, temple pylons)
+    EggHalf,     // the egg cut lengthwise by a saw (GameSaw.cpp): its shell on the x >= 0 side, open at x = 0
+    EggHalfCap,  // ...its cut face: the egg's outline in the x = 0 plane, facing -x
+    SawTeeth,    // a saw blade's toothed rim: 16 hooked teeth (tips at r = 1, gullets 0.84) round a hole of r 0.74, in XY,
+                 // 0.1 thick; the teeth lead clockwise as seen from +z
     // the title screen's jet droid (DroidModel.h), one mesh per part, in the droid's own space
     DroidBody, DroidEye, DroidFanL, DroidFanR, DroidShroud, DroidBackplate, DroidFlame,
     // the hen model (HenModel.h), one mesh per colour region; skinned on the CPU every frame (RenderList::heroVerts)
@@ -116,6 +120,7 @@ struct RenderList {
     std::array<std::array<std::vector<Instance>, kMeshCount>, kPassCount> buckets;
     std::vector<Particle> particlesAdd;   // additive sparks, dust, rain splashes
     std::vector<Particle> particlesSmoke; // normal-blended puffs
+    std::vector<Particle> particlesSparkle; // additive four-point sparkles (a speck catching the light)
     // posed vertices of the hen meshes heroFirst .. heroFirst + heroMeshes - 1, in that order (the renderer streams them
     // over the rest pose); empty = draw the rest pose
     std::vector<Vertex> heroVerts;
@@ -129,11 +134,16 @@ struct RenderList {
     const class HudImage* hudImage = nullptr; // sprite atlas, uploaded once by the renderer
     std::vector<Instance> worldText;      // SDF glyphs in world space (neon signs, today's-best gate)
     const FontAtlas* fontAtlas = nullptr; // uploaded once by the renderer
+    // full-colour sprites in world space (Neon Egypt's backdrop art), drawn after the opaque scene in this order (back
+    // to front), depth-tested: atlas UV rect in emissive (u0, v0, u1, v1), tint and opacity in color, the haze they
+    // fade toward in rim (rgb, amount), how much their bright lines glow in params.x (sprite.frag)
+    std::vector<Instance> worldSprites;
+    const class HudImage* worldImage = nullptr; // their atlas, uploaded by the renderer when it changes
     FrameParams frame;
 
     void clear() {
         for (auto& pass : buckets) for (auto& v : pass) v.clear();
-        particlesAdd.clear(); particlesSmoke.clear(); hud.clear(); hudKind.clear(); worldText.clear(); heroVerts.clear();
+        particlesAdd.clear(); particlesSmoke.clear(); particlesSparkle.clear(); hud.clear(); hudKind.clear(); worldText.clear(); worldSprites.clear(); heroVerts.clear();
     }
     Instance& add(Pass p, MeshId m) {
         return buckets[static_cast<size_t>(p)][static_cast<size_t>(m)].emplace_back();

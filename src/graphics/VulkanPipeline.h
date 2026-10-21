@@ -41,7 +41,7 @@ public:
     VkPipeline sky = VK_NULL_HANDLE, lit = VK_NULL_HANDLE, unlitAlpha = VK_NULL_HANDLE, unlitAdd = VK_NULL_HANDLE,
                particleAdd = VK_NULL_HANDLE, particleAlpha = VK_NULL_HANDLE, bloom = VK_NULL_HANDLE,
                composite = VK_NULL_HANDLE, hud = VK_NULL_HANDLE, textHud = VK_NULL_HANDLE, textWorld = VK_NULL_HANDLE,
-               hudImage = VK_NULL_HANDLE;
+               hudImage = VK_NULL_HANDLE, spriteWorld = VK_NULL_HANDLE;
 
 private:
     bool createPresentObjects(VkFormat presentFormat);

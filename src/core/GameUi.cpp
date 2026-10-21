@@ -1349,6 +1349,13 @@ void Game::hudDev() {
                       [this] { debugNearFinish_ = !debugNearFinish_; }});
         bs.push_back({debugRaids_ ? "Droid raids: armed" : "Next run: droid raids", debugRaids_ ? St::On : St::Plain,
                       [this] { debugRaids_ = !debugRaids_; }});
+        bs.push_back({debugSaws_ ? "Saws: armed" : "Next run: saws", debugSaws_ ? St::On : St::Plain,
+                      [this] { debugSaws_ = !debugSaws_; }});
+        // straight to the maze gauntlet (the first level with one: it jumps there if this level has none)
+        bs.push_back({debugNearGauntlet_ ? "Gauntlet: armed" : "Jump to gauntlet", debugNearGauntlet_ ? St::On : St::Plain, [this] {
+            debugNearGauntlet_ = !debugNearGauntlet_;
+            if (debugNearGauntlet_ && !Campaign::gauntletOf(campaign_.level()) && Campaign::gauntletLevel()) campaign_.debugSetLevel(Campaign::gauntletLevel());
+        }});
         bs.push_back({boost_ == Boost::Surge ? "Overdrive start: armed" : "Free Overdrive Start", boost_ == Boost::Surge ? St::On : St::Plain,
                       [this] { boost_ = Boost::Surge; }});
         section("Level & rank");

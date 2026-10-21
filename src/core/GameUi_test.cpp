@@ -313,6 +313,7 @@ void dailyDrop() {
 } // namespace
 
 int main() {
+    test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     modal();
     screens();
     settings();
