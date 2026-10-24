@@ -36,7 +36,7 @@ Stats render(Synth& s, double seconds) {
 void effects() {
     const Sfx all[] = {Sfx::Lay, Sfx::Crack, Sfx::Perfect, Sfx::Corn, Sfx::Land, Sfx::Squawk, Sfx::Empty, Sfx::Smash,
                        Sfx::SurgeStart, Sfx::SurgeEnd, Sfx::LifeLost, Sfx::Firework, Sfx::DroidWarp, Sfx::DroidCharge, Sfx::DroidLaser,
-                       Sfx::SawWhirr, Sfx::SawCut, Sfx::Bounce};
+                       Sfx::SawWhirr, Sfx::SawCut, Sfx::Bounce, Sfx::LaserHum, Sfx::LaserCut, Sfx::LavaSizzle, Sfx::LavaBurn};
     bool sound = true, finite = true, clean = true;
     for (Sfx f : all)
         for (int variant : {0, 1, 2}) {
@@ -136,10 +136,30 @@ void deterministic() {
 
 } // namespace
 
+// the wall laser's: its charge a split second's warning (over before the shot), and the shot, the egg's cut and the
+// hen's each their own sound
+void laserSounds() {
+    Synth charge;
+    charge.play(Sfx::LaserHum, 0);
+    const Stats during = render(charge, 0.4);
+    render(charge, 0.25); // (its ready blip, and the tails)
+    const Stats after = render(charge, 0.5);
+    check(during.rms > 1e-3 && after.rms < during.rms * 0.05, "the laser's charge: a whine for a split second, then gone (its shot comes next)");
+    std::vector<double> rmsOf;
+    for (int k : {0, 1, 2}) {
+        Synth s;
+        s.play(Sfx::LaserCut, k);
+        rmsOf.push_back(render(s, 0.6).rms);
+    }
+    check(std::abs(rmsOf[0] - rmsOf[1]) > 1e-4 && std::abs(rmsOf[0] - rmsOf[2]) > 1e-4 && std::abs(rmsOf[1] - rmsOf[2]) > 1e-4,
+          "...its shot (2), an egg cut (0) and the hen cut (1): three different sounds");
+}
+
 int main() {
     effects();
     droidSounds();
     sawSounds();
+    laserSounds();
     music();
     deterministic();
     return finish("Synth");

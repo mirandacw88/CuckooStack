@@ -270,7 +270,14 @@ void Synth::sfx(Sfx s, int k) {
         }
         break;
     case Sfx::Bounce:
-        if (k == 1) { // a stone door slamming: a deep thud, grit, a low ring
+        if (k == 2) { // a spring firing: a deep coil boyoing (its pitch wobbling up), a bright twang, a rising whoosh
+            tone(90, 360, 0.12f, Wave::Sine, 0.45f);
+            tone(360, 220, 0.12f, Wave::Sine, 0.3f, 0.12f);
+            tone(220, 300, 0.1f, Wave::Sine, 0.18f, 0.24f);
+            tone(700, 1800, 0.25f, Wave::Triangle, 0.06f, 0.02f);
+            noise(0.4f, 0.12f, 2400, 0.04f, Biquad::Type::Bandpass);
+            noise(0.05f, 0.3f, 600, 0.f, Biquad::Type::Lowpass);
+        } else if (k == 1) { // a stone door slamming: a deep thud, grit, a low ring
             tone(120, 45, 0.45f, Wave::Sine, 0.5f);
             noise(0.3f, 0.45f, 500, 0.f, Biquad::Type::Lowpass);
             noise(0.12f, 0.25f, 1800, 0.03f);
@@ -280,6 +287,50 @@ void Synth::sfx(Sfx s, int k) {
             tone(520, 300, 0.18f, Wave::Sine, 0.22f, 0.08f);
             tone(1040, 620, 0.16f, Wave::Triangle, 0.05f, 0.06f);
             noise(0.05f, 0.25f, 700, 0.f, Biquad::Type::Lowpass);
+        }
+        break;
+    case Sfx::LaserHum: // a wall laser charging: a whine rising fast to a peak, an electric buzz under it, a ready blip
+        tone(380, 2600, 0.45f, Wave::Sawtooth, 0.045f);
+        tone(760, 5200, 0.45f, Wave::Sine, 0.02f);
+        tone(110, 140, 0.45f, Wave::Square, 0.03f);
+        noise(0.45f, 0.06f, 5000, 0.f, Biquad::Type::Bandpass);
+        tone(3100, 3100, 0.05f, Wave::Square, 0.03f, 0.43f);
+        break;
+    case Sfx::LaserCut:
+        if (k == 2) { // it fires: a heavy blast, a sizzling roar down its length
+            tone(900, 120, 0.3f, Wave::Sawtooth, 0.14f);
+            tone(70, 45, 0.35f, Wave::Sine, 0.35f);
+            noise(0.3f, 0.3f, 2400, 0.f, Biquad::Type::Bandpass);
+            tone(2600, 2400, 0.28f, Wave::Square, 0.03f, 0.02f);
+        } else if (k == 1) { // the hen sliced: a searing zap, a deep thump, a crackle
+            tone(1900, 140, 0.4f, Wave::Sawtooth, 0.16f);
+            tone(90, 40, 0.5f, Wave::Sine, 0.4f);
+            noise(0.35f, 0.5f, 4200, 0.f, Biquad::Type::Bandpass);
+            tone(4200, 3000, 0.3f, Wave::Square, 0.04f, 0.05f);
+        } else { // an egg sliced: a hot sizzling zip, the shell's crack, a ring of the beam
+            tone(5200, 2600, 0.12f, Wave::Square, 0.08f);
+            tone(260, 90, 0.18f, Wave::Sine, 0.25f);
+            noise(0.08f, 0.35f, 3600, 0.02f);
+            noise(0.25f, 0.18f, 7000, 0.04f, Biquad::Type::Bandpass);
+            tone(2400, 2300, 0.35f, Wave::Triangle, 0.035f, 0.04f);
+        }
+        break;
+    case Sfx::LavaSizzle: // molten rock ahead: a low rumble, bubbles popping, a hiss
+        tone(55, 48, 0.8f, Wave::Sine, 0.18f);
+        noise(0.8f, 0.2f, 700, 0.f, Biquad::Type::Lowpass);
+        for (int i = 0; i < 4; ++i) tone(300.f + 140.f * float(i), 120.f + 40.f * float(i), 0.08f, Wave::Sine, 0.08f, 0.12f + 0.15f * float(i));
+        noise(0.7f, 0.06f, 5200, 0.1f, Biquad::Type::Bandpass);
+        break;
+    case Sfx::LavaBurn:
+        if (k == 1) { // the hen catches fire: a whoosh of flame, a roar under it, crackling
+            noise(0.7f, 0.55f, 1400, 0.f, Biquad::Type::Bandpass);
+            tone(80, 50, 0.8f, Wave::Sawtooth, 0.22f);
+            noise(0.5f, 0.25f, 6000, 0.15f);
+            tone(600, 200, 0.4f, Wave::Triangle, 0.08f, 0.05f);
+        } else { // an egg in the lava: a sharp sizzle, a crackle of the shell, a pop
+            noise(0.3f, 0.4f, 5200, 0.f, Biquad::Type::Bandpass);
+            tone(900, 300, 0.12f, Wave::Sine, 0.12f, 0.02f);
+            noise(0.06f, 0.3f, 2200, 0.05f);
         }
         break;
     case Sfx::DroidLaser: { // pew: a bright square zap diving down, a buzzy body, a crackle of static (k: the 2nd shot sits lower)

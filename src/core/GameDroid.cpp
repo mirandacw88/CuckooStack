@@ -114,7 +114,7 @@ void Game::planRaids() {
         for (double x = 20; x < 5000; x += 35) raidPlan_.push_back(x);
         return;
     }
-    const int authored = Campaign::raidsOf(campaign_.level()); // (a level may say how many: LevelData.h)
+    const int authored = Campaign::raidsOf(campaign_.level(), campaign_.catalog()); // (a level may say how many: LevelData.h)
     if (!tune_.droidRaids || authored == 0 || (authored < 0 && campaign_.level() < tune_.droidFirstLevel)) return; // (it's introduced a few levels in)
     const double finish = level_.finish();
     if (finish <= 0) {
@@ -225,7 +225,7 @@ void Game::updateDroid(float rdt) {
         // zaps the egg a blade is sawing
         bool wallAhead = eggs_.empty() || cutSawX_ >= 0;
         const double reach = std::max(1.0, double(speed_) * (eggs_.size() < 2 ? 0.8 : 0.35));
-        const double land = std::min(baseY_, std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U); // (where a drop lands her)
+        const double land = std::min(baseY_, supportY()); // (where a drop lands her)
         const double after = land + double(eggs_.size() - (eggs_.empty() ? 0 : 1)) * U; // her stack top once it's zapped
         for (double d = 0.22; d < reach && !wallAhead; d += 0.15) {
             int saws = 0;

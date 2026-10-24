@@ -1,10 +1,15 @@
 // The level editor's course canvas: a level side on, as the game lays it (Level::load). Its walls of crates and hay
 // (the zone's look), their tops the disco dance floor, barriers' hazard-striped girders under their red laser curtains,
-// saw blades spinning in the wall tops, disco balls, the maze gauntlet's grid in its span, the finish line. Over it
+// saw blades spinning in the wall tops, disco balls, wall lasers (set into a wall's or block's side: a turret, its lens
+// glowing, and the charge pointer's dashed line along its reach), lava
+// glowing along the surfaces, springs (a coiled pad, its lime plate bobbing; her flight off it from the last check,
+// dotted), bouncer walls as a maze draws its cells (bumpers glowing pink, their chevrons pulsing; one-way gates green
+// fields, their arrows running) and the bounce zones they make, shaded, the maze gauntlet's grid in its span, the finish line. Over it
 // what the checker and the game's bot found: the bot's stack all along its run, its near misses, where it crashed;
 // notes; the hen herself in the replay. Plus the minimap: the whole course.
 import { GridView, C as GC } from './view.js';
-import { U, colAt, spans, courseLength, tallest } from './course.js';
+import { beamCells } from './grid.js';
+import { U, colAt, spans, courseLength, tallest, surfaceAt, laserReach, isBouncer, bounceZones, solidCell } from './course.js';
 
 export const RULER_TOP = 22, RULER_LEFT = 34;
 
@@ -15,9 +20,10 @@ export const ZONE_LOOK = {
 };
 const HAY = { fill: '#4a3510', lit: '#5a4114', straw: 'rgba(255,194,58,0.45)', edge: 'rgba(255,211,106,0.7)' };
 const DISCO = ['#ff2bd6', '#29e7ff', '#f4ff5a'];
+export const BOUNCE = { bumper: '#ff2bd6', 'gate>': '#2bff9a', 'gate<': '#2bff9a' }; // (the registry's colours: Hazards.cpp wallKinds)
 export const K_COLORS = { perfect: '#ff2bd6', call: '#29e7ff', crash: '#ff2b4a', note: '#ffb43a', short: '#ff2b4a', bot: '#29e7ff', egg: '#fff3dc' };
 
-const cellOf = GridView.prototype.cell, bladeOf = GridView.prototype.blade;
+const cellOf = GridView.prototype.cell, bladeOf = GridView.prototype.blade, springOf = GridView.prototype.spring;
 
 export class CourseView {
   constructor(canvas, minimap) {
@@ -106,12 +112,16 @@ export class CourseView {
       for (let r = 1; r <= this.rowsUp + 20; r++) { const y = Y(r); if (y < RULER_TOP) break; ctx.strokeStyle = r % 10 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.025)'; line(ctx, Math.max(RULER_LEFT, X(c0)), y + 0.5, X(c1), y + 0.5); }
     }
     ctx.strokeStyle = hexA(look.accent, 0.55); ctx.lineWidth = 1.5; line(ctx, RULER_LEFT, this.oy + 0.75, this.w, this.oy + 0.75); // (the street)
+    // the bounce zones (Level::buildZones), shaded faintly behind their walls, labelled
+    this.zoneLabels = [];
+    for (const bz of bounceZones(L)) if (bz.c1 >= c0 && bz.c0 <= c1) this.bounceZone(L, bz, t, s.hoverZone === bz.c0);
     // the walls, their dance-floor tops, the barriers over them
     const cols = L.cols;
     for (let c = Math.max(0, c0); c <= Math.min(cols.length - 1, c1); c++) {
       const k = cols[c];
       if (k.g || !k.h) continue;
       const x = X(c);
+      if (isBouncer(k)) { this.bouncer(k.kind, c, k.h, t); continue; }
       if (z < 6) {
         ctx.fillStyle = k.kind === 'hay' ? HAY.fill : look.crateLit; ctx.fillRect(x, Y(k.h), z + 0.5, k.h * z);
         if (k.kind === 'mix') { ctx.fillStyle = HAY.fill; ctx.fillRect(x, Y(k.h), z + 0.5, z); }
@@ -126,23 +136,49 @@ export class CourseView {
       if (k.g) continue;
       const h = k.h, left = c > 0 && !cols[c - 1].g ? cols[c - 1].h : 0, right = c + 1 < cols.length && !cols[c + 1].g ? cols[c + 1].h : 0;
       ctx.strokeStyle = k.kind === 'hay' ? HAY.edge : look.crateEdge;
-      if (h > left) line(ctx, X(c) + 0.5, Y(left), X(c) + 0.5, Y(h));
-      if (h > right) line(ctx, X(c + 1) - 0.5, Y(right), X(c + 1) - 0.5, Y(h));
-      if (h > 0) { // the dance floor: its tiles cycling through the disco's colours
+      if (!isBouncer(k)) { // (a bouncer's cells are outlined their own way)
+        if (h > left) line(ctx, X(c) + 0.5, Y(left), X(c) + 0.5, Y(h));
+        if (h > right) line(ctx, X(c + 1) - 0.5, Y(right), X(c + 1) - 0.5, Y(h));
+      }
+      if (h > 0 && k.kind !== 'gate>' && k.kind !== 'gate<') { // (a gate's no floor: no dance floor on it) // the dance floor: its tiles cycling through the disco's colours
         const tile = DISCO[(c + Math.floor(t * 5)) % 3];
         ctx.fillStyle = hexA(tile, 0.85); ctx.fillRect(X(c) + 1, Y(h) - Math.max(1.5, z * 0.09), z - 2, Math.max(1.5, z * 0.09));
       }
     }
-    for (let c = Math.max(0, c0); c <= Math.min(cols.length - 1, c1); c++) if (cols[c].ceil && !cols[c].g) this.barrier(c, cols[c].ceil, t);
+    for (let c = Math.max(0, c0); c <= Math.min(cols.length - 1, c1); c++) {
+      const k = cols[c];
+      if (!k.ceil || k.g) continue;
+      if (k.top) this.floating(c, k.ceil, k.top, k.kind, look, t, cols[c - 1], cols[c + 1]); else this.barrier(c, k.ceil, t);
+    }
     // the maze gauntlets: each its grid, in its span
     for (const sp of spans(L)) this.gauntlet(sp, s.grids[sp.name], s.hoverSpan === sp.name, t, c0, c1);
     // changed since the last save: the saved course as a dashed ghost where it differs (describe.js diffCourse)
     if (s.overlays.changes && s.diff) this.changes(s.diff, c0, c1, t);
+    // lava along the surfaces, glowing; wall lasers, their beams flickering
+    (L.lava || []).forEach((f, i) => {
+      const cx = f.x / U;
+      if (cx + f.len < c0 - 2 || cx > c1 + 2) return;
+      this.lava(X(cx), f.len, Y(surfaceAt(L, f.x)), t, s.selected && s.selected.lava === i);
+    });
+    // springs on the surfaces, their plates bobbing, and her flight off each (the latest fresh check's arc of it)
+    const arcs = s.arcs || (s.check && s.check.arcs) || [];
+    (L.springs || []).forEach((p, i) => {
+      const cx = p.x / U, arc = arcs.find((a) => Math.abs(a.x - p.x) < 0.05);
+      if (arc) this.springArc(arc, t);
+      if (cx < c0 - 2 || cx > c1 + 2) return;
+      this.spring(X(cx), Y(surfaceAt(L, p.x)), t, s.selected && s.selected.spring === i);
+      if (s.selected && s.selected.spring === i) this.springLift(L, p, t);
+    });
+    (L.lasers || []).forEach((zz, i) => {
+      const [x0, x1] = laserReach(L, zz);
+      if (x1 / U < c0 - 2 || x0 / U > c1 + 2) return;
+      this.laser(L, zz, t, s.selected && s.selected.laser === i);
+    });
     // saws in the wall tops, spinning; disco balls
     L.saws.forEach((x, i) => {
       const cx = x / U;
       if (cx < c0 - 2 || cx > c1 + 2) return;
-      const k = cols[colAt(x)], h = k && !k.g ? k.h : 0;
+      const k = cols[colAt(x)], h = k && !k.g ? k.top || k.h : 0; // (a floating block's: on its top)
       this.saw(X(cx), Y(h), h > 0 && (k.kind === 'hay' || k.kind === 'mix'), t, s.selected && s.selected.saw === i);
     });
     L.discos.forEach((d, i) => {
@@ -204,6 +240,82 @@ export class CourseView {
     ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, z - 1, z - 1);
   }
 
+  // A bouncer wall's column c, h high, as the maze draws its cells: a bumper deep violet glowing pink, chevrons on its
+  // open sides (air beside it, or a gate) pointing the way it sends her, pulsing; a gate a translucent green field
+  // between bright posts, its top dashed (no floor), arrows running through it its way
+  bouncer(kind, c, h, t) {
+    const { ctx, z } = this, x = this.X(c), color = BOUNCE[kind], L = this._L;
+    if (z < 6) { ctx.fillStyle = hexA(color, kind === 'bumper' ? 0.8 : 0.4); ctx.fillRect(x, this.Y(h), z + 0.5, h * z); return; }
+    const gate = (k) => !!k && (k.kind === 'gate>' || k.kind === 'gate<') && !k.g;
+    const open = (cc, j) => !L || !solidCell(L, cc, j) || gate(L.cols[cc]);
+    ctx.save();
+    if (kind === 'bumper') {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 5 + c * 0.6);
+      for (let j = 0; j < h; j++) {
+        const y = this.Y(j + 1);
+        ctx.fillStyle = '#26052f'; ctx.fillRect(x, y, z, z);
+        if (z >= 9) { ctx.fillStyle = '#3a0a48'; ctx.fillRect(x + z * 0.12, y + z * 0.12, z * 0.76, z * 0.76); }
+      }
+      ctx.shadowColor = color; ctx.shadowBlur = 5 + 7 * pulse;
+      ctx.strokeStyle = hexA(color, 0.65 + 0.35 * pulse); ctx.lineWidth = Math.max(1, z / 10);
+      for (let j = 0; j < h; j++) ctx.strokeRect(x + 1, this.Y(j + 1) + 1, z - 2, z - 2);
+      if (z >= 8) { // (its chevrons: on a left face pointing left, back the way she came; on a right face, right)
+        ctx.lineWidth = Math.max(1.2, z / 8); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = hexA('#ffc2f2', 0.55 + 0.45 * pulse);
+        const nudge = z * 0.06 * pulse;
+        for (let j = 0; j < h; j++) {
+          const y = this.Y(j + 1);
+          for (const d of [-1, 1]) {
+            if (!open(c + d, j)) continue;
+            const tip = x + z / 2 + d * (z * 0.36 + nudge), back = tip - d * z * 0.2;
+            ctx.beginPath(); ctx.moveTo(back, y + z * 0.26); ctx.lineTo(tip, y + z / 2); ctx.lineTo(back, y + z * 0.74); ctx.stroke();
+          }
+        }
+      }
+    } else {
+      const d = kind === 'gate>' ? 1 : -1, same = (k) => !!k && !k.g && k.kind === kind;
+      ctx.fillStyle = hexA(color, 0.13); ctx.fillRect(x, this.Y(h), z, h * z);
+      const field = ctx.createLinearGradient(x, 0, x + z, 0); // (a sheen across it, the way it lets her through)
+      const p = (t * 0.9 + c * 0.13) % 1, at = d > 0 ? p : 1 - p;
+      field.addColorStop(Math.max(0, at - 0.25), hexA(color, 0)); field.addColorStop(at, hexA(color, 0.22)); field.addColorStop(Math.min(1, at + 0.25), hexA(color, 0));
+      ctx.fillStyle = field; ctx.fillRect(x, this.Y(h), z, h * z);
+      ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.strokeStyle = hexA(color, 0.9); ctx.lineWidth = Math.max(1, z / 12);
+      const cols = L ? L.cols : [];
+      if (!same(cols[c - 1])) line(ctx, x + 0.75, this.Y(0), x + 0.75, this.Y(h));
+      if (!same(cols[c + 1])) line(ctx, x + z - 0.75, this.Y(0), x + z - 0.75, this.Y(h));
+      ctx.setLineDash([Math.max(2, z * 0.18), Math.max(2, z * 0.14)]); line(ctx, x, this.Y(h) + 0.75, x + z, this.Y(h) + 0.75); ctx.setLineDash([]);
+      if (z >= 8) { // (arrows running through it, its way, fading in and out)
+        ctx.shadowBlur = 4; ctx.lineWidth = Math.max(1.2, z / 8); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        for (let j = 0; j < h; j++) {
+          const q = (t * 0.8 + j * 0.27 + c * 0.11) % 1, cx = x + z * (d > 0 ? 0.18 + 0.64 * q : 0.82 - 0.64 * q), y = this.Y(j + 1);
+          ctx.strokeStyle = hexA('#b8ffdc', Math.sin(Math.PI * q) * 0.95);
+          ctx.beginPath(); ctx.moveTo(cx - d * z * 0.13, y + z * 0.28); ctx.lineTo(cx + d * z * 0.09, y + z / 2); ctx.lineTo(cx - d * z * 0.13, y + z * 0.72); ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+  // a bounce zone: its span (from the column she comes to it in to its last bouncer) shaded faintly to over its
+  // walls, edged dashed, a "bounce zone" tag at its top left (its rect kept for the hover card)
+  bounceZone(L, bz, t, hot) {
+    const { ctx, z } = this;
+    let high = 0;
+    for (let c = bz.c0; c < bz.c1; c++) { const k = L.cols[c]; if (k && !k.g) high = Math.max(high, k.h, k.top || 0, k.ceil ? k.ceil + 1 : 0); }
+    const x0 = this.X(bz.c0), x1 = this.X(bz.c1), top = this.Y(high + 3);
+    ctx.save();
+    const g = ctx.createLinearGradient(0, top, 0, this.oy);
+    g.addColorStop(0, hexA('#ff2bd6', hot ? 0.1 : 0.05)); g.addColorStop(1, hexA('#ff2bd6', hot ? 0.16 : 0.09));
+    ctx.fillStyle = g; ctx.fillRect(x0, top, x1 - x0, this.oy - top);
+    ctx.strokeStyle = hexA('#ff2bd6', hot ? 0.75 : 0.4); ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]); ctx.lineDashOffset = -(t * 14) % 11;
+    ctx.beginPath(); ctx.moveTo(x0 + 0.75, this.oy); ctx.lineTo(x0 + 0.75, top + 0.75); ctx.lineTo(x1 - 0.75, top + 0.75); ctx.lineTo(x1 - 0.75, this.oy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '700 10px "Chakra Petch", sans-serif';
+    const label = 'bounce zone', w = ctx.measureText(label).width + 12, lx = Math.max(x0 + 4, Math.min(RULER_LEFT + 6, x1 - w - 4)), ly = top + 4;
+    ctx.fillStyle = hexA('#ff2bd6', hot ? 0.95 : 0.8); roundRect(ctx, lx, ly, w, 16, 5); ctx.fill();
+    ctx.fillStyle = '#1a0016'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, lx + 6, ly + 8.5);
+    ctx.restore();
+    this.zoneLabels.push({ x0: lx, x1: lx + w, y0: ly, y1: ly + 16, zone: bz });
+  }
+
   barrier(c, ceil, t) {
     const { ctx, z } = this;
     const x = this.X(c), y = this.Y(ceil + 1), h = z;
@@ -226,12 +338,30 @@ export class CourseView {
     ctx.restore();
   }
 
+  // a floating block: its courses from its underside to its top (a hay-topped one hay on top), its silhouette where it
+  // meets air, the dance floor on its top, and the bright underside her head must clear when she goes under it
+  floating(c, bottom, top, kind, look, t, left, right) {
+    const { ctx, z } = this;
+    const x = this.X(c);
+    if (z < 6) { ctx.fillStyle = kind === 'hay' ? HAY.fill : look.crateLit; ctx.fillRect(x, this.Y(top), z + 0.5, (top - bottom) * z); }
+    else for (let j = bottom; j < top; j++) this.block(kind === 'hay' || (kind === 'mix' && j === top - 1) ? 'hay' : 'crate', x, this.Y(j + 1), look, c, j);
+    const same = (k) => k && !k.g && k.top === top && k.ceil === bottom;
+    ctx.strokeStyle = kind === 'hay' ? HAY.edge : look.crateEdge; ctx.lineWidth = Math.max(1, Math.min(2, z / 10));
+    if (!same(left)) line(ctx, x + 0.5, this.Y(bottom), x + 0.5, this.Y(top));
+    if (!same(right)) line(ctx, x + z - 0.5, this.Y(bottom), x + z - 0.5, this.Y(top));
+    const tile = DISCO[(c + Math.floor(t * 5)) % 3];
+    ctx.fillStyle = hexA(tile, 0.85); ctx.fillRect(x + 1, this.Y(top) - Math.max(1.5, z * 0.09), z - 2, Math.max(1.5, z * 0.09));
+    ctx.save(); ctx.shadowColor = '#29e7ff'; ctx.shadowBlur = 8;
+    ctx.fillStyle = '#9ef6ff'; ctx.fillRect(x, this.Y(bottom) - 1, z, 2.5);
+    ctx.restore();
+  }
+
   gauntlet(sp, rows, hot, t, c0, c1) {
     const { ctx, z } = this;
     const x0 = this.X(sp.c0), width = sp.c1 - sp.c0;
     if (!rows) { ctx.fillStyle = 'rgba(255,194,58,0.12)'; ctx.fillRect(x0, this.Y(12), width * z, 12 * z); return; }
     const n = rows.length, fake = { ctx, z };
-    const tint = { '#': '#3a2711', S: '#ff4426', H: '#0d4a59', C: '#ff4426', B: '#ff2bd6', R: '#b45cff', L: '#b45cff', '>': '#3dff8a', X: '#f4ff5a' };
+    const tint = { '#': '#3a2711', S: '#ff4426', H: '#0d4a59', C: '#ff4426', B: '#ff2bd6', R: '#b45cff', L: '#b45cff', '(': '#ff2b4a', ')': '#ff2b4a', '~': '#ff6a1a', '^': '#7dff4a', '>': '#3dff8a', X: '#f4ff5a' };
     const a = Math.max(sp.c0, c0) - sp.c0, b = Math.min(sp.c1 - 1, c1) - sp.c0;
     ctx.fillStyle = '#0e0919'; ctx.fillRect(this.X(sp.c0 + Math.max(0, a)), this.Y(n), (Math.max(0, b - a + 1)) * z, n * z);
     for (let i = 0; i < n; i++) {
@@ -245,6 +375,12 @@ export class CourseView {
       }
     }
     if (z >= 6) for (let i = 0; i < n; i++) for (let c = Math.max(0, a); c <= Math.min(width - 1, b); c++) if (rows[i][c] === 'S' || rows[i][c] === 'C') bladeOf.call(fake, this.X(sp.c0 + c) + z / 2, this.Y(n - i), z);
+    if (z >= 6) for (let i = 0; i < n; i++) for (let c = Math.max(0, a); c <= Math.min(width - 1, b); c++) if (rows[i][c] === '^') springOf.call(fake, this.X(sp.c0 + c) + z / 2, this.Y(n - i), t, false); // (a maze's spring: the course's pad)
+    if (z >= 6) { // its lasers' beams, dashed faintly along the air (grid.js beamCells)
+      ctx.save(); ctx.strokeStyle = 'rgba(255,43,74,0.55)'; ctx.lineWidth = Math.max(1, z / 16); ctx.setLineDash([Math.max(3, z * 0.25), Math.max(3, z * 0.2)]);
+      for (const bm of beamCells(rows)) if (bm.c1 >= bm.c0) { const y = this.Y(n - bm.i) + z / 2; line(ctx, this.X(sp.c0 + (bm.d > 0 ? bm.c + 1 : bm.c)), y, this.X(sp.c0 + (bm.d > 0 ? bm.c1 + 1 : bm.c0)), y); }
+      ctx.restore();
+    }
     // its frame, and its name plate
     ctx.save();
     ctx.strokeStyle = hot ? '#ffd36a' : 'rgba(255,194,58,0.6)'; ctx.lineWidth = hot ? 2 : 1.25; ctx.setLineDash(hot ? [] : [6, 4]);
@@ -314,6 +450,101 @@ export class CourseView {
     if (selected) { ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.arc(cx, cy, r * 1.8, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
   }
 
+  // a wall laser set into a wall's or a block's side (zz: { x, row, dir }): its turret in the face at its row's middle,
+  // a short barrel out of it the way it fires, its lens glowing red; and the game's charge pointer, a thin dashed red
+  // line along its reach (on L: none without one) to a dot where its beam stops
+  laser(L, zz, t, selected) {
+    const { ctx, z } = this;
+    const d = zz.dir ? 1 : -1, fx = this.X(zz.x / U), y = this.Y(zz.row + 0.5);
+    const bw = Math.max(4, z * 0.34), bh = Math.max(6, z * 0.56), barrel = Math.max(3, z * 0.24), lens = Math.max(2, z * 0.12);
+    ctx.save();
+    if (L) {
+      const [x0, x1] = laserReach(L, zz), end = this.X((d > 0 ? x1 : x0) / U);
+      if ((end - fx) * d > barrel + 1) {
+        const glow = 0.55 + 0.25 * Math.sin(t * 6 + zz.x);
+        ctx.strokeStyle = `rgba(255,43,74,${glow.toFixed(3)})`; ctx.lineWidth = Math.max(1, z * 0.06);
+        ctx.setLineDash([Math.max(4, z * 0.35), Math.max(3, z * 0.25)]); ctx.lineDashOffset = -t * 20;
+        line(ctx, fx + d * (barrel + lens), y, end, y);
+        ctx.setLineDash([]);
+        ctx.shadowColor = '#ff2b4a'; ctx.shadowBlur = Math.min(10, z * 0.5);
+        ctx.fillStyle = '#ff2b4a'; ctx.beginPath(); ctx.arc(end - d * Math.max(1.5, z * 0.08), y, Math.max(1.8, z * 0.09), 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+    // the turret, in the wall: dark, edged red; its barrel; its lens
+    const bx = d > 0 ? fx - bw : fx;
+    ctx.fillStyle = '#1a0a12'; ctx.fillRect(bx, y - bh / 2, bw, bh);
+    ctx.strokeStyle = 'rgba(255,43,74,0.75)'; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, y - bh / 2 + 0.5, bw - 1, bh - 1);
+    ctx.fillStyle = '#3a1420'; ctx.fillRect(d > 0 ? fx : fx - barrel, y - Math.max(1.2, z * 0.08), barrel, Math.max(2.4, z * 0.16));
+    const flicker = 0.75 + 0.25 * Math.sin(t * 23 + zz.x * 3.7);
+    ctx.shadowColor = '#ff2b4a'; ctx.shadowBlur = Math.min(16, z * 0.9);
+    ctx.fillStyle = `rgba(255,43,74,${(0.9 * flicker + 0.1).toFixed(3)})`; ctx.beginPath(); ctx.arc(fx + d * barrel, y, lens, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffd0d8'; ctx.beginPath(); ctx.arc(fx + d * barrel, y, Math.max(0.9, lens * 0.4), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    if (selected) { ctx.save(); ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.lineDashOffset = -t * 20; ctx.beginPath(); ctx.arc(fx, y, Math.max(9, z * 0.75), 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+  }
+
+  // lava from x (CSS px) len cells along the surface at y (CSS px): molten orange, glowing, bubbling
+  lava(x, len, y, t, selected) {
+    const { ctx, z } = this;
+    const w = len * z, th = Math.max(3, z * 0.36);
+    ctx.save();
+    const glow = ctx.createLinearGradient(0, y - z * 1.2, 0, y);
+    glow.addColorStop(0, 'rgba(255,106,26,0)'); glow.addColorStop(1, `rgba(255,106,26,${(0.28 + 0.08 * Math.sin(t * 3)).toFixed(3)})`);
+    ctx.fillStyle = glow; ctx.fillRect(x, y - z * 1.2, w, z * 1.2);
+    const g = ctx.createLinearGradient(0, y - th * 0.4, 0, y + th);
+    g.addColorStop(0, '#ffd36a'); g.addColorStop(0.35, '#ff6a1a'); g.addColorStop(1, '#5a1204');
+    ctx.shadowColor = '#ff6a1a'; ctx.shadowBlur = Math.min(14, z * 0.8);
+    ctx.fillStyle = g; ctx.fillRect(x, y - th * 0.4, w, th * 1.4);
+    ctx.shadowBlur = 0;
+    if (z >= 7) { // (bubbles, rising and popping)
+      for (let k = 0; k < len * 2; k++) {
+        const ph = (t * 0.9 + k * 0.37) % 1, bx = x + ((k + 0.5) / (len * 2)) * w + Math.sin(k * 7.1) * z * 0.12;
+        ctx.fillStyle = `rgba(255,211,106,${(0.8 * (1 - ph)).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(bx, y - ph * z * 0.35, Math.max(1, z * (0.05 + 0.05 * ph)), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+    if (selected) { ctx.save(); ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.lineDashOffset = -t * 20; ctx.strokeRect(x - 2, y - z * 0.6, w + 4, z * 0.6 + th + 2); ctx.restore(); }
+  }
+
+  spring(x, y, t, selected) { springOf.call(this, x, y, t, selected); } // (the pad: GridView's, drawn the same in a maze's '^' cells)
+  // a spring's lift handle: over its pad, as many rows up as its lift (her feet's height off it, about), on a dashed stem
+  springHandle(L, p) { const floor = surfaceAt(L, p.x); return { x: this.X(p.x / U), y: this.Y(floor + p.power), floor: this.Y(floor) }; }
+  springLift(L, p, t) {
+    const { ctx, z } = this;
+    const h = this.springHandle(L, p);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(244,255,90,0.75)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.lineDashOffset = -t * 12;
+    line(ctx, h.x, h.floor - Math.max(6, z * 0.7), h.x, h.y + 6); ctx.setLineDash([]);
+    ctx.fillStyle = '#f4ff5a'; ctx.beginPath(); ctx.arc(h.x, h.y, 5.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#1a1a00'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#1a1a00'; ctx.beginPath(); ctx.moveTo(h.x - 2.5, h.y - 0.5); ctx.lineTo(h.x, h.y - 3); ctx.lineTo(h.x + 2.5, h.y - 0.5); ctx.moveTo(h.x - 2.5, h.y + 0.5); ctx.lineTo(h.x, h.y + 3); ctx.lineTo(h.x + 2.5, h.y + 0.5); ctx.fill();
+    ctx.font = '700 10px "Chakra Petch", sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#f4ff5a';
+    ctx.fillText(`lift ${p.power}`, h.x + 9, h.y);
+    ctx.restore();
+  }
+  // her flight off a spring (level_check's arc: her feet every 0.05 s, lifted 0.3 m so it reads as her body's path): a
+  // dotted lime line, marching, a ring where she lands; red dots and a red ✕ where it ends anywhere else
+  springArc(arc, t) {
+    const { ctx, z } = this;
+    if (!arc.path || arc.path.length < 2) return;
+    const ok = arc.end === 'landed', color = ok ? '#7dff4a' : '#ff2b4a', lift = 0.3 / U;
+    const pts = arc.path.map(([x, y]) => [this.X(x / U), this.Y(y / U + lift)]);
+    if (pts[pts.length - 1][0] < RULER_LEFT || pts[0][0] > this.w) return;
+    ctx.save();
+    ctx.strokeStyle = color; ctx.globalAlpha = 0.85; ctx.lineWidth = Math.max(2, Math.min(4.5, z * 0.11)); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.setLineDash([0.1, Math.max(5, z * 0.38)]); ctx.lineDashOffset = -t * 18;
+    ctx.shadowColor = color; ctx.shadowBlur = 6;
+    ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    const [ex, ey] = pts[pts.length - 1], r = Math.max(4, z * 0.3);
+    if (ok) { ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ex, ey, r * (1 + 0.15 * Math.sin(t * 5)), 0, Math.PI * 2); ctx.stroke(); }
+    else { ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(ex - r, ey - r); ctx.lineTo(ex + r, ey + r); ctx.moveTo(ex + r, ey - r); ctx.lineTo(ex - r, ey + r); ctx.stroke(); }
+    ctx.restore();
+  }
+
   finish(length, t, hot) {
     const { ctx, z } = this;
     const x = this.X(length / U);
@@ -338,7 +569,7 @@ export class CourseView {
   finishHandle(length) { const top = this.Y(Math.max(10, Math.min(this.rowsUp - 1, 14))); return { x: this.X(length / U), y: top - 6, top }; }
 
   // what's changed since the save: the saved walls dashed where they differ, new ones tinted, columns taken out marked,
-  // saws and disco balls added ringed green and removed ones ghosted in red, the saved finish line a ghost flag
+  // saws, disco balls, lasers, lava and springs added ringed green and removed ones ghosted in red, the saved finish line a ghost flag
   changes(d, c0, c1, t) {
     const { ctx, z } = this;
     const X = (cx) => this.X(cx), Y = (cy) => this.Y(cy);
@@ -354,9 +585,9 @@ export class CourseView {
       r.was.forEach((k, i) => { // (the saved column's wall and barrier, as they were)
         const x = X(r.c0 + i);
         ctx.fillStyle = 'rgba(244,255,90,0.07)'; ctx.fillRect(x, Y(Math.max(k.h, 0.15)), z, Math.max(k.h, 0.15) * z);
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = BOUNCE[k.kind] ? hexA(BOUNCE[k.kind], 0.9) : 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5; // (a bouncer was there: in its colour)
         if (k.h) ctx.strokeRect(x + 1, Y(k.h) + 1, z - 2, k.h * z - 2); else { ctx.beginPath(); ctx.moveTo(x + 1, this.oy - 1); ctx.lineTo(x + z - 1, this.oy - 1); ctx.stroke(); }
-        if (k.ceil) { ctx.strokeStyle = 'rgba(158,246,255,0.9)'; ctx.strokeRect(x + 1, Y(k.ceil + 1) + 1, z - 2, z - 2); }
+        if (k.ceil) { ctx.strokeStyle = 'rgba(158,246,255,0.9)'; const top = k.top || k.ceil + 1; ctx.strokeRect(x + 1, Y(top) + 1, z - 2, (top - k.ceil) * z - 2); }
       });
     }
     ctx.setLineDash([]);
@@ -385,6 +616,16 @@ export class CourseView {
     }
     for (const p of d.discos.added) ring(X(p.x / U), Y(p.y / U), '#3dff8a', false);
     for (const p of d.discos.removed) { ctx.globalAlpha = 0.4; this.disco(X(p.x / U), Y(p.y / U), t, 0, false); ctx.globalAlpha = 1; ring(X(p.x / U), Y(p.y / U), '#ff2b4a', true); }
+    const surface = (x) => { const k = cols && cols[colAt(x)]; return k && !k.g ? k.top || k.h : 0; };
+    for (const p of d.lasers.added) ring(X(p.x / U), Y(p.row + 0.5), '#3dff8a', false);
+    for (const p of d.lasers.removed) { ctx.globalAlpha = 0.4; this.laser(null, p, t, false); ctx.globalAlpha = 1; ring(X(p.x / U), Y(p.row + 0.5), '#ff2b4a', true); }
+    for (const p of d.lava.added) { ctx.strokeStyle = '#3dff8a'; ctx.lineWidth = 2; ctx.strokeRect(X(p.x / U) - 2, Y(surface(p.x)) - z * 0.6, p.len * z + 4, z * 0.9); }
+    for (const p of d.lava.removed) {
+      ctx.globalAlpha = 0.4; this.lava(X(p.x / U), p.len, Y(surface(p.x)), t, false); ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#ff2b4a'; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.strokeRect(X(p.x / U) - 2, Y(surface(p.x)) - z * 0.6, p.len * z + 4, z * 0.9); ctx.setLineDash([]);
+    }
+    for (const p of d.springs.added) ring(X(p.x / U), Y(surface(p.x)) - z * 0.35, '#3dff8a', false);
+    for (const p of d.springs.removed) { ctx.globalAlpha = 0.4; this.spring(X(p.x / U), Y(surface(p.x)), t, false); ctx.globalAlpha = 1; ring(X(p.x / U), Y(surface(p.x)) - z * 0.35, '#ff2b4a', true); }
     if (d.finish) { // (the saved finish line: a ghost flag)
       const x = X(d.finish.ghost / U);
       if (x > RULER_LEFT && x < this.w) {
@@ -501,7 +742,8 @@ export class CourseView {
     if (p.kind === 'wall') {
       for (const { c, h, kind } of p.cols) {
         ctx.globalAlpha = 0.55;
-        for (let j = 0; j < h; j++) this.block(kind === 'hay' || (kind === 'mix' && j === h - 1) ? 'hay' : 'crate', this.X(c), this.Y(j + 1), look, c, j);
+        if (BOUNCE[kind]) this.bouncer(kind, c, h, t);
+        else for (let j = 0; j < h; j++) this.block(kind === 'hay' || (kind === 'mix' && j === h - 1) ? 'hay' : 'crate', this.X(c), this.Y(j + 1), look, c, j);
         ctx.globalAlpha = 1; ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
         ctx.strokeRect(this.X(c) + 0.75, this.Y(Math.max(h, 0.15)) + 0.75, z - 1.5, Math.max(h, 0.15) * z - 1.5);
       }
@@ -511,11 +753,28 @@ export class CourseView {
         if (p.remove) { ctx.strokeStyle = '#ff2b4a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(this.X(c) + 1, this.Y(p.r + 1) + 1, z - 2, z - 2); }
         else if (p.ok(c)) this.barrier(c, p.r, t);
       }
+    } else if (p.kind === 'block') {
+      for (let c = Math.min(p.c0, p.c1); c <= Math.max(p.c0, p.c1); c++) {
+        if (p.remove) { ctx.strokeStyle = '#ff2b4a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(this.X(c) + 1, this.Y(p.top) + 1, z - 2, (p.top - p.bottom) * z - 2); continue; }
+        ctx.globalAlpha = 0.6;
+        if (p.ok(c)) this.floating(c, p.bottom, p.top, p.kind2, look, t);
+        ctx.globalAlpha = 1; ctx.strokeStyle = p.ok(c) ? '#f4ff5a' : '#ff2b4a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+        ctx.strokeRect(this.X(c) + 0.75, this.Y(p.top) + 0.75, z - 1.5, (p.top - p.bottom) * z - 1.5);
+      }
     } else if (p.kind === 'saw') {
       ctx.globalAlpha = 0.7; this.saw(this.X(p.x / U), this.Y(p.h), p.cube, t, false);
       if (!p.ok) { ctx.globalAlpha = 1; this.cross(this.X(p.x / U), this.Y(p.h) - 10); }
     } else if (p.kind === 'disco') {
       ctx.globalAlpha = 0.7; this.disco(this.X(p.x / U), this.Y(p.y / U), t, 0, false);
+    } else if (p.kind === 'laser') {
+      ctx.globalAlpha = 0.7; this.laser(p.ok ? this._L : null, p, t, false);
+      if (!p.ok) { ctx.globalAlpha = 1; this.cross(this.X(p.x / U), this.Y(p.row + 1) - 10); }
+    } else if (p.kind === 'lava') {
+      ctx.globalAlpha = 0.7; this.lava(this.X(p.x / U), p.len, this.Y(p.floor), t, false);
+      if (!p.ok) { ctx.globalAlpha = 1; this.cross(this.X(p.x / U + p.len / 2), this.Y(p.floor) - 12); }
+    } else if (p.kind === 'spring') {
+      ctx.globalAlpha = 0.7; this.spring(this.X(p.x / U), this.Y(p.floor), t, false);
+      if (!p.ok) { ctx.globalAlpha = 1; this.cross(this.X(p.x / U), this.Y(p.floor) - z - 10); }
     } else if (p.kind === 'cols') {
       this.band(p.c0, p.c1, p.remove ? '#ff2b4a' : '#f4ff5a', false, t);
       if (!p.remove) { ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 3; line(ctx, this.X(Math.max(p.c0, p.c1) + 1), RULER_TOP, this.X(Math.max(p.c0, p.c1) + 1), this.oy + 6); }
@@ -604,9 +863,11 @@ export class CourseView {
     for (let c = 0; c < cols.length; c++) {
       const k = cols[c];
       if (k.g) continue;
-      if (k.h) { ctx.fillStyle = k.kind === 'hay' ? '#8a6a20' : hexA(look.accent, 0.55); ctx.fillRect(X(c * U), Y(k.h), Math.max(1, U * sx), k.h * sy); }
-      if (k.ceil) { ctx.fillStyle = '#f4ff5a'; ctx.fillRect(X(c * U), Y(k.ceil + 1), Math.max(1, U * sx), Math.max(1, sy)); }
+      if (k.h) { ctx.fillStyle = BOUNCE[k.kind] ? hexA(BOUNCE[k.kind], k.kind === 'bumper' ? 0.9 : 0.6) : k.kind === 'hay' ? '#8a6a20' : hexA(look.accent, 0.55); ctx.fillRect(X(c * U), Y(k.h), Math.max(1, U * sx), k.h * sy); }
+      if (k.top) { ctx.fillStyle = k.kind === 'hay' ? '#c99a2e' : hexA(look.accent, 0.8); ctx.fillRect(X(c * U), Y(k.top), Math.max(1, U * sx), (k.top - k.ceil) * sy); }
+      else if (k.ceil) { ctx.fillStyle = '#f4ff5a'; ctx.fillRect(X(c * U), Y(k.ceil + 1), Math.max(1, U * sx), Math.max(1, sy)); }
     }
+    for (const bz of bounceZones(L)) { ctx.fillStyle = 'rgba(255,43,214,0.16)'; ctx.fillRect(X(bz.c0 * U), 3, (bz.c1 - bz.c0) * U * sx, H - 6); } // (the bounce zones)
     for (const sp of spans(L)) {
       const rows = s.grids[sp.name];
       const n = rows ? rows.length : 12;
@@ -618,6 +879,9 @@ export class CourseView {
     }
     ctx.fillStyle = '#ff4426'; for (const x of L.saws) ctx.fillRect(X(x) - 1, Y(cols[colAt(x)] && !cols[colAt(x)].g ? cols[colAt(x)].h : 0) - 3, 2.5, 3);
     ctx.fillStyle = '#ffffff'; for (const d of L.discos) ctx.fillRect(X(d.x) - 1, Y(d.y / U) - 1, 2, 2);
+    ctx.fillStyle = '#ff6a1a'; for (const f of L.lava || []) ctx.fillRect(X(f.x), Y(surfaceAt(L, f.x)) - 2, Math.max(2, f.len * U * sx), 2.5);
+    ctx.fillStyle = '#7dff4a'; for (const p of L.springs || []) ctx.fillRect(X(p.x) - 1, Y(surfaceAt(L, p.x)) - 3.5, 2.5, 3.5);
+    ctx.fillStyle = '#ff2b4a'; for (const zz of L.lasers || []) ctx.fillRect(X(zz.x) - 1, Y(zz.row + 0.5) - 1, 2.5, 2.5);
     if (s.game && s.game.trace && s.overlays.bot) {
       ctx.strokeStyle = 'rgba(41,231,255,0.9)'; ctx.lineWidth = 1.2; ctx.beginPath();
       s.game.trace.forEach((p, i) => (i ? ctx.lineTo(X(p[0]), Y((p[1] + p[2] * U) / U)) : ctx.moveTo(X(p[0]), Y((p[1] + p[2] * U) / U)))); ctx.stroke();

@@ -1354,7 +1354,7 @@ void Game::hudDev() {
         // straight to the maze gauntlet (the first level with one: it jumps there if this level has none)
         bs.push_back({debugNearGauntlet_ ? "Gauntlet: armed" : "Jump to gauntlet", debugNearGauntlet_ ? St::On : St::Plain, [this] {
             debugNearGauntlet_ = !debugNearGauntlet_;
-            if (debugNearGauntlet_ && !Campaign::gauntletOf(campaign_.level()) && Campaign::gauntletLevel()) campaign_.debugSetLevel(Campaign::gauntletLevel());
+            if (debugNearGauntlet_ && !Campaign::gauntletOf(campaign_.level(), campaign_.catalog()) && Campaign::gauntletLevel(campaign_.catalog())) campaign_.debugSetLevel(Campaign::gauntletLevel(campaign_.catalog()));
         }});
         bs.push_back({boost_ == Boost::Surge ? "Overdrive start: armed" : "Free Overdrive Start", boost_ == Boost::Surge ? St::On : St::Plain,
                       [this] { boost_ = Boost::Surge; }});

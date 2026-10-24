@@ -42,10 +42,11 @@ void reading() {
     check(d->course.size() == 4 && d->course[1].cells == 5 && d->course[1].h == 2 && d->course[1].kind == WallKind::Hay && d->course[1].ceil == 6 &&
               d->course[2].kind == WallKind::Mix && d->course[2].ceil == 0,
           "...its walls: how long, how high, their kind, a barrier over one");
-    check(d->saws.size() == 2 && d->saws[1] == 22.5 && d->discos.size() == 1 && d->discos[0].y == 1.45, "...its saws, its disco balls");
+    check(d->xsOf(kSawHazard).size() == 2 && d->xsOf(kSawHazard)[1] == 22.5 && d->countOf(kDiscoHazard) == 1 && d->items.back().at(1) == 1.45,
+          "...its saws, its disco balls");
     check(levelText(*d) == kSmall, "...and it writes back as it was");
     const auto defaults = parseLevel(9, "length 300\ncourse\n500 0 crate\n", &why);
-    check(defaults && defaults->raids == -1 && defaults->diffOffset == 35 * 8 && defaults->saws.empty(),
+    check(defaults && defaults->raids == -1 && defaults->diffOffset == 35 * 8 && defaults->items.empty(),
           "left out: raids by the game's own rule, the difficulty band its level's");
 }
 

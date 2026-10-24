@@ -128,6 +128,28 @@ void shatter() {
     check(la.heroVerts.size() == lb.heroVerts.size() && la.heroVerts[100].pos == lb.heroVerts[100].pos, "the same crash seed breaks the same way");
 }
 
+// burned up (lava): she chars black, her embers in her edges (her rim), not a glow all over her (a textured hen glows
+// by its emissive wherever its texels are warm: all over)
+void burn() {
+    Hen h;
+    if (!h.canShatter()) { check(false, "the Classic model can burn"); return; }
+    h.nodes[size_t(h.root)].pos = {5, 1, 0};
+    h.burn({8, 0, 0}, 1.f, 3);
+    check(h.shattered() && h.breakup() == Hen::Breakup::Char, "burned: she breaks up charring");
+    for (int i = 0; i < 60; ++i) h.updateShatter(1.f / 60);
+    RenderList l;
+    h.emit(l);
+    float brightest = 0, emissive = 0, rim = 0;
+    for (const auto& bucket : l.buckets[size_t(Pass::LitTwoSided)])
+        for (const Instance& i : bucket) {
+            brightest = std::max({brightest, i.color.r, i.color.g, i.color.b});
+            emissive = std::max(emissive, glm::length(glm::vec3(i.emissive)));
+            rim = std::max(rim, i.rim.w);
+        }
+    check(brightest < 0.15f, "...a second on: charred black");
+    check(emissive < 0.3f && rim > 1.f, "...smouldering: her embers in her edges, not a glow all over her");
+}
+
 } // namespace
 
 int main() {
@@ -135,5 +157,6 @@ int main() {
     procedural();
     model();
     shatter();
+    burn();
     return finish("Hen");
 }

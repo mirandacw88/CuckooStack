@@ -66,6 +66,20 @@ test('a block lifted leaves what its sides have; flipped, its gates turn round; 
   assert.deepEqual(G.extract(corridor, 0, 2, 1, 2), [[null, '.']], 'a door never lifts');
 });
 
+test('wall lasers: stone with one in its left or right face, its beam along its row through the air', () => {
+  const rows = ['#####', '(...)', '#..#)', '>...X', '#####'];
+  assert.deepEqual(G.beamCells(rows), [
+    { c: 0, i: 1, d: -1, c0: 0, c1: -1 },  // (firing left off the grid: no beam)
+    { c: 4, i: 1, d: 1, c0: 5, c1: 4 },
+    { c: 4, i: 2, d: 1, c0: 5, c1: 4 },
+  ]);
+  assert.deepEqual(G.beamCells(['.)..#', '..(.#']), [{ c: 1, i: 0, d: 1, c0: 2, c1: 3 }, { c: 2, i: 1, d: -1, c0: 0, c1: 1 }]);
+  assert.ok(G.SOLID.has('(') && G.SOLID.has(')') && !G.CELL['='], 'solid as stone; the old beam cell is gone');
+  assert.deepEqual(G.flip([['(', '.', '#']]), [['#', '.', ')']], 'flipped, they turn round');
+  assert.deepEqual([G.CELL['('].key, G.CELL[')'].key, G.CELL['~'].key], ['[', ']', '=']);
+  assert.equal(G.vacate(['#(..#', '#(..#'], 2, 0, 3, 1)[0], '#(##' + '#', 'a laser beside a lifted block leaves plain stone');
+});
+
 test('notes: blades side by side, a hole one wide; and the cells changed', () => {
   const blades = ['##########', '#........#', '>........X', '##SS#.####', '##########'];
   const notes = G.lints(blades);
@@ -94,4 +108,15 @@ test('where she can start in a maze: on a floor, room over her, never in a doorâ
   assert.equal(G.standable(g, 4, 5), null, 'on a blade: it would get her');
   assert.equal(G.standable(g, 3, 3), null, 'in a wall');
   assert.equal(G.standable(g, 0, 5), null, 'never a doorâ€™s column');
+});
+
+test('a spring: a cell with a key and a tip, solid, lifted as stone, and never a place to start', () => {
+  const spring = G.CELLS.find((c) => c.ch === '^');
+  assert.ok(spring && spring.name === 'Spring' && spring.key === '\\' && spring.tip, 'it is in the palette');
+  assert.ok(G.SOLID.has('^'), 'solid: a floor');
+  const floor = ['##########', '#........#', '#........#', '>........X', '###^######'];
+  assert.equal(G.setCell(floor, 5, 4, '^')[4], '###^#^####', 'painted like any cell');
+  assert.equal(G.standable(floor, 3, 3), null, 'on a spring she would be launched: no place to start');
+  assert.equal(G.vacate(['#^.#'], 2, 0, 2, 0)[0], '#^##', 'lifted from beside a spring it leaves stone, never a second spring');
+  assert.equal(G.vacate(['#^.#'], 1, 0, 1, 0)[0], '##.#', 'and a spring lifted itself leaves what its neighbour has: stone');
 });

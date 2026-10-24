@@ -45,6 +45,7 @@ public:
     static constexpr float kFinishCelebration = 5.5f;
     static constexpr float kMinReplaySeconds = 3.f; // shorter runs make no replay clip
     enum class State { Title, Play, Dead };
+    enum class Death { Crash, Sliced, Burned }; // how the hen's run ended (die)
 
     explicit Game(const GameServices& services);
 
@@ -124,6 +125,8 @@ public:
     bool worldOnScreen(const glm::vec3& p, glm::vec2& px) const { return camera_.project(p, px); } // (tests: HUD points)
     float progressBarBottom() const { return barBottom_; }
     float henHeight() const { return hen_.nodes[hen_.root].pos.y; }
+    // what's under her feet (either side of her middle): a floating block's top when she's up on it
+    double supportY() const { return std::max(level_.floorAt(x_ - 0.22, baseY_), level_.floorAt(x_ + 0.22, baseY_)) * U; }
     bool streetBelowHen() const { return level_.heightAt(state_ == State::Dead ? double(hen_.nodes[hen_.root].pos.x) : x_) <= 0; }
     bool replayTooShort() const { return replayTooShort_; }
     int coins() const { return wallet_.coins(); }
@@ -136,12 +139,16 @@ private:
     static constexpr int MAXE = 8;
 
     // cut: how far a saw has sawn through it (0: not being sawn; GameSaw.cpp)
-    struct Egg { glm::vec3 pos{0.f}, rot{0.f}, scale{0.001f}; float age = 0, sway = 0, jig = 0, jd = 0; int ring = 0; float ringRot = 0, cut = 0; };
-    // EggHalf: half of a sawn egg (its rot is an axis * angle tumble on top of `basis`, its orientation when sawn);
-    // Yolk: the yolk spilling out of it; Blade: a saw blade smashed off its slot by OVERDRIVE
-    enum class DebrisKind { Egg, Shard, Spark, Feather, EggHalf, Yolk, Blade };
-    // (zapped: an egg the droid's laser knocked out of the stack: it glows and crackles blue as it flies, at first)
-    struct Debris { DebrisKind kind; glm::vec3 pos, rot, scale, v, w; float life, ph; int ring; glm::mat3 basis{1.f}; bool zapped = false; };
+    // (drop: an egg over one a laser cut out, still falling onto the one below, metres; burn: the egg under her heating
+    // on lava, 0 .. 1 as she crosses the cell)
+    struct Egg { glm::vec3 pos{0.f}, rot{0.f}, scale{0.001f}; float age = 0, sway = 0, jig = 0, jd = 0; int ring = 0; float ringRot = 0, cut = 0, drop = 0, dropV = 0, burn = 0; };
+    // EggHalf: half of a sawn egg (its rot is an axis * angle tumble on top of `basis`, its orientation when sawn; a
+    // laser's halves are cut level, their cut faces red-hot); Yolk: the yolk spilling out of it; Blade: a saw blade
+    // smashed off its slot by OVERDRIVE; Burnt: an egg burning in lava, charring, sinking, crumbling to ash
+    enum class DebrisKind { Egg, Shard, Spark, Feather, EggHalf, Yolk, Blade, Burnt };
+    // (zapped: an egg the droid's laser knocked out of the stack: it glows and crackles blue as it flies, at first;
+    // heat: a laser's halves' cut faces glowing, 1 .. 0)
+    struct Debris { DebrisKind kind; glm::vec3 pos, rot, scale, v, w; float life, ph; int ring; glm::mat3 basis{1.f}; bool zapped = false; float heat = 0; };
     struct Splat { glm::vec3 pos; float sx, sy, scale, age, k; };
     enum class PopKind { Groove, Sector, Perfect, Surge, Smashed };
     struct Popup { glm::vec3 world; std::string text; PopKind kind; float age, dur; };
@@ -158,7 +165,9 @@ private:
     void perfect(float top);
     void closeCall(float top, const char* label = "CLOSE CALL");
     static constexpr float kNearChain = 1.2f; // near misses this close (game seconds) chain
-    void die(bool ceiling);
+    // the hen's end: a crash (into a wall, `ceiling`: up into a barrier), cut in half by a laser's beam at `cutY`, or
+    // burned up in lava (Death)
+    void die(bool ceiling, Death how = Death::Crash, float cutY = 0);
     void updatePlay(float dt, float rdt);
     void updateHen(float dt);
     void titleIdle(float dt);
@@ -196,6 +205,26 @@ private:
     void emitSaws(RenderList& out, float pz);
     void emitSawBlade(RenderList& out, const glm::mat4& hub, float spin, glm::vec3 teeth, float glowK);
     void emitSawDebris(RenderList& out, const Debris& d);
+    // wall lasers (GameLaser.cpp): charging as she comes near, firing as its row meets her: an egg cut out of her stack
+    // level with the beam, or the hen cut in half; the turrets, their pointers and beams drawn
+    void updateLasers(float dt);
+    int laserMeets(const Laser& z, bool* brush) const;
+    void coolLasers(float dt);
+    void laserEgg(Laser& z, size_t i);
+    void laserHen(Laser& z);
+    void emitLasers(RenderList& out, float pz);
+    // lava (GameLava.cpp): the egg under her burning a cell at a time, the hen burning up; the molten floor drawn
+    void updateLava(float dt);
+    void burnEgg(const Lava& f);
+    void burnHen(const Lava& f);
+    void emitLava(RenderList& out, float pz);
+    // springs (GameSpring.cpp): she runs over one and is launched; the pad and its coil drawn
+    void collectDiscos(double topNow);
+    void updateSprings(float dt);
+    void launchSpring(Spring& s);
+    void springFx(Spring& s); // (its boing, sparks and rings, the stack's jig: launchSpring's, and a maze's)
+    void emitSprings(RenderList& out, float pz);
+    void emitBurnt(RenderList& out, const Debris& d);
     void updateCamera(float rdt);
     void updateAmbient(float dt);
 
@@ -291,8 +320,10 @@ private:
     Shockwaves rings_;
     Camera camera_;
     RenderList list_;
-    FontAtlas fonts_;
-    HudImage hudIcons_;
+    // the text's SDF atlas and the HUD's sprites: one each for every game in the process (built by the first game that
+    // asks: a second or more of work, once; then the play-test and every bot run read them)
+    const FontAtlas& fonts_;
+    const HudImage& hudIcons_;
     std::unique_ptr<TextLayout> text_;
 
     State state_ = State::Title;
@@ -321,6 +352,16 @@ private:
     PlacedGauntlet gIn_{};
     int gDir_ = 1;
     int gMoves_ = 0, gBotLay_ = -99; // cells her front edge has crossed in it (and bounces); when the bot last laid
+    // a spring's flight in a maze (GameGauntlet.cpp): the solver's plan (Gauntlet::flightFrom), the time into it, the bounces
+    // played so far. Her x and height follow it exactly, so she lands where the solver says
+    bool gFly_ = false;
+    Gauntlet::Flight gPlan_;
+    double gFlyT_ = 0;
+    size_t gFlyBounce_ = 0;
+    Spring* mazeSpringAt(int col, int row); // (the pad drawn on a maze's or a zone's spring cell, or null)
+    void flyGauntlet(float dt);
+    void launchGauntlet(int col, int row, double over); // (a spring cell under her middle: the flight, `over` seconds into it)
+    bool gBounced_ = false;          // her last move a bounce: she's still in the column she bounced in, as the solver has her
     float gK_ = 0, gLead_ = 1, henYaw_ = 0, gFlash_ = 0;
     // a squeeze in a maze: her head brushing what's over her since this time (-1: none), over this many columns; it's
     // a CLOSE CALL when it ends, unless a near miss came in it
@@ -332,6 +373,7 @@ private:
     int nearChain_ = 0;
     glm::vec3 gFlashAt_{0.f};
     double maxX_ = 0;
+    bool headless_ = false;          // setHeadless
     bool debugNearGauntlet_ = false; // developer menu: the next run starts just before its level's gauntlet
     bool debugNearGauntletEvery_ = false; // (every run, not just the next: the level editor's play-test)
     PlayTest playTest_{};                 // the level editor's play-test: its level, where every run starts
@@ -354,6 +396,15 @@ private:
     // the slash of light along the cut as a sawn egg falls apart (real seconds since; < 0: none)
     struct SawSlash { glm::vec3 pos{0.f}; float angle = 0, t = -1; } sawSlash_;
     float sawZoom_ = 0; // ...and the camera's punch in on it (1 at the split, easing out)
+    // lasers: the hen dropping onto what's left after a beam cut an egg out under her (metres still to fall); lava: the
+    // cell of it she's on (its start and the cell's index along it: a new one burns an egg; -1: off it)
+    float henDrop_ = 0, henDropV_ = 0;
+    bool zapped_ = false, brushed_ = false; // a laser hit her (its beam passed over her head) this pass: none again till she's out of every reach
+    double lavaAt_ = -1;
+    int lavaCell_ = -1;
+    bool launched_ = false; // a spring has her in the air (till she's down on a surface)
+    int springsFired_ = 0;  // this run (tests)
+    Death death_ = Death::Crash;
     std::vector<Splat> splats_;
     std::vector<Popup> popups_;
 
@@ -511,6 +562,9 @@ public:
     const std::vector<double>& droidRaidPlan() const { return raidPlan_; }
     void debugDroidRaid(int shots); // developer menu / tests: a raid now (in a run)
     void debugSeed(uint64_t seed) { rng_ = FastRandom(seed * 2654435761ull + 1); } // tests: a repeatable run (before press())
+    // a game nobody sees (the checkers' and the level editors' bot runs: BotRun.h): no render list built, each update
+    // the game's logic alone (on an iPad, most of a frame's work)
+    void setHeadless(bool headless) { headless_ = headless; }
     // developer menu: the bot plays (GameBot.cpp)
     struct BotOptions { bool on = false, loop = false, sloppy = false; int spare = 0; };
     BotOptions botOptions() const { return {bot_.on, bot_.loop, bot_.sloppy, bot_.spare}; }
@@ -533,11 +587,25 @@ public:
     int runDirection() const { return gDir_; }
     double furthest() const { return std::max(x_, maxX_); }
     void debugNearGauntlet(bool everyRun = false) { debugNearGauntlet_ = true; debugNearGauntletEvery_ = everyRun; }
-    // the level editor's play-test (PlayTest, above): every run on its level, from where it says
+    // the level editor's play-test (PlayTest, above): every run on its level, from where it says; none of the screens
+    // between runs (a rank up, the daily drop, a streak, the primers: queueScreen)
     void debugPlayTest(const PlayTest& t) { playTest_ = t; }
     float meterEggs() const { return meter_; } // tests: the eggs in the meter
     float henBase() const { return float(baseY_); } // tests: the floor her stack stands on, metres
     bool debugSaw(double ahead, bool cube = false);
+    // tests: a wall laser in a face `ahead` metres on, its beam `height` eggs up from the surface there, firing `dir`,
+    // its reach `reach` metres (no wall needed); lava `cells` long from `ahead` metres on
+    bool debugLaser(double ahead, int height, int dir = -1, double reach = 6);
+    bool laserZapped() const { return zapped_; }
+    glm::vec3 debugFlashColor() const { return flashColor_; } // tests: the screen flash's colour (a death's)
+    bool debugLava(double ahead, int cells);
+    bool debugSpring(double ahead, int power); // tests: a spring `ahead` metres on, on the surface there
+    const std::vector<Spring>& springs() const { return level_.springs; }
+    int springsFired() const { return springsFired_; }
+    bool launched() const { return launched_; }
+    double henSpeedY() const { return vy_; }
+    const std::vector<Laser>& lasers() const { return level_.lasers; }
+    const std::vector<Lava>& lavas() const { return level_.lavas; }
     // tests: the sawn eggs' halves and yolks flying about (their centres), and the close calls this run
     std::vector<glm::vec3> eggHalves() const { std::vector<glm::vec3> v; for (const auto& d : debris_) if (d.kind == DebrisKind::EggHalf) v.push_back(d.pos); return v; }
     std::vector<glm::vec3> zappedEggs() const { std::vector<glm::vec3> v; for (const auto& d : debris_) if (d.zapped) v.push_back(d.pos); return v; }
@@ -548,6 +616,10 @@ public:
     int perfects() const { return run_.perfects; }
     float timeScale() const { return timeScale_; } // (tests: the slow motion a near miss brings on)
     bool sawing() const { return cutSawX_ >= 0; }
+    // tests: eggs burning in lava, how she died, the hen's pieces (a sliced hen's two)
+    int burntEggs() const { int n = 0; for (const auto& d : debris_) n += d.kind == DebrisKind::Burnt; return n; }
+    Death death() const { return death_; }
+    float eggBurn() const { return eggs_.empty() ? 0.f : eggs_.front().burn; }
 private:
     // after a crash the hen is stood on a clear, flat patch of ground behind the wall it hit (showroomSpot)
     bool showPlaced_ = false;

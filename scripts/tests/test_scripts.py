@@ -11,7 +11,9 @@
     build (no hand edits), every grid described and well formed, the first drafts still building, and a grid reading
     back as it was saved (the level editor saves through it);
   - scripts/levels/build_levels.py: the committed LevelLayouts.inc is what the level files in assets/levels build,
-    levels 1-30 each with its file, and a level refitted to its gauntlet's grid grown or shrunk (the level editor).
+    levels 1-30 each with its file, and a level refitted to its gauntlet's grid grown or shrunk (the level editor);
+  - scripts/chunks/build_chunks.py: the committed ChunkLayouts.inc is what the chunk files in assets/chunks build, only
+    chunk files read (ids by Chunk.h's rule), and a chunk built into the .inc the way LevelCatalog.cpp includes it.
 
 The image tests need Pillow and numpy (python3 -m pip install pillow numpy); without them they're skipped.
 """
@@ -239,6 +241,79 @@ class BuildLevels(unittest.TestCase):
             for name in self.mod.gauntlets_in(level):
                 width = int(next(line for line in level.split("\n") if line.endswith(" 0 gauntlet " + name)).split()[0])
                 self.assertEqual(self.mod.refit(self.mod.refit(level, name, width + 3), name, width), level, "level %d: refitted and back" % n)
+
+
+class BuildChunks(unittest.TestCase):
+    def setUp(self):
+        self.mod = load("scripts/chunks/build_chunks.py", "build_chunks")
+
+    def test_committed_chunks_are_what_the_files_build(self):
+        self.assertEqual(self.mod.render(), read(self.mod.OUT), "ChunkLayouts.inc is stale (re-run scripts/chunks/build_chunks.py)")
+
+    def test_ids_follow_the_chunk_files_rule(self):
+        for good in ("a", "sacred-wells", "hurdles_2", "x" * 60):
+            self.assertTrue(self.mod.valid_id(good), good)
+        for bad in ("", "Sacred", "two words", "../x", "a.b", "x" * 61, None, 3):
+            self.assertFalse(self.mod.valid_id(bad), repr(bad))
+
+    def test_only_chunk_files_are_built_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in (("wells.txt", "chunk course\nranges 1-5\n---\nlength 30\n"), ("arch.txt", "chunk course\nranges 2\n---\nlength 31\n"),
+                               ("Bad Name.txt", "x"), (".gitkeep", ""), ("notes.md", "x")):
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            self.assertEqual([c for c, _ in self.mod.chunks(tmp)], ["arch", "wells"], "by id; a name that isn't an id, or isn't a .txt, is left out")
+            out = self.mod.render(tmp)
+            self.assertIn('{"arch", R"CHUNK(chunk course\nranges 2\n---\nlength 31\n)CHUNK"},\n{"wells", R"CHUNK(', out)
+            self.assertNotIn("Bad", out)
+            target = os.path.join(tmp, "out.inc")
+            self.mod.write(target, tmp)
+            self.assertEqual(read(target), out)
+            with open(os.path.join(tmp, "evil.txt"), "w") as f:
+                f.write("x)CHUNK\"y")
+            with self.assertRaises(ValueError):
+                self.mod.render(tmp)
+
+    def test_none_built_in_when_the_folder_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.mod.chunks(tmp), [])
+            self.assertNotIn("R\"CHUNK", self.mod.render(tmp))
+
+
+class UITestScheme(unittest.TestCase):
+    """platforms/ios/make_ui_test_scheme.py: the editor's own scheme is written beside the UI tests' (Xcode makes no
+    scheme for a target a shared scheme already names, so without it the project had no CuckooEditor scheme)"""
+
+    PBX = ("\t\tAAAAAAAAAAAAAAAAAAAAAAAA /* CuckooEditor */ = {\n\t\t\tisa = PBXNativeTarget;\n"
+           "\t\tBBBBBBBBBBBBBBBBBBBBBBBB /* CuckooEditorUITests */ = {\n\t\t\tisa = PBXNativeTarget;\n")
+
+    def setUp(self):
+        self.mod = load("platforms/ios/make_ui_test_scheme.py", "make_ui_test_scheme")
+
+    def build_dir(self, tmp, pbx):
+        proj = os.path.join(tmp, "CuckooStack.xcodeproj")
+        os.makedirs(proj)
+        with open(os.path.join(proj, "project.pbxproj"), "w") as f:
+            f.write(pbx)
+        return proj
+
+    def test_writes_the_editor_scheme_and_the_ui_test_scheme(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            proj = self.build_dir(tmp, self.PBX)
+            self.assertEqual(self.mod.main(__import__("pathlib").Path(tmp)), 0)
+            out = os.path.join(proj, "xcshareddata", "xcschemes")
+            self.assertEqual(sorted(os.listdir(out)), ["CuckooEditor.xcscheme", "CuckooEditorUITests.xcscheme"])
+            for name in ("CuckooEditor", "CuckooEditorUITests"):
+                text = read(os.path.join(out, name + ".xcscheme"))
+                self.assertIn('BlueprintIdentifier = "AAAAAAAAAAAAAAAAAAAAAAAA"', text, name + ": builds and runs the editor")
+                self.assertIn("<LaunchAction", text, name + ": Run launches the editor")
+                self.assertIn('<TestableReference skipped = "NO">', text, name + ": Test runs the UI tests")
+
+    def test_no_test_target_writes_nothing(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            proj = self.build_dir(tmp, self.PBX.split("\t\tBBBB")[0])
+            self.assertEqual(self.mod.main(__import__("pathlib").Path(tmp)), 0)
+            self.assertFalse(os.path.exists(os.path.join(proj, "xcshareddata")))
 
 
 if __name__ == "__main__":

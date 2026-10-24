@@ -184,8 +184,8 @@ void Hen::emitModel(RenderList& out, const std::vector<glm::mat4>& world) const 
         out.add(Pass::Lit, MeshId(int(m.firstMesh) + r)) = makeLit(bodyWorld, regionMaterial(r));
 }
 
-void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed) {
-    if (!canShatter()) return;
+// the hen as posed now, in world space (shatterRest_), and each of the model's shards' centre (count: its vertices)
+std::vector<glm::vec3> Hen::breakPose(std::vector<int>& count) {
     const HenModel& m = model();
     shatterModel_ = skin.model;
     const std::vector<glm::mat4> world = worldTransforms();
@@ -195,26 +195,45 @@ void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t s
     const glm::mat3 bodyRot = glm::mat3(bodyWorld);
     shatterRest_.resize(posed.size());
     std::vector<glm::vec3> sum(size_t(m.shardCount), glm::vec3(0.f));
-    std::vector<int> cnt(size_t(m.shardCount), 0);
+    count.assign(size_t(m.shardCount), 0);
     size_t k = 0;
     for (int r = 0; r < m.regions; ++r)
         for (const HenModel::V& v : m.verts[size_t(r)]) {
             const glm::vec3 p = glm::vec3(bodyWorld * glm::vec4(posed[k].pos, 1.f));
             shatterRest_[k] = {p, glm::normalize(bodyRot * posed[k].normal), v.uv};
             sum[size_t(v.shard)] += p;
-            ++cnt[size_t(v.shard)];
+            ++count[size_t(v.shard)];
             ++k;
         }
-    uint32_t state = seed * 747796405u + 2891336453u;
-    auto rnd = [&state](float lo, float hi) {
+    for (size_t i = 0; i < sum.size(); ++i) if (count[i]) sum[i] /= float(count[i]);
+    return sum;
+}
+
+namespace {
+
+struct Rnd {
+    uint32_t state;
+    explicit Rnd(uint32_t seed) : state(seed * 747796405u + 2891336453u) {}
+    float operator()(float lo, float hi) {
         state = state * 747796405u + 2891336453u;
         const uint32_t w = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
         return lo + (hi - lo) * float((w >> 22u) ^ w) / 4294967296.f;
-    };
-    shards_.assign(size_t(m.shardCount), {});
+    }
+};
+
+} // namespace
+
+void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed) {
+    if (!canShatter()) return;
+    std::vector<int> cnt;
+    const std::vector<glm::vec3> centre = breakPose(cnt);
+    Rnd rnd(seed);
+    shards_.assign(centre.size(), {});
+    pieceOf_.resize(centre.size());
     for (size_t i = 0; i < shards_.size(); ++i) {
+        pieceOf_[i] = int(i);
         Shard& s = shards_[i];
-        s.c0 = s.c = cnt[i] ? sum[i] / float(cnt[i]) : impact;
+        s.c0 = s.c = cnt[i] ? centre[i] : impact;
         glm::vec3 out = s.c0 - impact + glm::vec3(rnd(-0.2f, 0.2f), rnd(0.f, 0.3f), rnd(-0.2f, 0.2f));
         out = glm::length(out) > 1e-4f ? glm::normalize(out) : glm::vec3(0, 1, 0);
         s.v = out * rnd(2.5f, 6.f) + velocity * 0.45f + glm::vec3(0, rnd(1.5f, 3.5f), rnd(-1.f, 1.f));
@@ -222,6 +241,68 @@ void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t s
         s.angle = 0.f;
         s.spin = rnd(5.f, 14.f) * (rnd(0, 1) < 0.5f ? -1.f : 1.f);
     }
+    breakup_ = Breakup::Glass;
+    floorY_ = floorY;
+    shatterT_ = 0.f;
+    shattered_ = true;
+}
+
+// Two pieces, the model's shards above the cut and those below: the top half thrown up and on, tumbling over; the
+// bottom half toppling back where it stood
+void Hen::slice(float cutY, glm::vec3 velocity, float floorY, uint32_t seed) {
+    if (!canShatter()) return;
+    std::vector<int> cnt;
+    const std::vector<glm::vec3> centre = breakPose(cnt);
+    Rnd rnd(seed);
+    pieceOf_.resize(centre.size());
+    glm::vec3 sum[2] = {glm::vec3(0.f), glm::vec3(0.f)};
+    int n[2] = {0, 0};
+    for (size_t i = 0; i < centre.size(); ++i) {
+        const int piece = centre[i].y >= cutY ? 0 : 1;
+        pieceOf_[i] = piece;
+        sum[piece] += centre[i] * float(cnt[i]);
+        n[piece] += cnt[i];
+    }
+    shards_.assign(2, {});
+    for (int p = 0; p < 2; ++p) {
+        Shard& s = shards_[size_t(p)];
+        s.c0 = s.c = n[p] ? sum[p] / float(n[p]) : glm::vec3(0.f, cutY, 0.f);
+        if (p == 0) { // the top: thrown up and on, turning end over end
+            s.v = glm::vec3(velocity.x * 0.55f + rnd(0.6f, 1.2f), rnd(3.2f, 4.2f), rnd(0.8f, 1.6f));
+            s.axis = glm::normalize(glm::vec3(rnd(-0.3f, 0.3f), rnd(-0.3f, 0.3f), 1.f));
+            s.spin = -rnd(4.f, 6.f);
+        } else { // the bottom: toppling back, slowly
+            s.v = glm::vec3(velocity.x * 0.15f, rnd(0.6f, 1.2f), rnd(-0.3f, 0.3f));
+            s.axis = glm::vec3(0.f, 0.f, 1.f);
+            s.spin = rnd(1.5f, 2.5f);
+        }
+        s.angle = 0.f;
+    }
+    breakup_ = Breakup::Slice;
+    cutY_ = cutY;
+    floorY_ = floorY;
+    shatterT_ = 0.f;
+    shattered_ = true;
+}
+
+// The shards, scarcely moving: she slumps where she stood, charring, and crumbles into ash sinking into the lava
+void Hen::burn(glm::vec3 velocity, float floorY, uint32_t seed) {
+    if (!canShatter()) return;
+    std::vector<int> cnt;
+    const std::vector<glm::vec3> centre = breakPose(cnt);
+    Rnd rnd(seed);
+    shards_.assign(centre.size(), {});
+    pieceOf_.resize(centre.size());
+    for (size_t i = 0; i < shards_.size(); ++i) {
+        pieceOf_[i] = int(i);
+        Shard& s = shards_[i];
+        s.c0 = s.c = cnt[i] ? centre[i] : glm::vec3(0.f, floorY, 0.f);
+        s.v = glm::vec3(velocity.x * 0.08f + rnd(-0.4f, 0.4f), rnd(-0.2f, 0.9f), rnd(-0.4f, 0.4f));
+        s.axis = glm::normalize(glm::vec3(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)) + glm::vec3(0.001f));
+        s.angle = 0.f;
+        s.spin = rnd(0.5f, 2.f) * (rnd(0, 1) < 0.5f ? -1.f : 1.f);
+    }
+    breakup_ = Breakup::Char;
     floorY_ = floorY;
     shatterT_ = 0.f;
     shattered_ = true;
@@ -230,13 +311,18 @@ void Hen::shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t s
 void Hen::updateShatter(float dt) {
     if (!shattered_) return;
     shatterT_ += dt;
+    const bool charred = breakup_ == Breakup::Char;
+    // (ash: it holds together a beat as it burns, then falls apart, sinking below the surface)
+    const float gravity = charred ? (shatterT_ < 0.7f ? 0.f : 4.f) : 14.f;
+    const float rest = charred ? -0.25f : 0.04f;
     for (Shard& s : shards_) {
-        s.v.y -= 14.f * dt;
+        if (charred && shatterT_ < 0.7f) { s.angle += s.spin * dt * 0.2f; continue; }
+        s.v.y -= gravity * dt;
         s.c += s.v * dt;
         s.angle += s.spin * dt;
-        if (s.c.y < floorY_ + 0.04f && s.v.y < 0.f) { // bounce, scattering on the ground
-            s.c.y = floorY_ + 0.04f;
-            s.v.y = -s.v.y * 0.3f;
+        if (s.c.y < floorY_ + rest && s.v.y < 0.f) { // bounce, scattering on the ground (ash: sinking)
+            s.c.y = floorY_ + rest;
+            s.v.y = charred ? 0.f : -s.v.y * 0.3f;
             s.v.x *= 0.55f; s.v.z *= 0.55f;
             s.spin *= 0.5f;
         }
@@ -254,21 +340,46 @@ void Hen::emitShards(RenderList& out) const {
     size_t k = 0;
     for (int r = 0; r < m.regions; ++r)
         for (const HenModel::V& v : m.verts[size_t(r)]) {
-            const size_t si = size_t(v.shard);
+            const size_t si = size_t(pieceOf_.empty() ? v.shard : pieceOf_[size_t(v.shard)]);
             const Shard& s = shards_[si];
             const Vertex& rest = shatterRest_[k++];
             out.heroVerts.push_back({s.c + rot[si] * ((rest.pos - s.c0) * fade), rot[si] * rest.normal, rest.uv});
         }
-    // glassy: a bright, cool fresnel edge on every shard
     out.heroFirst = m.firstMesh;
     out.heroMeshes = m.regions;
     out.heroModel = shatterModel_;
     for (int r = 0; r < m.regions; ++r) {
         LitMaterial l = m.textured() ? regionMaterial(r) : material(kRegionMat[r]);
-        l.rimColor = glm::vec3(0.75f, 0.95f, 1.f);
-        l.rimStrength = 3.2f;
-        l.rimPow = 2.f;
-        l.roughness = std::min(l.roughness, 0.18f);
+        switch (breakup_) {
+        case Breakup::Glass: // glassy: a bright, cool fresnel edge on every shard
+            l.rimColor = glm::vec3(0.75f, 0.95f, 1.f);
+            l.rimStrength = 3.2f;
+            l.rimPow = 2.f;
+            l.roughness = std::min(l.roughness, 0.18f);
+            break;
+        case Breakup::Slice: { // her own colours, the cut's heat glowing on her edges and fading
+            const float heat = std::max(0.f, 1.f - shatterT_ / 1.2f);
+            l.rimColor = glm::vec3(1.f, 0.35f, 0.12f) * (0.6f + 2.4f * heat);
+            l.rimStrength = 1.5f + 2.5f * heat;
+            l.rimPow = 2.4f;
+            l.emissive += glm::vec3(1.f, 0.25f, 0.05f) * 0.5f * heat;
+            break;
+        }
+        case Breakup::Char: { // charring black from her feet up, embers glowing in it, then ash
+            const float burnt = glm::smoothstep(0.f, 0.6f, shatterT_);
+            const float ember = (0.6f + 0.4f * std::sin(shatterT_ * 23.f + float(r))) * (1.f - glm::smoothstep(0.8f, kShatterLife, shatterT_));
+            l.color = glm::mix(l.color, glm::vec3(0.07f, 0.05f, 0.04f), burnt);
+            l.metalness *= 1.f - burnt;
+            l.roughness = glm::mix(l.roughness, 1.f, burnt);
+            // (a textured hen glows by its emissive wherever her texels are warm, which is all over: kept to a smoulder,
+            // the embers are in the rim, her edges glowing)
+            l.emissive = glm::mix(l.emissive, glm::vec3(1.f, 0.32f, 0.06f) * 0.12f * ember, burnt);
+            l.rimColor = glm::vec3(1.f, 0.4f, 0.1f) * (0.3f + 1.2f * ember);
+            l.rimStrength = 1.6f * burnt;
+            l.rimPow = 4.f;
+            break;
+        }
+        }
         out.add(Pass::LitTwoSided, MeshId(int(m.firstMesh) + r)) = makeLit(glm::mat4(1.f), l);
     }
 }

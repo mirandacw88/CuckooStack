@@ -124,11 +124,34 @@ class LevelEditorServer(unittest.TestCase):
         self.assertTrue(set(range(1, 31)) <= {lv["number"] for lv in data["levels"]})
         self.assertEqual(next(lv["text"] for lv in data["levels"] if lv["number"] == 13), self.level(13))
 
+    @unittest.skipUnless(os.path.exists(LEVEL_CHECKER), "build/level_check isn't built")
+    def test_serves_the_games_course_rules(self):  # (the forecourt Level::placeGauntlet lays: the editor lays it too)
+        status, rules = self.call("GET", "/api/rules")
+        self.assertEqual(status, 200)
+        self.assertTrue(rules["ok"], rules.get("error"))
+        self.assertEqual((rules["lintel"], rules["porch"], rules["bodyRows"], rules["budgetCap"]), (3, 8, 2, 8))
+        self.assertEqual(len(rules["forecourtByLevel"]), 100)
+        self.assertEqual(rules["forecourt"], max(rules["forecourtByLevel"]))
+        self.assertTrue(all(8 <= n <= 40 for n in rules["forecourtByLevel"]))
+        # the hazards' registry (Hazards.h): this editor has a tool and its words for each, and each wall kind
+        self.assertEqual([h["id"] for h in rules["hazards"]][:2], ["saw", "disco"])
+        with open(os.path.join(ROOT, "tools", "level_editor", "static", "js", "tools.js")) as f:
+            tools = f.read()
+        with open(os.path.join(ROOT, "tools", "level_editor", "static", "js", "tips.js")) as f:
+            tips = f.read()
+        for h in rules["hazards"]:
+            self.assertIn("id: '%s'" % h["id"], tools, "the web editor has no tool for the game's %s (tools.js, course.js)" % h["id"])
+            self.assertIn("'ltool.%s'" % h["id"], tips)
+            self.assertTrue(h["params"] and h["params"][0]["key"] == "x", h)
+        for k in rules["kinds"]:
+            self.assertIn("id: '%s'" % k["id"], tools)
+
     def test_turns_away_bad_requests(self):
         rows = self.grid("wells")[1]
         for body, why in [({"name": "../x", "rows": rows}, "name"), ({"name": "wells", "rows": []}, "rows"),
                           ({"name": "wells", "rows": rows[:3] + [rows[3][:-1]] + rows[4:]}, "width"),
                           ({"name": "wells", "rows": [rows[0].replace("#", "?", 1)] + rows[1:]}, "cell"),
+                          ({"name": "wells", "rows": [rows[0].replace("#", "=", 1)] + rows[1:]}, "the old laser beam cell"),
                           ({"name": "wells", "rows": rows, "level": "15"}, "level")]:
             self.assertEqual(self.call("POST", "/api/check", body)[0], 400, why)
         for body, why in [({"level": 0, "text": "length 30"}, "number"), ({"level": 3, "text": 4}, "text"),
@@ -169,12 +192,26 @@ class LevelEditorServer(unittest.TestCase):
         self.assertFalse(bad["ok"])
         self.assertIn("entry", bad["error"])
 
+    @unittest.skipUnless(os.path.exists(CHECKER), "build/gauntlet_check isn't built")
+    def test_a_spring_cell_is_flown_by_the_solver(self):  # ('^': a floor she's launched off: up 5 rows, over to a ledge here)
+        rows = ["#" * 34] + ["#" + "." * 32 + "#"] * 4 + ["#" + "." * 11 + "#" * 12 + "." * 9 + "#", "." * 12 + "#" * 12 + "." * 10, ">" + "." * 32 + "X", "#####^" + "#" * 28]
+        status, res = self.call("POST", "/api/check", {"name": "springy", "rows": rows})
+        self.assertEqual(status, 200)
+        self.assertTrue(res["ok"], res.get("error"))
+        self.assertTrue(res["solution"]["reachable"] and res["solution"]["routes"] == 1 and res["solution"]["softLocks"] == 0)
+        flown = [st for st in res["meter"][0]["steps"] if st[8] & 16]  # (flags: 16 = flown off a spring)
+        self.assertEqual(len(flown), 1, "one flight on the bot's way")
+        self.assertEqual(flown[0][:4], [4, 1, 0, 1], "from the move onto the pad at column 5")
+        self.assertEqual((res["hard"], res["wantMisses"]), (0, 15))
+        self.assertEqual(res["cellMap"][4][14], "w", "where she lands, on the ledge, is on the way through")
+        self.assertEqual(self.call("POST", "/api/check", {"name": "springy", "rows": [r.replace("^", "&") for r in rows]})[0], 400, "other cells are still turned away")
+
     @unittest.skipUnless(BOTH, "the checkers aren't built")
     def test_checks_a_grid_in_the_level_as_edited(self):
         # the wells grown a column, its level refitted to match (as the editor keeps them): placed where its span is
         desc, rows = self.grid("wells")
         wider = [r[:5] + r[4] + r[5:] for r in rows]
-        text = server.build_levels.refit(self.level(15), "wells", len(wider[0]))
+        text = server.build_levels.refit(self.level(15), "wells", len(wider[0]), BUILD)
         status, res = self.call("POST", "/api/check", {"name": "wells", "rows": wider, "level": 15, "levelText": text})
         self.assertEqual(status, 200)
         self.assertTrue(res["ok"] and res["course"]["placed"], res.get("error"))
@@ -194,7 +231,7 @@ class LevelEditorServer(unittest.TestCase):
         # with an unsaved grid standing in for the saved one (its level refitted)
         desc, rows = self.grid("gallery")
         wider = [r[:5] + r[4] + r[5:] for r in rows]
-        text = server.build_levels.refit(self.level(13), "gallery", len(wider[0]))
+        text = server.build_levels.refit(self.level(13), "gallery", len(wider[0]), BUILD)
         _, res = self.call("POST", "/api/levels/check", {"level": 13, "text": text, "grids": {"gallery": wider}})
         self.assertTrue(res["ok"], res.get("error"))
         self.assertEqual(res["gauntlets"][0]["cols"], len(wider[0]))
@@ -234,7 +271,7 @@ class LevelEditorServer(unittest.TestCase):
         after = self.level(15)
         self.assertEqual(res["refit"], {"15": after})
         self.assertIn("\n%d 0 gauntlet wells\n" % len(wider[0]), after)
-        self.assertEqual(after, server.build_levels.refit(before, "wells", len(wider[0])))
+        self.assertEqual(after, server.build_levels.refit(before, "wells", len(wider[0]), BUILD))
         with open(self.cfg.levels_inc) as f:
             self.assertEqual(f.read(), server.build_levels.render(self.cfg.levels))
 
@@ -267,6 +304,37 @@ class LevelEditorServer(unittest.TestCase):
         # a level laying a gauntlet there's none of: never saved
         status, res = self.call("PUT", "/api/levels/4", {"text": self.level(4).replace("\ncourse\n", "\ncourse\n30 0 gauntlet nope\n")})
         self.assertEqual(status, 409)
+
+    def test_renames_a_maze_and_the_level_that_lays_it(self):
+        before = self.level(11)
+        tomb = self.grid("tomb")
+        status, res = self.call("POST", "/api/gauntlet/rename", {"from": "tomb", "to": "sand_tomb"})
+        self.assertEqual(status, 200, res)
+        self.assertFalse(os.path.exists(os.path.join(self.cfg.grids, "tomb.txt")))
+        self.assertEqual(self.grid("sand_tomb"), tomb)  # (the same grid, by its new name)
+        after = self.level(11)
+        self.assertEqual(res["levels"], {"11": after})
+        self.assertEqual(after, re.sub(r"\n(\d+) 0 gauntlet tomb\n", lambda m: "\n%s 0 gauntlet sand_tomb\n" % m.group(1), before))
+        self.assertEqual(server.build_levels.gauntlets_in(after), ["sand_tomb"])
+        with open(self.cfg.inc) as f:
+            self.assertEqual(f.read(), server.build_gauntlets.render(self.cfg.grids))
+        with open(self.cfg.levels_inc) as f:
+            self.assertEqual(f.read(), server.build_levels.render(self.cfg.levels))
+        # renamed already (the device asking again): the same answer, nothing changed
+        status, again = self.call("POST", "/api/gauntlet/rename", {"from": "tomb", "to": "sand_tomb"})
+        self.assertEqual((status, again), (200, res))
+        # never onto another grid's name, never a bad name, never one there's none of
+        for body, why in (({"from": "sand_tomb", "to": "wells"}, "already"), ({"from": "wells", "to": "Wells!"}, "name"),
+                          ({"from": "nope", "to": "nope_two"}, "no gauntlet"), ({"from": "wells", "to": "wells"}, "already")):
+            status, res = self.call("POST", "/api/gauntlet/rename", body)
+            self.assertEqual(status, 409, body)
+            self.assertIn(why, res["error"])
+        self.assertEqual(self.grid("wells")[1], server.build_gauntlets.read_grid(os.path.join(ROOT, "assets", "gauntlets", "wells.txt"))[1])
+
+    def test_rename_in_touches_the_course_line_alone(self):
+        text = "; the tomb level\nlength 90\ncourse\n30 1 crate\n168  0 gauntlet tomb ; its maze\n40 0 gauntlet tombs\nsaws\n"
+        self.assertEqual(server.rename_in(text, "tomb", "crypt"),
+                         "; the tomb level\nlength 90\ncourse\n30 1 crate\n168  0 gauntlet crypt ; its maze\n40 0 gauntlet tombs\nsaws\n")
 
 
 if __name__ == "__main__":

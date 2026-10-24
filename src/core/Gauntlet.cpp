@@ -1,14 +1,34 @@
 #include "Gauntlet.h"
 
+#include "CourseRules.h"
+#include "Math.h"
+
 #include <algorithm>
 #include <deque>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <queue>
 
 namespace cs {
 
-std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std::string>& rowsTopFirst, std::string* error) {
+int Gauntlet::hardOf(const std::string& line) {
+    if (line.empty() || line[0] != ';') return -1;
+    size_t i = 1;
+    while (i < line.size() && line[i] == ' ') ++i;
+    if (line.compare(i, 5, "hard ") != 0) return -1;
+    const std::string n = line.substr(i + 5);
+    for (char ch : n) if (ch < '0' || ch > '9') return -1;
+    return n.empty() || n.size() > 2 ? -1 : std::min(10, std::stoi(n));
+}
+
+std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std::string>& allLines, std::string* error) {
+    std::vector<std::string> rowsTopFirst;
+    int hard = 0;
+    for (const std::string& line : allLines) {
+        if (!line.empty() && line[0] == ';') hard = std::max(hard, Gauntlet::hardOf(line));
+        else rowsTopFirst.push_back(line);
+    }
     auto fail = [&](const std::string& why) -> std::optional<Gauntlet> {
         if (error) *error = name + ": " + why;
         return std::nullopt;
@@ -16,6 +36,7 @@ std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std:
     if (rowsTopFirst.size() < 4) return fail("too few rows");
     Gauntlet g;
     g.name_ = name;
+    g.hard_ = hard;
     g.rows_ = int(rowsTopFirst.size());
     g.cols_ = int(rowsTopFirst.front().size());
     if (g.cols_ < 4) return fail("too few columns");
@@ -35,6 +56,10 @@ std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std:
             case 'L': k = Cell::GateL; break;
             case 'S': k = Cell::Saw; break;
             case 'C': k = Cell::CubeSaw; break;
+            case '(': k = Cell::LaserL; break;
+            case ')': k = Cell::LaserR; break;
+            case '~': k = Cell::Lava; break;
+            case '^': k = Cell::Spring; break;
             case '.': break;
             case '>':
                 if (c != 0) return fail("the entry '>' must be on the left edge");
@@ -52,7 +77,7 @@ std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std:
     if (entries != 1 || exits != 1) return fail("needs exactly one entry '>' and one exit 'X'");
     // closed: the top row and both edges solid but for the doors, each door tall enough for the hen
     for (int c = 0; c < g.cols_; ++c)
-        if (g.cells_[size_t((g.rows_ - 1) * g.cols_ + c)] == Cell::Air) return fail("the top row must be solid");
+        if (!g.solid(c, g.rows_ - 1)) return fail("the top row must be solid");
     auto door = [&](int c, int row, const char* what) -> std::string {
         if (row > 0 && !g.solid(c, row - 1)) return std::string(what) + " has no floor";
         for (int r = row; r < row + kBodyRows; ++r)
@@ -67,6 +92,35 @@ std::optional<Gauntlet> Gauntlet::parse(std::string name, const std::vector<std:
     g.entryTop_ = g.entryRow_;
     while (g.entryTop_ < g.rows_ && g.cells_[size_t(g.entryTop_ * g.cols_)] == Cell::Air) ++g.entryTop_;
     if (const std::string e = door(g.cols_ - 1, g.exitRow_, "the exit"); !e.empty()) return fail(e);
+    g.traceBeams();
+    return g;
+}
+
+// the lasers' beams: from each one's face along its row through the air, to the first cell that isn't
+void Gauntlet::traceBeams() {
+    beam_.assign(cells_.size(), 0);
+    beamCol_.assign(size_t(cols_), 0);
+    for (int r = 0; r < rows_; ++r)
+        for (int c = 0; c < cols_; ++c) {
+            const Cell k = cells_[size_t(r * cols_ + c)];
+            if (!laser(k)) continue;
+            const int d = k == Cell::LaserL ? -1 : 1;
+            for (int cc = c + d; cc >= 0 && cc < cols_ && cells_[size_t(r * cols_ + cc)] == Cell::Air; cc += d) {
+                beam_[size_t(r * cols_ + cc)] = 1;
+                beamCol_[size_t(cc)] = 1;
+            }
+        }
+}
+
+Gauntlet Gauntlet::zone(std::string name, int cols, int rows, std::vector<Cell> cells, int entryRow, int exitRow) {
+    Gauntlet g;
+    g.name_ = std::move(name);
+    g.zone_ = true;
+    g.cols_ = cols; g.rows_ = rows;
+    g.cells_ = std::move(cells);
+    g.cells_.resize(size_t(cols * rows), Cell::Air);
+    g.entryRow_ = entryRow; g.entryTop_ = rows; g.exitRow_ = exitRow;
+    g.traceBeams();
     return g;
 }
 
@@ -74,7 +128,7 @@ Gauntlet::Cell Gauntlet::at(int c, int r) const {
     if (r < 0) return Cell::Stone;                                    // the street
     if (c < 0) return Cell::Bumper;                                   // the entry's door, shut behind her
     if (c >= cols_) return r < exitRow_ ? Cell::Stone : Cell::Air;    // the porch past the exit
-    if (r >= rows_) return Cell::Stone;
+    if (r >= rows_) return zone_ ? Cell::Air : Cell::Stone;           // (a zone: the sky)
     return cells_[size_t(r * cols_ + c)];
 }
 
@@ -94,6 +148,10 @@ std::vector<std::string> Gauntlet::rowsTopFirst() const {
             case Cell::GateL: row += 'L'; break;
             case Cell::Saw: row += 'S'; break;
             case Cell::CubeSaw: row += 'C'; break;
+            case Cell::LaserL: row += '('; break;
+            case Cell::LaserR: row += ')'; break;
+            case Cell::Lava: row += '~'; break;
+            case Cell::Spring: row += '^'; break;
             }
         }
         out.push_back(row);
@@ -117,6 +175,24 @@ Gauntlet::Move Gauntlet::step(const State& s, int lay, State& out, StepInfo* inf
     for (int r = t.b; r < t.b + t.n + kBodyRows; ++r)
         if (solid(t.c, r)) return Move::Crash;
     t.k = lay ? kLayGap - 1 : std::max(0, s.k - 1);
+    // a laser's beam: in its reach (a column it crosses), the first time its row meets her this pass, at an egg it cuts
+    // that egg out (the ones over it drop), at her body it cuts her in half; stacking up through it, falling down
+    // through it (her bottom egg meets it first; with none, her body). Out of every reach: she can be hit again. One
+    // just over her head as she comes into its reach brushes it
+    auto meets = [&](int c, int floor) -> int { // the lowest row of her (stack, body) with a beam in column c: -1 none
+        for (int r = floor; r < floor + t.n + kBodyRows; ++r) if (beamAt(c, r)) return r;
+        return -1;
+    };
+    auto hit = [&](int floor, int r) -> bool { // false: she's cut in half
+        if (r >= floor + t.n) return false;
+        ++in.cut;
+        in.lastEgg = in.lastEgg || r == floor + t.n - 1; // (the egg right under her: a CLOSE SHAVE)
+        --t.n;
+        t.z = 1;
+        return true;
+    };
+    if (lay && !t.z && beamColumn(t.c)) // (the egg laid lifts her into it, where she is)
+        if (const int r = meets(t.c, t.b); r >= 0 && !hit(t.b, r)) return Move::Crash;
     const int a = t.c + t.d;
     const int feet = t.b + t.n;
     for (int r = feet; r < feet + kBodyRows; ++r)
@@ -136,22 +212,145 @@ Gauntlet::Move Gauntlet::step(const State& s, int lay, State& out, StepInfo* inf
     t.b = top;
     t.c = a;
     if (a >= cols_) { out = t; return Move::Exit; }
+    if (!beamColumn(a)) t.z = 0;
+    if (!t.z) {
+        if (const int r = meets(a, t.b); r >= 0 && !hit(t.b, r)) return Move::Crash;
+        if (!t.z && !beamColumn(t.c - t.d)) in.brush = beamAt(a, t.b + t.n + kBodyRows);
+    }
     const int before = t.b;
-    while (!solid(a, t.b - 1)) --t.b;
+    while (!solid(a, t.b - 1)) {
+        --t.b;
+        if (!t.z && beamAt(a, t.b) && !hit(t.b, t.b)) return Move::Crash; // (falling: her lowest meets it first)
+    }
     in.fell = before - t.b;
-    if (sawAt(a, t.b - 1)) {
+    int col = a;
+    if (springAt(a, t.b - 1)) { // a spring under her: launched, to land where the arc brings her down (no egg laid in the air)
+        const Flight f = flightFrom(a, t.b, t.n, t.d, t.z != 0);
+        if (f.end != Flight::End::Landed) return Move::Crash;
+        in.flew = true;
+        col = t.c = f.col;
+        t.b = f.floor;
+        t.d = f.dir;
+        t.k = 0;
+        t.z = f.zapped ? 1 : 0;
+        const int down = t.b;
+        while (!solid(col, t.b - 1)) --t.b; // (landed with her front edge over a hole: she drops in this cell)
+        in.fell = down - t.b;
+        if (springAt(col, t.b - 1)) return Move::Crash;
+    }
+    in.endCol = col;
+    if (sawAt(col, t.b - 1)) {
         if (t.n == 0) return Move::Crash;
         --t.n;
         in.sawn = true;
         in.lastEgg = t.n == 0;
+    } else if (lavaAt(col, t.b - 1)) { // (lava burns the egg under her as she comes onto each cell of it)
+        if (t.n == 0) return Move::Crash;
+        --t.n;
+        in.burned = true;
+        in.lastEgg = in.lastEgg || t.n == 0;
     }
-    in.squeeze = solid(a, t.b + t.n + in.sawn + kBodyRows); // (as she came into the cell: the blade's egg was still under her)
+    // (as she came into the cell: the blade's or the lava's egg was still under her, and the beam's)
+    in.squeeze = solid(col, t.b + t.n + in.sawn + in.burned + in.cut + kBodyRows);
     out = t;
     return Move::Ok;
 }
 
+double Gauntlet::Flight::xAt(double t) const {
+    constexpr double cps = kFlightSpeed / 0.6; // cells a second
+    double x = startCol + 0.5, last = 0;
+    int d = startDir;
+    for (const Bounce& b : bounces) {
+        if (b.t > t) break;
+        x += d * cps * (b.t - last);
+        last = b.t;
+        d = -d;
+    }
+    return x + d * cps * (t - last);
+}
+
+double Gauntlet::Flight::rowAt(double t) const {
+    const double vy = rules::springLaunch(kSpringPower);
+    return startRow + (vy * t - 0.5 * rules::kGravity * t * t) / 0.6;
+}
+
+double Gauntlet::Flight::vyAt(double t) const { return rules::springLaunch(kSpringPower) - rules::kGravity * t; }
+
+Gauntlet::Flight Gauntlet::flightFrom(int c, int b, int n, int d, bool zapped) const {
+    constexpr double dt = 1.0 / 240, cps = kFlightSpeed / 0.6, hb = 0.22 / 0.6, eps = 0.02, kMaxTime = 4.0;
+    Flight f;
+    f.startCol = c; f.startDir = d; f.startRow = b;
+    double xc = c + 0.5; // her middle, in cells
+    int dir = d;
+    int front = static_cast<int>(std::floor(xc + dir * hb)); // the column her front edge is in
+    auto ends = [&](Flight::End e, double t) { f.end = e; f.seconds = t; return f; };
+    for (int k = 1; k * dt <= kMaxTime; ++k) {
+        const double t = k * dt;
+        const double y = f.rowAt(t); // (her stack's foot, in rows)
+        const int r0 = static_cast<int>(std::floor(y + eps)), r1 = static_cast<int>(std::ceil(y + n + kBodyRows - eps)) - 1;
+        // a beam or a blade near her: what the game's lasers and saws would do isn't in the solver's flights. A laser that has
+        // hit her already (zapped) can't again while she's in the columns beams cross; out of them she can be hit, and a beam
+        // within a row of her stack or head (the game's hit or brush) ends her run here
+        zapped = zapped && beamColumn(front);
+        for (int cc = static_cast<int>(std::floor(xc - 1.5)); cc <= static_cast<int>(std::floor(xc + 1.5)); ++cc) {
+            if (beamColumn(cc) && !zapped)
+                for (int r = std::max(0, static_cast<int>(std::floor(y)) - 1); r <= static_cast<int>(std::ceil(y + n + kBodyRows)) + 1; ++r)
+                    if (beamAt(cc, r)) return ends(Flight::End::Wall, t);
+            for (int r = 0; r < rows_; ++r)
+                if (sawAt(cc, r) && std::abs(y - (r + 1)) < 0.9) return ends(Flight::End::Wall, t);
+        }
+        // the column her front edge comes into
+        const double nx = xc + dir * cps * dt;
+        const int nf = static_cast<int>(std::floor(nx + dir * hb));
+        bool moved = true;
+        if (nf != front) {
+            if (nf >= cols_) return ends(Flight::End::Wall, t); // (the exit, the porch: not by air)
+            for (int r = r0; r <= r1; ++r)
+                if (blocks(nf, r, dir)) {
+                    if (!bounces(nf, r, dir)) return ends(Flight::End::Wall, t);
+                    f.bounces.push_back({t, nf, r});
+                    dir = -dir;
+                    front = static_cast<int>(std::floor(xc + dir * hb));
+                    moved = false;
+                    break;
+                }
+            if (moved) front = nf;
+        }
+        if (moved) xc = nx;
+        const int ca = static_cast<int>(std::floor(xc - hb)), cb = static_cast<int>(std::floor(xc + hb));
+        // down: the highest floor under either side of her footprint, at or under her feet
+        if (f.vyAt(t) < 0) {
+            int support = 0;
+            for (int cc = ca; cc <= cb; ++cc)
+                for (int r = std::min(rows_, static_cast<int>(std::floor(y + 0.05))) - 1; r >= -1; --r)
+                    if (r < 0 || solid(cc, r)) { support = std::max(support, r + 1); break; }
+            if (y <= support + 1e-9) {
+                for (int cc = ca; cc <= cb; ++cc) { // (a blade, lava or a spring under her: not a landing the game would let be)
+                    const Cell under = at(cc, support - 1);
+                    if (support > 0 && (under == Cell::Saw || under == Cell::CubeSaw || under == Cell::Lava || under == Cell::Spring))
+                        return ends(Flight::End::Wall, t);
+                }
+                f.end = Flight::End::Landed;
+                f.seconds = t;
+                f.col = front;
+                f.floor = support;
+                f.dir = dir;
+                f.zapped = zapped && beamColumn(front);
+                return f;
+            }
+        }
+        // anything solid over her stack or body, under either side of her footprint, ends her run (a roof, a ledge's
+        // underside, a wall)
+        for (int cc = ca; cc <= cb; ++cc)
+            for (int r = r0; r <= r1; ++r)
+                if (solid(cc, r)) return ends(r >= static_cast<int>(std::floor(y + n + eps)) && cc == front ? Flight::End::Wall : Flight::End::Ceiling, t);
+    }
+    return ends(Flight::End::Wall, kMaxTime);
+}
+
 Gauntlet::State Gauntlet::stateAt(int i) const {
     State s;
+    s.z = i % 2; i /= 2;
     s.k = i % kLayGap; i /= kLayGap;
     s.d = i % 2 ? 1 : -1; i /= 2;
     s.n = i % (kMaxEggs + 1); i /= kMaxEggs + 1;
@@ -167,6 +366,10 @@ constexpr int kToCrash = -1, kToExit = -2;
 } // namespace
 
 void Gauntlet::computeCoReach() const {
+    // (a built-in gauntlet is shared by every game, the level editor's bot runs on their threads among them: the
+    // first to ask computes it, the others wait; never written again after)
+    static std::mutex once;
+    const std::lock_guard<std::mutex> lock(once);
     if (!costToExit_.empty()) return;
     const int n = stateCount();
     // every state's two moves (lay or not): the state they lead to, or the crash or the exit
@@ -356,8 +559,9 @@ std::vector<Gauntlet::NearMissAt> Gauntlet::nearMisses(const std::vector<TraceSt
         if (t.move == Move::Bounce) continue;
         const int c = t.s.c + t.s.d;
         if (t.info.exact) out.push_back({c, t.s.b + t.info.climbed, NearMiss::Perfect, i});
-        if (t.info.lastEgg) out.push_back({c, t.s.b + t.info.climbed - t.info.fell, NearMiss::Shave, i});
-        eventful = eventful || t.info.exact;
+        if (t.info.lastEgg) out.push_back({t.info.flew ? t.info.endCol : c, t.s.b + t.info.climbed - t.info.fell, NearMiss::Shave, i});
+        else if (t.info.brush) out.push_back({c, t.s.b + t.info.climbed, NearMiss::CloseCall, i}); // (a beam over her head)
+        eventful = eventful || t.info.exact || t.info.brush;
         if (t.info.fell) { end(); continue; }
         eventful = eventful || t.info.lastEgg;
         if (t.info.squeeze && t.move == Move::Ok) { ++run; last = {c, t.s.b + t.info.climbed}; continue; }
@@ -372,7 +576,7 @@ std::string Gauntlet::fingerprint() const {
     for (const std::string& row : rowsTopFirst()) {
         a += row + '/';
         std::string r(row.rbegin(), row.rend());
-        for (char& ch : r) ch = ch == '>' ? 'X' : ch == 'X' ? '>' : ch == 'R' ? 'L' : ch == 'L' ? 'R' : ch;
+        for (char& ch : r) ch = ch == '>' ? 'X' : ch == 'X' ? '>' : ch == 'R' ? 'L' : ch == 'L' ? 'R' : ch == '(' ? ')' : ch == ')' ? '(' : ch;
         m += r + '/';
     }
     return std::min(a, m);

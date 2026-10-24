@@ -8,7 +8,7 @@
 // with its id in index.html (tests/wiki.test.mjs checks there's one), and a case in visual() if it needs a new kind of
 // control.
 import { TIPS, CELL_TIP, setTip } from '/static/js/tips.js';
-import { LEVEL_TOOLS, GAUNTLET_TOOLS, KINDS, LEVEL_OVERLAYS, GAUNTLET_OVERLAYS } from '/static/js/tools.js';
+import { LEVEL_TOOLS, BOUNCER_TOOLS, GAUNTLET_TOOLS, KINDS, LEVEL_OVERLAYS, GAUNTLET_OVERLAYS } from '/static/js/tools.js';
 import { CourseView, ZONE_LOOK, K_COLORS, RULER_TOP, RULER_LEFT } from '/static/js/courseview.js';
 import { GridView, C as GC, RULER_TOP as G_TOP, RULER_LEFT as G_LEFT } from '/static/js/view.js';
 import * as K from '/static/js/course.js';
@@ -26,10 +26,13 @@ const svg = (paths, cls = '') => `<svg viewBox="0 0 24 24"${cls ? ` class="${cls
 const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ---- the samples: small courses, read by the editor's own parser (course.js), and a small maze gauntlet
-function level({ length, walls, saws = [], discos = [] }) { // walls: [cells, high, kind, barrier?] | [cells, 0, 'gauntlet', name]
+function level({ length, walls, saws = [], discos = [], lasers = [], lava = [], springs = [] }) { // walls: [cells, high, kind, barrier?, block top?] | [cells, 0, 'gauntlet', name]
   const lines = [`length ${length}`, 'difficulty 420 0.35', 'raids auto', 'course', ...walls.map((w) => w.join(' '))];
   if (saws.length) lines.push('saws', saws.join(' '));
   if (discos.length) lines.push('discos', ...discos.map((d) => d.join(' ')));
+  if (lasers.length) lines.push('lasers', ...lasers.map((z) => z.join(' '))); // [x (a side's column edge), row, fires right?]
+  if (lava.length) lines.push('lava', ...lava.map((f) => f.join(' ')));       // [x, cells]
+  if (springs.length) lines.push('springs', ...springs.map((p) => p.join(' '))); // [x, lift]
   return K.parseLevel(lines.join('\n') + '\n');
 }
 
@@ -47,6 +50,49 @@ const GRID = [
   '>.........R...B########C#####',
   '####S########################',
 ];
+// ...and a small one with the newer cells: wall lasers, one high in the left wall firing right along the passage (she
+// passes it short), one in a low wall firing left along the floor (an egg it cuts), and lava on a floor (an egg burned
+// a cell)
+const HOT_GRID = [
+  '####################',
+  '#..................#',
+  '#).................#',
+  '#..................#',
+  '>...............(..X',
+  '#####~~~######~~####',
+  '####################',
+];
+// ...and one for the spring cell: a pad at column 5 flies her (the solver's arc, up 5 rows and on at 8 m/s) onto a ledge
+// 3 rows over the floor, 9 cells on; she runs along it and off its end, down to the floor, and on to the exit
+const SPRING_GRID = [
+  '#'.repeat(34),
+  '#' + '.'.repeat(32) + '#',
+  '#' + '.'.repeat(32) + '#',
+  '#' + '.'.repeat(32) + '#',
+  '#' + '.'.repeat(32) + '#',
+  '#' + '.'.repeat(11) + '#'.repeat(12) + '.'.repeat(9) + '#',
+  '.' + '.'.repeat(11) + '#'.repeat(12) + '.'.repeat(9) + '.',
+  '>' + '.'.repeat(32) + 'X',
+  '#####^' + '#'.repeat(28),
+];
+const SPRING_STEPS = (() => { // her way: [col, floor, eggs, way, laid, move, climbed, fell, flags (16: flown off a spring)]
+  const out = [], go = (c, b, flags = 0, fell = 0) => out.push([c, b, 0, 1, 0, 0, 0, fell, flags]);
+  for (let c = 0; c <= 3; c++) go(c, 1);
+  go(4, 1, 16); // (the move onto the spring: she's flown to the ledge)
+  for (let c = 14; c <= 23; c++) go(c, 4);
+  go(24, 1, 0, 3);
+  for (let c = 25; c <= 32; c++) go(c, 1);
+  return out;
+})();
+const GRID_TOUR = GRID.map((r, i) => (i === GRID.length - 1 ? r.slice(0, 20) + '^' + r.slice(21) : r));
+// ...and a spring's flight off a pad at 2.4 m, past a wall 3 high (6 to 9.6 m), at each lift the pictures show: her feet
+// every 0.05 s (level_check --json's arcs, level 13's speed); at 2 rows she meets the wall's face
+const SPRING_ARCS = {
+  2: [[2.4, 0], [3.02, 0.42], [3.64, 0.74], [4.26, 0.98], [4.88, 1.12], [5.5, 1.18], [5.81, 1.18]],
+  4: [[2.4, 0], [3.02, 0.61], [3.64, 1.13], [4.26, 1.56], [4.88, 1.89], [5.5, 2.14], [6.12, 2.3], [6.74, 2.37], [7.36, 2.35], [7.98, 2.24], [8.6, 2.04], [9.12, 1.8]],
+  6: [[2.4, 0], [3.02, 0.76], [3.64, 1.42], [4.26, 2], [4.88, 2.48], [5.5, 2.88], [6.12, 3.19], [6.74, 3.4], [7.36, 3.53], [7.98, 3.57], [8.6, 3.51], [9.22, 3.37], [9.84, 3.13], [10.46, 2.81], [11.08, 2.4], [11.7, 1.89], [12.32, 1.3], [12.94, 0.62], [13.46, 0]],
+  9: [[2.4, 0], [3.02, 0.94], [3.64, 1.78], [4.26, 2.54], [4.88, 3.21], [5.5, 3.79], [6.12, 4.27], [6.74, 4.67], [7.36, 4.98], [7.98, 5.19], [8.6, 5.32], [9.22, 5.36], [9.84, 5.31], [10.46, 5.16], [11.08, 4.93], [11.7, 4.61], [12.32, 4.19], [12.94, 3.69], [13.56, 3.1], [14.18, 2.42], [14.8, 1.64], [15.42, 0.78], [15.94, 0]],
+};
 const GRIDS = { [SAMPLE]: GRID };
 const GRID_INFO = G.doors(GRID);
 const STEPS = (() => { // the bot's way: [col, the row under her stack, eggs, way, laid one here]
@@ -158,7 +204,7 @@ function courseFigure(canvas, scene, mini = null) {
   new ResizeObserver(() => { sized = false; }).observe(canvas);
   animate(canvas, (t) => {
     if (!sized) fit();
-    const s = { L: scene.L, zone: scene.zone, time: t, grids: GRIDS, game: scene.game, check: scene.check, diff: scene.diff,
+    const s = { L: scene.L, zone: scene.zone, time: t, grids: GRIDS, game: scene.game, check: scene.check, diff: scene.diff, arcs: scene.arcs,
       overlays: { grid: false, bot: false, notes: false, changes: false, ...scene.overlays }, ...(scene.state ? scene.state(t) : {}) };
     view.draw(s);
     if (mini) view.minimap(s);
@@ -222,6 +268,15 @@ const COURSE = {
     return { zone: 'egypt', L, cols: [0, 24], rows: 9, state: (t) => ({ replay: henOn(tr, t, 6) }),
       note: (v) => { const x = v.X(13) + 10; dimension(v, x, v.Y(2), x, v.Y(6), `${fit} eggs fit under it`, '#9ef6ff'); } };
   },
+  block: () => {
+    // under the first (room for one under it), onto the second (no room under it: stacked 3 and up, along it, off its end)
+    const L = level({ length: 99, walls: [[4, 0, 'crate'], [6, 0, 'hay', 3, 5], [5, 0, 'crate'], [7, 0, 'crate', 1, 3], [8, 0, 'crate']] });
+    const run = (x) => { const c = x / U; if (c >= 15 && c < 22) return { x, base: 3 * U, eggs: 0 }; return { x, base: 0, eggs: c >= 11.5 && c < 15 ? Math.min(3, Math.floor((c - 11.5) * 1.2) + 1) : 0 }; };
+    const box = (t) => ({ kind: 'block', c0: 24, c1: 24 + (Math.floor(t * 2) % 4), bottom: 2, top: 4, remove: false, kind2: 'mix', ok: () => true });
+    return { zone: 'egypt', L, cols: [0, 30], rows: 7,
+      state: (t) => ({ replay: run(1 + ((t % 5) / 5) * 13.5), preview: box(t) }),
+      note: (v) => { tag(v, v.X(7), v.Y(5), 'duck under it', { lift: 14 }); tag(v, v.X(18.5), v.Y(3), 'or climb onto it', { lift: 14 }); tag(v, v.X(26), v.Y(4), 'the brush: a block from 2 to 4', { color: '#ffffff', lift: 16 }); } };
+  },
   saws: () => {
     const L = level({ length: 99, walls: [[3, 0, 'crate'], [5, 2, 'crate'], [3, 0, 'crate'], [10, 1, 'hay'], [5, 0, 'crate']], saws: [3.3, 7.8, 9.6, 11.4] });
     const blades = [7.8, 9.6, 11.4];
@@ -229,10 +284,44 @@ const COURSE = {
       state: (t) => { const x = 5.6 + ((t % 4.5) / 4.5) * 8.2; return { replay: { x, base: K.heightAt(L, x) * U, eggs: x < 6.6 ? 3 : Math.max(0, 3 - blades.filter((s) => x > s).length) } }; },
       note: (v) => { tag(v, v.X(3.3 / U), v.Y(2), 'a saw'); dimension(v, v.X(7.8 / U), v.Y(1) - 24, v.X(9.6 / U), v.Y(1) - 24, 'a blade’s gap: 1.8 m', '#ff8a6a'); tag(v, v.X(11.4 / U), v.Y(1), 'cube saws (on hay)', { lift: 46 }); } };
   },
+  lasers: () => { // (the Laser tool: dragged, it snaps to the wall's or block's side nearest the finger, at its row)
+    const finger = [[3.4, 0.9], [8.7, 0.9], [8.7, 0.3], [10.5, 1.5], [10.5, 2.1], [12.9, 0.4]]; // (metres along, up)
+    const base = level({ length: 99, walls: [[6, 0, 'crate'], [8, 2, 'crate'], [4, 0, 'crate'], [3, 4, 'hay'], [12, 0, 'crate']], lasers: [[3.6, 1, 0]] });
+    const at = (t) => { const [x, y] = finger[Math.floor(t / 1.3) % finger.length]; return { x, y, z: K.faceNear(base, x, y) }; };
+    return { zone: 'japan', L: base, cols: [0, 33], rows: 7,
+      state: (t) => { const f = at(t), L = K.moveLaser(base, 0, f.x, f.y); return { L, selected: { laser: K.laserIndex(L, f.z) } }; },
+      note: (v, t) => { const { z } = at(t); tag(v, v.X(z.x / U), v.Y(z.row + 0.5), `row ${z.row}, fires ${z.dir ? 'right' : 'left'}`, { color: '#ffffff', lift: 22 }); } };
+  },
+  lava: () => { // (the Lava tool: its right end dragged, 1 to 8 cells)
+    const lenOf = (t) => [3, 4, 5, 6, 5, 4][Math.floor(t / 1) % 6];
+    const base = level({ length: 99, walls: [[5, 0, 'crate'], [12, 1, 'crate'], [8, 0, 'crate']], lava: [[3.6, 3]] });
+    return { zone: 'egypt', L: base, cols: [0, 25], rows: 6,
+      state: (t) => ({ L: K.moveLava(base, 0, 3.6, lenOf(t)), selected: { lava: 0 } }),
+      note: (v, t) => { const n = lenOf(t); dimension(v, v.X(6), v.Y(1) - 22, v.X(6 + n), v.Y(1) - 22, `${n} cells: ${n} eggs burned`, '#ffb26a'); } };
+  },
+  springs: () => { // (the Spring tool: its lift handle dragged, 2 to 9 rows; her flight off it, as level_check worked it out)
+    const lifts = [2, 4, 6, 9], liftOf = (t) => lifts[Math.floor(t / 1.4) % lifts.length];
+    const base = level({ length: 99, walls: [[10, 0, 'crate'], [6, 3, 'crate'], [18, 0, 'crate']], springs: [[2.4, 6]] });
+    return { zone: 'city', L: base, cols: [0, 26], rows: 10,
+      state: (t) => { const n = liftOf(t); return { L: K.setSpringPower(base, 0, n), selected: { spring: 0 }, arcs: [{ x: 2.4, end: n === 2 ? 'wall' : 'landed', path: SPRING_ARCS[n] }] }; },
+      note: (v, t) => { const n = liftOf(t); if (n === 2) tag(v, v.X(5.81 / U), v.Y(1.6), 'into its face', { color: '#ff6a80', lift: 18 }); } };
+  },
+  bouncers: () => { // (the Bouncers tools: a bumper wall dragged up, a gate each way, the bounce zone they make)
+    const base = level({ length: 99, walls: [[4, 0, 'crate'], [3, 1, 'crate'], [4, 0, 'crate'], [1, 3, 'gate>'], [5, 0, 'crate'], [2, 2, 'bumper'], [4, 0, 'crate'], [1, 2, 'gate<'], [6, 0, 'crate']] });
+    const highOf = (t) => [2, 3, 4, 5, 4, 3][Math.floor(t / 0.9) % 6];
+    return { zone: 'japan', L: base, cols: [0, 30], rows: 9,
+      state: (t) => { const h = highOf(t); return { L: [17, 18].reduce((l, c) => K.setBouncer(l, c, h, 'bumper'), base), preview: { kind: 'wall', cols: [{ c: 18, h, kind: 'bumper' }] } }; },
+      note: (v, t) => { tag(v, v.X(17.5), v.Y(highOf(t)), `bumper wall 2 × ${highOf(t)}`, { color: '#ff2bd6', lift: 20 }); tag(v, v.X(11.5), v.Y(3), 'gate →', { color: '#2bff9a', lift: 20 }); tag(v, v.X(23.5), v.Y(2), 'gate ←', { color: '#2bff9a', lift: 20 }); } };
+  },
   columns: () => {
     const L = level({ length: 99, walls: [[3, 0, 'crate'], [4, 2, 'crate'], [3, 3, 'hay'], [4, 1, 'crate'], [8, 0, 'crate']], saws: [4.5] });
     return { zone: 'city', L, cols: [0, 22], rows: 8, state: (t) => ({ preview: { kind: 'cols', c0: 7, c1: 9, remove: flip(t, 2.2) } }),
       note: (v, t) => tag(v, v.X(8.5), v.Y(3), flip(t, 2.2) ? '⌥: taken out, what’s after moves back' : 'copied in after itself, what’s after moves on', { color: flip(t, 2.2) ? '#ff6a80' : '#f4ff5a' }) };
+  },
+  chunk: () => { // (a course chunk: the pads either side, the piece between: what the generator places)
+    const L = level({ length: 99, walls: [[9, 0, 'crate'], [4, 2, 'crate'], [5, 1, 'hay'], [4, 3, 'crate'], [9, 0, 'crate']], saws: [8.4, 12.3] });
+    return { zone: 'egypt', L, cols: [0, 31], rows: 6, state: () => ({ preview: { kind: 'cols', c0: 9, c1: 21, remove: false } }),
+      note: (v) => { tag(v, v.X(4.5), v.Y(0.8), 'run-in (cut off)', { color: '#8fa0c8', lift: 20 }); tag(v, v.X(15.5), v.Y(3.4), 'the chunk: what is placed', { color: '#f4ff5a', lift: 20 }); tag(v, v.X(26.5), v.Y(0.8), 'run-out (cut off)', { color: '#8fa0c8', lift: 20 }); } };
   },
   gauntlet: () => {
     const L = level({ length: 99, walls: [[4, 0, 'crate'], [8, 1, 'crate'], [3, 1, 'crate', 3], [29, 0, 'gauntlet', SAMPLE], [8, 2, 'crate'], [4, 0, 'crate']] });
@@ -279,7 +368,23 @@ const HAZARD = {
   'cube-saw': () => ({ zone: 'egypt', L: level({ length: 99, walls: [[4, 0, 'crate'], [6, 2, 'hay'], [6, 0, 'crate']], saws: [4.2] }), cols: [0, 16], rows: 6 }),
   barrier: () => ({ zone: 'egypt', L: level({ length: 99, walls: [[4, 0, 'crate'], [6, 1, 'mix', 5], [6, 0, 'crate']] }), cols: [0, 16], rows: 7,
     note: (v) => { const x = v.X(10) + 8; dimension(v, x, v.Y(1), x, v.Y(5), '2 eggs fit', '#9ef6ff'); } }),
+  block: () => ({ zone: 'egypt', L: level({ length: 99, walls: [[4, 0, 'crate'], [8, 0, 'mix', 2, 4], [4, 0, 'crate']], saws: [6.3] }), cols: [0, 16], rows: 6,
+    note: (v) => { const x = v.X(12) + 8; dimension(v, x, v.Y(0), x, v.Y(2), 'no room under it', '#9ef6ff'); } }),
   disco: () => ({ zone: 'japan', L: level({ length: 99, walls: [[5, 0, 'crate'], [4, 1, 'hay'], [7, 0, 'crate']], discos: [[3.9, 2.2], [7.2, 1.4]] }), cols: [0, 16], rows: 6 }),
+  laser: () => ({ zone: 'japan', L: level({ length: 99, walls: [[5, 0, 'crate'], [6, 2, 'crate'], [6, 0, 'crate'], [2, 3, 'crate'], [4, 0, 'crate']], lasers: [[3, 1, 0], [6.6, 0, 1]] }), cols: [0, 23], rows: 6,
+    note: (v) => { tag(v, v.X(2.5), v.Y(1.5), 'fires left: her body there, cut in half', { lift: 30 }); tag(v, v.X(14), v.Y(0.5), 'fires right: an egg there, cut out', { lift: 46 }); } }),
+  lava: () => ({ zone: 'egypt', L: level({ length: 99, walls: [[3, 0, 'crate'], [8, 2, 'crate'], [6, 0, 'crate']], lava: [[3, 4], [7.2, 2]] }), cols: [0, 17], rows: 6,
+    note: (v) => { dimension(v, v.X(5), v.Y(2) - 20, v.X(9), v.Y(2) - 20, '4 eggs', '#ffb26a'); } }),
+  spring: () => ({ zone: 'city', L: level({ length: 99, walls: [[10, 0, 'crate'], [6, 3, 'crate'], [18, 0, 'crate']], springs: [[2.4, 6]] }), cols: [0, 24], rows: 8,
+    arcs: [{ x: 2.4, end: 'landed', path: SPRING_ARCS[6] }], note: (v) => tag(v, v.X(13.46 / U), v.Y(0), 'she lands', { color: '#7dff4a', lift: 22 }) }),
+  bumper: () => ({ zone: 'japan', L: level({ length: 99, walls: [[3, 0, 'crate'], [2, 3, 'bumper'], [5, 0, 'crate'], [2, 1, 'bumper'], [5, 0, 'crate']] }), cols: [0, 17], rows: 6,
+    note: (v) => tag(v, v.X(3), v.Y(1.5), 'bounces her back', { color: '#ff2bd6', lift: 26 }) }),
+  'gate-right': () => ({ zone: 'japan', L: level({ length: 99, walls: [[4, 0, 'crate'], [1, 3, 'gate>'], [5, 0, 'crate'], [2, 2, 'bumper'], [4, 0, 'crate']] }), cols: [0, 16], rows: 6,
+    note: (v) => tag(v, v.X(4.5), v.Y(3), 'through heading right', { color: '#2bff9a', lift: 20 }) }),
+  'gate-left': () => ({ zone: 'japan', L: level({ length: 99, walls: [[4, 0, 'crate'], [2, 2, 'bumper'], [5, 0, 'crate'], [1, 3, 'gate<'], [4, 0, 'crate']] }), cols: [0, 16], rows: 6,
+    note: (v) => tag(v, v.X(11.5), v.Y(3), 'through heading left', { color: '#2bff9a', lift: 20 }) }),
+  'bounce-zone': () => ({ zone: 'japan', L: level({ length: 99, walls: [[5, 0, 'crate'], [1, 2, 'gate>'], [6, 0, 'crate'], [2, 3, 'bumper'], [6, 0, 'crate']] }), cols: [0, 20], rows: 7,
+    state: (t) => ({ hoverZone: flip(t, 2) ? 4 : null }) }),
   wall: () => ({ zone: 'city', L: level({ length: 99, walls: [[2, 0, 'crate'], [3, 2, 'crate'], [2, 0, 'crate'], [3, 3, 'hay'], [2, 0, 'crate'], [3, 4, 'mix'], [5, 0, 'crate']] }), cols: [0, 20], rows: 7 }),
   gauntlet: () => ({ zone: 'egypt', L: level({ length: 99, walls: [[3, 1, 'crate'], [29, 0, 'gauntlet', SAMPLE], [4, 2, 'crate']] }), cols: [0, 36], rows: 12, state: (t) => ({ hoverSpan: flip(t, 2.4) ? SAMPLE : null }) }),
   finish: () => ({ zone: 'city', L: level({ length: 6.6, walls: [[5, 0, 'crate'], [3, 1, 'crate'], [12, 0, 'crate']] }), cols: [0, 20], rows: 13, state: (t) => ({ hoverFinish: flip(t, 2) }) }),
@@ -287,12 +392,50 @@ const HAZARD = {
   note: () => ({ zone: 'egypt', L: level({ length: 99, walls: [[4, 0, 'crate'], [3, 2, 'crate'], [9, 0, 'crate']] }), cols: [0, 16], rows: 6, overlays: { notes: true },
     check: { ok: true, notes: [{ x: 3.3, y: 2, text: '' }], short: [{ x: 6.6, y: 0, text: '' }], doors: [] } }),
 };
+// a maze chunk in its plain test corridor (MazeGen.h's chunkCorridor: a door, 12 cells of run-in, the chunk on the floor, 12 of run-out,
+// the exit; 7 rows of air): the little well, 5 x 4, its bottom row the floor
+const WELL = ['.....', '.....', '##...', '##S##'];
+const CORRIDOR = (() => {
+  const W = WELL[0].length + 26, air = 7, rows = [];
+  for (let i = 0; i < air + 2; i++) {
+    const b = air + 1 - i; // the row counted from the street
+    let r = '';
+    for (let c = 0; c < W; c++) {
+      let ch = b === 0 || b === air + 1 ? '#' : '.';
+      if (c === 0 || c === W - 1) ch = b >= 1 && b <= 3 ? '.' : '#';
+      if (b === 1 && c === 0) ch = '>';
+      if (b === 1 && c === W - 1) ch = 'X';
+      const x = c - 13, j = WELL.length - 1 - b; // (the chunk's row j from the top, at height b)
+      if (x >= 0 && x < WELL[0].length && j >= 0 && j < WELL.length) ch = WELL[j][x];
+      r += ch;
+    }
+    rows.push(r);
+  }
+  return rows;
+})();
 // ...and the grid canvases
 const GRID_SCENES = {
+  mazechunk: () => { // (the corridor round a maze chunk: the pointer walks its cells; the chunk's own block is what is edited)
+    const cells = [[13, 8], [14, 8], [15, 8], [16, 8], [17, 8], [13, 7], [14, 7], [15, 6]];
+    const at = (t) => cells[Math.floor(t / 1.1) % cells.length];
+    return { rows: CORRIDOR, overlays: { grid: true },
+      state: (t) => { const [c, i] = at(t); return { hover: { c, i } }; },
+      note: (v, t) => { tag(v, v.ox + 15.5 * v.z, v.oy + 5 * v.z, 'the chunk: its bottom row is the floor', { left: G_LEFT, top: G_TOP, lift: 18 }); tag(v, v.ox + 4 * v.z, v.oy + 6.5 * v.z, 'run-in', { left: G_LEFT, top: G_TOP, lift: 14 }); tag(v, v.ox + 25 * v.z, v.oy + 6.5 * v.z, 'run-out', { left: G_LEFT, top: G_TOP, lift: 14 }); } };
+  },
   cells: () => {
-    const tour = [['.', 6, 3], ['#', 7, 8], ['H', 19, 4], ['B', 14, 7], ['R', 10, 6], ['L', 24, 3], ['S', 4, 8], ['C', 23, 7], ['>', 0, 7], ['X', 28, 6]];
+    const tour = [['.', 6, 3], ['#', 7, 8], ['H', 19, 4], ['B', 14, 7], ['R', 10, 6], ['L', 24, 3], ['S', 4, 8], ['^', 20, 8], ['C', 23, 7], ['>', 0, 7], ['X', 28, 6]];
     const at = (t) => tour[Math.floor(t / 1.5) % tour.length];
-    return { overlays: { grid: true },
+    return { rows: GRID_TOUR, overlays: { grid: true },
+      state: (t) => { const [, c, i] = at(t); return { hover: { c, i } }; },
+      note: (v, t) => { const [ch, c, i] = at(t); tag(v, v.ox + (c + 0.5) * v.z, v.oy + i * v.z, G.CELL[ch].name, { left: G_LEFT, top: G_TOP, lift: 12 }); } };
+  },
+  springs: () => ({ rows: SPRING_GRID, overlays: { grid: true, path: true },
+    state: (t) => ({ check: { ok: true, cellMap: [] }, fresh: true, run: { steps: SPRING_STEPS, nearMisses: [], crash: null }, replay: { step: Math.floor(t * 6) % SPRING_STEPS.length } }),
+    note: (v, t) => { tag(v, v.ox + 5.5 * v.z, v.oy + 8 * v.z, 'Spring: up 5 rows and on', { left: G_LEFT, top: G_TOP, lift: 40 }); tag(v, v.ox + 17 * v.z, v.oy + 5 * v.z, 'lands on the ledge', { left: G_LEFT, top: G_TOP, lift: 24 }); } }),
+  hot: () => { // (the lasers, their beams, and the lava: the small maze with the newer cells)
+    const tour = [[')', 1, 2], ['(', 16, 4], ['~', 6, 5], ['~', 15, 5]];
+    const at = (t) => tour[Math.floor(t / 1.6) % tour.length];
+    return { rows: HOT_GRID, overlays: { grid: true },
       state: (t) => { const [, c, i] = at(t); return { hover: { c, i } }; },
       note: (v, t) => { const [ch, c, i] = at(t); tag(v, v.ox + (c + 0.5) * v.z, v.oy + i * v.z, G.CELL[ch].name, { left: G_LEFT, top: G_TOP, lift: 12 }); } };
   },
@@ -315,7 +458,7 @@ const part = (id) => partSel('#' + id);
 
 const levelInfo = (n) => { // (a level of the campaign, as saved: its zone, its gauntlet)
   const lv = CONTENT.levels.find((l) => l.number === n), s = lv && K.spans(lv.L)[0];
-  return { zone: K.zoneOf(n), gauntlet: s ? s.name : n === 13 ? 'gallery' : null, L: lv ? lv.L : null };
+  return { zone: K.zoneOf(n), gauntlet: s ? s.name : n === 13 ? 'registers' : null, L: lv ? lv.L : null };
 };
 function navButton(which) { return el('button', 'icon', svg(which === 'prev' ? '<path d="M15 6l-6 6 6 6"/>' : '<path d="M9 6l6 6-6 6"/>')); }
 function navCurrent(n = 13) {
@@ -342,7 +485,7 @@ function cellCanvas(ch, size = 28) { // (as the Gauntlets view's swatches draw t
   ctx.scale(2, 2);
   ctx.fillStyle = GC.air; ctx.fillRect(0, 0, size, size);
   GridView.prototype.cell.call(fake, ch, 0, 0, size);
-  if ('#HSC'.includes(ch)) { ctx.strokeStyle = 'HC'.includes(ch) ? GC.cubeEdge : GC.stoneEdge; ctx.lineWidth = 2; ctx.strokeRect(1, 1, size - 2, size - 2); }
+  if ('#HSC()'.includes(ch)) { ctx.strokeStyle = 'HC'.includes(ch) ? GC.cubeEdge : GC.stoneEdge; ctx.lineWidth = 2; ctx.strokeRect(1, 1, size - 2, size - 2); }
   if (ch === 'S' || ch === 'C') { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, size, size); ctx.clip(); GridView.prototype.blade.call(fake, size / 2, size * 0.29, size * 0.79); ctx.restore(); }
   return cv;
 }
@@ -440,7 +583,7 @@ function visual(key) {
       return { el: b };
     }
     case 'level': return id === 'picker' ? { el: navCurrent(), wide: true } : { el: navButton(id) };
-    case 'ltool': return { el: toolButton(LEVEL_TOOLS.find((t) => t.tip === key)), dark: true };
+    case 'ltool': return { el: toolButton([...LEVEL_TOOLS, ...BOUNCER_TOOLS].find((t) => t.tip === key)), dark: true };
     case 'gtool': return { el: toolButton(GAUNTLET_TOOLS.find((t) => t.tip === key)), dark: true };
     case 'kind': return { el: kindSwatch(id), dark: true };
     case 'cell': return { el: cellSwatch(Object.keys(CELL_TIP).find((ch) => CELL_TIP[ch] === key)), dark: true };
@@ -465,7 +608,7 @@ function visual(key) {
 }
 function prop(id) { // (the Levels view's property rows, as renderProps lays them out)
   const box = el('div', 'props'), row = (label, ctl) => `<div class="prop"><label>${label}</label>${ctl}</div>`;
-  const g = levelInfo(13).gauntlet || 'gallery';
+  const g = levelInfo(13).gauntlet || 'registers';
   box.innerHTML = {
     finish: row('Finish line', '<div class="ctl"><input type="number" value="420" tabindex="-1"><span class="unit">m</span></div>'),
     difficulty: row('Difficulty', '<div class="ctl"><input type="number" value="420" tabindex="-1"><span class="unit">+</span><input type="number" value="0.35" tabindex="-1"><span class="unit">× m</span></div>')
@@ -515,7 +658,7 @@ FIGS.map = (fig) => {
   const pill = (txt, cls = '') => `<span class="pill ${cls}">${txt}</span>`;
   const icons = EDITOR.querySelectorAll('.modes svg');
   const nav = lv ? pill('‹') + pill('13', 'num') + pill('›')
-    : ['tomb', 'gallery', 'wells'].map((g, i) => pill(`<i></i>${titled(g)}`, 'tabp' + (i === 1 ? ' on' : ''))).join('') + pill('+ New gauntlet', 'tabp');
+    : ['tomb', 'registers', 'balance'].map((g, i) => pill(`<i></i>${titled(g)}`, 'tabp' + (i === 1 ? ' on' : ''))).join('') + pill('+ New gauntlet', 'tabp');
   const chips = (lv ? LEVEL_OVERLAYS : GAUNTLET_OVERLAYS).map((o) => `<span><i style="background:${o.color}"></i>${esc(o.label)}</span>`).join('');
   const cards = (lv ? ['Ready to ship', 'History', 'The level', 'In the game', 'The course', 'Description'] : ['Ready to ship', 'History', 'The numbers', 'In the game', 'Near misses', 'Description'])
     .map((c, i) => `<div class="mcard">${c}${i ? '<div class="bar"></div>' : '<div><span class="ok">READY</span></div>'}</div>`).join('');
@@ -554,7 +697,7 @@ FIGS.topbar = (box) => {
   const prev = setTip(navButton('prev'), 'level.prev'), cur = setTip(navCurrent(), 'level.picker'), next = setTip(navButton('next'), 'level.next');
   if (q('lnav')) q('lnav').append(prev, cur, next);
   const tips = { undo: 'top.undo', redo: 'top.redo', revert: 'top.revert', save: 'top.save', dirty: 'top.unsaved', play: 'top.play', watch: 'top.watch', sim: 'top.sim', help: 'top.help' };
-  for (const [id, key] of Object.entries(tips)) setTip(q(id), key, id === 'undo' ? 'Next: “Saw added at 92.1 m”.' : id === 'dirty' ? 'Unsaved: level 13, the gallery and the tomb.' : '');
+  for (const [id, key] of Object.entries(tips)) setTip(q(id), key, id === 'undo' ? 'Next: “Saw added at 92.1 m”.' : id === 'dirty' ? 'Unsaved: level 13, the registers and the tomb.' : '');
   strip(top);
   for (const b of top.querySelectorAll('button')) b.tabIndex = -1;
   box.append(top, el('div', 'cap', 'The editor’s own top bar (it scrolls sideways here). Hover a button: the card that comes up is the editor’s tooltip.'));
@@ -609,7 +752,7 @@ FIGS.course = (canvas) => {
   courseFigure(canvas, scene);
   if (scene.summary) { const cap = canvas.closest('figure').querySelector('figcaption'); if (cap) cap.insertAdjacentHTML('beforeend', ` <span class="live">Its History heading says: “${esc(scene.summary)}”.</span>`); }
 };
-FIGS.grid = (canvas) => gridFigure(canvas, GRID_SCENES[canvas.dataset.scene]());
+FIGS.grid = (canvas) => { const scene = GRID_SCENES[canvas.dataset.scene](); gridFigure(canvas, scene, null, scene.rows || GRID); };
 
 // a hazard's card, as the course view shows it at the pointer (levels.js hazardAt: the tip, then where)
 FIGS.hazardcard = (box) => {
@@ -656,11 +799,11 @@ FIGS.history = (box) => {
   courseFigure(cv, scene);
 };
 
-// the Revert dialog, as the editor draws it (app.js unsaved()): level 13 with the History card's edits, the gallery
+// the Revert dialog, as the editor draws it (app.js unsaved()): level 13 with the History card's edits, the registers
 FIGS.revert = (box) => {
   const t = DEMO.t, edits = H.sinceSaved(t), sum = D.summarizeCourse(D.diffCourse(DEMO.Ls[t.saved], DEMO.Ls[t.cursor]));
   const g2 = G.fillRect(GRID, 18, 4, 21, 4, '#'), gsum = D.summarizeGrid(D.diffGrid(GRID, g2));
-  const gname = levelInfo(13).gauntlet || 'gallery';
+  const gname = levelInfo(13).gauntlet || 'registers';
   const stage = el('div', 'modal-stage');
   stage.innerHTML = `<div class="modal wide" role="dialog" aria-label="2 unsaved edits"><h2>2 unsaved edits</h2><div class="modal-body">
     <p>Revert takes the ticked ones back to what’s saved: Undo brings their edits back (a gauntlet never saved goes for good). Save saves every one, together.</p>
@@ -678,12 +821,31 @@ FIGS.revert = (box) => {
 };
 
 // the gauntlet tabs and the New gauntlet dialog; what a new one starts as
+FIGS.renamegauntlet = (box) => {
+  const head = el('div', 'verdict figure-verdict');
+  head.innerHTML = `<h3>${esc(titled('hall_of_saws'))} <button class="aside link rename" tabindex="-1">rename</button> <button class="aside link" tabindex="-1">level 13 ↗</button></h3>`;
+  setTip(head.querySelector('.rename'), 'gauntlet.rename');
+  const taken = new Set(CONTENT.gauntlets.map((g) => g.name));
+  const why = (v) => (!v ? 'A name, to rename it' : !/^[a-z][a-z0-9_]{0,31}$/.test(v) ? 'A letter first, then lower case letters, digits or _ (up to 32)' : taken.has(v) ? `There’s a gauntlet called ${v} already` : '');
+  const stage = el('div', 'modal-stage');
+  stage.innerHTML = `<div class="modal" role="dialog" aria-label="Rename"><h2>Rename the Gallery</h2><div class="modal-body"><div>
+    <p>Lower case letters, digits and _ (its file, assets/gauntlets/&lt;name&gt;.txt; the game’s banner shows _ as spaces). The levels that lay it are rewritten to the new name; nothing else in them changes.</p>
+    <input class="modal-input" value="hall_of_saws" spellcheck="false" autocomplete="off" aria-label="Its new name"><div class="modal-why"></div></div></div>
+    <div class="modal-actions"><button class="ghost" tabindex="-1">Cancel</button><button class="primary" tabindex="-1">Rename</button></div></div>`;
+  const input = stage.querySelector('input'), msg = stage.querySelector('.modal-why'), ok = stage.querySelector('.primary');
+  const banner = el('div', 'figure-banner');
+  const show = () => { const v = input.value.trim(), w = why(v); msg.textContent = w; ok.disabled = !!w; banner.textContent = w ? '' : 'THE ' + v.replace(/_/g, ' ').toUpperCase(); banner.style.animation = 'none'; void banner.offsetWidth; banner.style.animation = ''; };
+  input.addEventListener('input', show);
+  show();
+  box.append(head, stage, el('p', 'figure-note', 'Type a name: the checker’s answer, and the banner she’ll see as she enters.'), banner);
+};
+
 FIGS.newgauntlet = (box) => {
   const laid = new Map();
   for (const lv of CONTENT.levels) for (const s of K.spans(lv.L)) laid.set(s.name, lv.number);
   const names = CONTENT.gauntlets.map((g) => g.name).sort((a, b) => (laid.get(a) || 999) - (laid.get(b) || 999));
   const tabs = el('nav', 'tabs figure-tabs');
-  for (const name of (names.length ? names : ['tomb', 'gallery'])) tabs.insertAdjacentHTML('beforeend', `<button class="tab" aria-selected="${name === 'gallery'}" tabindex="-1"><span class="state ok"></span><span class="name">${esc(titled(name))}</span><span class="lvl">LV ${laid.get(name) || '?'}</span></button>`);
+  for (const name of (names.length ? names : ['tomb', 'registers'])) tabs.insertAdjacentHTML('beforeend', `<button class="tab" aria-selected="${name === 'registers'}" tabindex="-1"><span class="state ok"></span><span class="name">${esc(titled(name))}</span><span class="lvl">LV ${laid.get(name) || '?'}</span></button>`);
   tabs.insertAdjacentHTML('beforeend', '<button class="tab" tabindex="-1"><span class="state busy"></span><span class="name">Torii</span><span class="lvl none">NO LEVEL</span><span class="unsaved"></span></button>');
   const add = el('button', 'tab add', `${svg('<path d="M12 5v14M5 12h14"/>')}<span>New gauntlet</span>`);
   add.tabIndex = -1;
@@ -712,6 +874,7 @@ const KEYS = {
     [['T'], 'The Start tool: where Play starts'], [['Esc'], 'Let go of a selection or a preview; close the picker or a dialog']],
   level: [[['W', 'K', 'B', 'S', 'D'], 'Walls, Kind, Barrier, Saw, Disco ball'], [['C', 'V', 'G', 'T'], 'Columns, Select, Gauntlet, Start'], [['1', '2', '3'], 'Crates, hay, hay-topped crates'],
     [['⌥', 'click'], 'Take away: down to the street, barriers off, a saw or disco ball gone, columns out (a right click too)'], [['⇧', 'drag'], 'Walls: as high as where you started'],
+    [['J', '↑', '↓'], 'Spring; a selected one’s lift, a row up or down'], [['U', 'Y', '⇧Y'], 'Bumper, Gate →, Gate ← (bouncer walls)'],
     [['⌘C', '⌘X', '⌘V'], 'Copy, cut, put in the selected columns'], [['⌫'], 'Take out the selected columns'], [['L'], 'Every level (the picker)'], [['⌥←', '⌥→'], 'The level before, after'],
     [['Double-click'], 'The gauntlet: edit its grid']],
   gauntlet: [[['B', 'R', 'V', 'C', 'E', 'I', 'T'], 'Brush, Rectangle, Select, Columns, Rows, Pick, Start'], [['1', '–', '0'], 'Cells: air, stone, cube, bumper, gates, saws, the doors'],
