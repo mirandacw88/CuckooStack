@@ -1,8 +1,8 @@
 // The level editor's canvas: a gauntlet drawn as the game builds it (stone in gold, cyber cubes in cyan, bumpers and
-// gates in pink, red-hot blades in the floors), and over it what the checker found: where the hen's feet can get (a
+// gates in pink, red-hot blades in the floors, wall lasers in stone's faces, their beams' paths dashed faintly along the air, molten lava floors), and over it what the checker found: where the hen's feet can get (a
 // way through, or a dead end), the bot's way, its near misses, where it crashed; the cells changed since the last
 // save; the selection; and the hen herself in the replay, her eggs under her. Plus the minimap: the whole gauntlet.
-import { cols, DOORS } from './grid.js';
+import { cols, DOORS, beamCells } from './grid.js';
 
 export const RULER_TOP = 20, RULER_LEFT = 30;
 
@@ -13,6 +13,7 @@ export const C = {
   bumper: '#3a0731', bumperEdge: '#ff2bd6',
   gate: '#170828', gateEdge: '#b45cff', gateArrow: '#ff8ae9',
   blade: '#ff4426', bladeHot: '#ffcf9a',
+  spring: '#7dff4a', beam: '#ff2b4a', beamHot: '#ffd0d8', lava: '#ff6a1a', lavaDeep: '#5a1204', lavaHot: '#ffd36a',
   entry: '#3dff8a', exit: '#f4ff5a',
   way: 'rgba(61,255,138,0.12)', dead: 'rgba(255,43,74,0.32)',
   pathR: '#29e7ff', pathL: '#ff5ad9', egg: '#fff3dc', eggRim: '#29e7ff',
@@ -22,7 +23,7 @@ export const C = {
 export const KIND = [{ label: 'PERFECT', short: 'P', color: C.perfect }, { label: 'CLOSE SHAVE', short: 'S', color: C.shave },
   { label: 'CLOSE CALL', short: 'C', color: C.call }];
 
-const solidish = (ch) => ch === '#' || ch === 'S';
+const solidish = (ch) => ch === '#' || ch === 'S' || ch === '(' || ch === ')' || ch === '^';
 const cubeish = (ch) => ch === 'H' || ch === 'C';
 
 export class GridView {
@@ -137,6 +138,20 @@ export class GridView {
     // blades: half out of the floor, into the cell over it
     for (let i = v.i0; i <= v.i1; i++)
       for (let c = v.c0; c <= v.c1; c++) if (rows[i][c] === 'S' || rows[i][c] === 'C') this.blade(X(c) + z / 2, Y(i), z);
+    // springs: a pad on the cell's top (the course's look, its plate bobbing: the board redraws while one is on screen)
+    this.animated = false;
+    for (let i = v.i0; i <= v.i1; i++)
+      for (let c = v.c0; c <= v.c1; c++) if (rows[i][c] === '^') { this.spring(X(c) + z / 2, Y(i), performance.now() / 1000, false); this.animated = true; }
+    // the lasers' beams: where each reaches, a faint dashed red line from its face along the air to a dot
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,43,74,0.55)'; ctx.fillStyle = 'rgba(255,43,74,0.8)'; ctx.lineWidth = Math.max(1, z / 16); ctx.setLineDash([Math.max(3, z * 0.25), Math.max(3, z * 0.2)]);
+    for (const b of beamCells(rows)) {
+      if (b.c1 < b.c0 || b.i < v.i0 || b.i > v.i1 || Math.max(b.c, b.c1) < v.c0 || Math.min(b.c, b.c0) > v.c1) continue;
+      const y = Y(b.i) + z / 2, x0 = b.d > 0 ? X(b.c + 1) + z * 0.12 : X(b.c) - z * 0.12, x1 = b.d > 0 ? X(b.c1 + 1) : X(b.c0);
+      line(ctx, x0, y, x1, y);
+      ctx.beginPath(); ctx.arc(x1 - b.d * Math.max(1.5, z * 0.08), y, Math.max(1.5, z * 0.08), 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
     // changed since the last save: outlined, a corner marked
     if (s.overlays.changes && s.changed) {
       ctx.save();
@@ -208,6 +223,26 @@ export class GridView {
         ctx.lineCap = 'butt';
         break;
       }
+      case '(': case ')': // stone with a wall laser in its left (or right) face
+        ctx.fillStyle = C.stone; ctx.fillRect(x, y, z, z);
+        if (z >= 10) { ctx.fillStyle = C.stoneLit; ctx.fillRect(x + z * 0.12, y + z * 0.12, z * 0.76, z * 0.76); }
+        GridView.prototype.emitter.call(this, ch === '(' ? x : x + z, y + z / 2, z, ch === '(' ? -1 : 1); // (as a swatch's too: its this a { ctx, z })
+        break;
+      case '~': { // lava: a molten cell, its top glowing
+        const g = ctx.createLinearGradient(0, y, 0, y + z);
+        g.addColorStop(0, C.lavaHot); g.addColorStop(0.28, C.lava); g.addColorStop(1, C.lavaDeep);
+        ctx.fillStyle = g; ctx.fillRect(x, y, z, z);
+        if (z >= 10) { // (bubbles)
+          ctx.fillStyle = 'rgba(255,211,106,0.55)';
+          ctx.beginPath(); ctx.arc(x + z * 0.3, y + z * 0.55, z * 0.08, 0, Math.PI * 2); ctx.arc(x + z * 0.68, y + z * 0.72, z * 0.06, 0, Math.PI * 2); ctx.fill();
+        }
+        break;
+      }
+      case '^': // a spring: stone with a lime stud (the pad itself is drawn over the cell: draw)
+        ctx.fillStyle = C.stone; ctx.fillRect(x, y, z, z);
+        if (z >= 10) { ctx.fillStyle = C.stoneLit; ctx.fillRect(x + z * 0.12, y + z * 0.12, z * 0.76, z * 0.76); }
+        ctx.fillStyle = C.spring; ctx.fillRect(x + z * 0.18, y + z * 0.1, z * 0.64, Math.max(1, z * 0.07));
+        break;
       case '>': case 'X': {
         const col = ch === '>' ? C.entry : C.exit;
         ctx.fillStyle = col + '30'; ctx.fillRect(x, y, z, z);
@@ -217,6 +252,54 @@ export class GridView {
       }
       default: break;
     }
+  }
+
+  // a wall laser's emitter in a face at (x, y), firing d (-1 left, 1 right): a dark turret box set into the stone, a
+  // short barrel from it out to the face, its lens glowing red there
+  emitter(x, y, z, d) {
+    const { ctx } = this;
+    const bw = Math.max(3, z * 0.3), bh = Math.max(4, z * 0.5), barrel = Math.max(2, z * 0.16), bx = x - d * barrel - (d > 0 ? bw : 0);
+    ctx.save();
+    ctx.fillStyle = '#1a0a12'; ctx.fillRect(bx, y - bh / 2, bw, bh);
+    ctx.strokeStyle = 'rgba(255,43,74,0.7)'; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, y - bh / 2 + 0.5, bw - 1, bh - 1);
+    ctx.fillStyle = '#3a1420'; ctx.fillRect(d > 0 ? x - barrel : x, y - Math.max(1, z * 0.07), barrel, Math.max(2, z * 0.14));
+    ctx.shadowColor = C.beam; ctx.shadowBlur = Math.min(10, z * 0.5);
+    ctx.fillStyle = C.beam; ctx.beginPath(); ctx.arc(x, y, Math.max(1.5, z * 0.1), 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (z >= 10) { ctx.fillStyle = C.beamHot; ctx.beginPath(); ctx.arc(x, y, Math.max(0.8, z * 0.04), 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+
+  // a spring pad centred at x on the surface at y (CSS px): a dark base, a steel coil, a lime plate glowing over it with
+  // two chevrons, bobbing gently (the course's springs, and a maze's '^' cells: GridView.cell's pad, drawn over the cell)
+  spring(x, y, t, selected) {
+    const { ctx, z } = this;
+    const w = Math.max(6, z * 0.9), base = Math.max(1.5, z * 0.12), bob = Math.sin(t * 4 + x * 0.05) * z * 0.045;
+    const plate = y - base - Math.max(5, z * 0.58) + bob, ph = Math.max(2, z * 0.13);
+    ctx.save();
+    const glow = ctx.createLinearGradient(0, plate - z * 0.9, 0, y);
+    glow.addColorStop(0, 'rgba(125,255,74,0)'); glow.addColorStop(1, `rgba(125,255,74,${(0.18 + 0.06 * Math.sin(t * 3)).toFixed(3)})`);
+    ctx.fillStyle = glow; ctx.fillRect(x - w * 0.7, plate - z * 0.9, w * 1.4, y - plate + z * 0.9);
+    ctx.fillStyle = '#121a10'; ctx.fillRect(x - w / 2, y - base, w, base); // (its base)
+    ctx.strokeStyle = 'rgba(125,255,74,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(x - w / 2 + 0.5, y - base + 0.5, w - 1, base - 1);
+    const turns = 3, top = plate + ph, bot = y - base, cw = w * 0.3; // (the coil: a zigzag, its near strokes lit)
+    ctx.lineWidth = Math.max(1.2, z * 0.07); ctx.lineJoin = 'round';
+    for (let k = 0; k < turns * 2; k++) {
+      const ya = bot - ((bot - top) * k) / (turns * 2), yb = bot - ((bot - top) * (k + 1)) / (turns * 2);
+      ctx.strokeStyle = k % 2 ? '#c9d2e0' : '#5d6878';
+      line(ctx, x + (k % 2 ? cw : -cw), ya, x + (k % 2 ? -cw : cw), yb);
+    }
+    ctx.shadowColor = '#7dff4a'; ctx.shadowBlur = Math.min(14, z * 0.8); // (its plate, glowing)
+    ctx.fillStyle = '#7dff4a'; ctx.fillRect(x - w / 2, plate, w, ph);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#e6ffd8'; ctx.fillRect(x - w / 2 + 1, plate, w - 2, Math.max(0.8, ph * 0.3));
+    if (z >= 8) { // (two chevrons over it, up)
+      ctx.strokeStyle = `rgba(125,255,74,${(0.55 + 0.35 * Math.sin(t * 5 + x * 0.1)).toFixed(3)})`; ctx.lineWidth = Math.max(1.2, z * 0.07);
+      const cv = Math.max(2.5, z * 0.16);
+      for (let k = 0; k < 2; k++) { const cy = plate - cv * 0.6 - k * cv * 1.1 + bob * 0.5; ctx.beginPath(); ctx.moveTo(x - cv, cy); ctx.lineTo(x, cy - cv * 0.8); ctx.lineTo(x + cv, cy); ctx.stroke(); }
+    }
+    ctx.restore();
+    if (selected) { ctx.save(); ctx.strokeStyle = '#f4ff5a'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.lineDashOffset = -t * 20; ctx.strokeRect(x - w / 2 - 3, plate - z * 0.5, w + 6, y - plate + z * 0.5 + 2); ctx.restore(); }
   }
 
   blade(cx, cy, z) {
@@ -245,8 +328,15 @@ export class GridView {
     let prev = null;
     for (const st of steps) {
       const [c, b, n, d] = st;
-      const p = { x: this.ox + (c + 0.5) * this.z, y: this.oy + (nrows - 1 - (b + n) + 0.5) * this.z, d };
-      if (prev) {
+      const p = { x: this.ox + (c + 0.5) * this.z, y: this.oy + (nrows - 1 - (b + n) + 0.5) * this.z, d, flew: ((st[8] || 0) & 16) !== 0 };
+      if (prev && prev.flew) { // flown off a spring: her arc (up 5 rows, over to where she lands), lime, dotted
+        const sx = prev.x + prev.d * this.z, apex = Math.min(prev.y, p.y) - 5 * this.z, cy = 2 * apex - 0.5 * (prev.y + p.y);
+        ctx.save(); ctx.strokeStyle = C.spring; ctx.globalAlpha = 0.9; ctx.setLineDash([Math.max(3, this.z * 0.25), Math.max(3, this.z * 0.2)]); ctx.lineDashOffset = -(performance.now() / 50) % 20;
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sx, prev.y); ctx.quadraticCurveTo((sx + p.x) / 2, cy, p.x, p.y); ctx.stroke();
+        ctx.restore();
+        ctx.globalAlpha = 1; ctx.fillStyle = C.spring; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(2, this.z / 5), 0, Math.PI * 2); ctx.fill(); // (a dot where she comes down)
+        this.animated = true;
+      } else if (prev) {
         ctx.strokeStyle = prev.d > 0 ? C.pathR : C.pathL; ctx.globalAlpha = 0.75;
         ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(p.x, p.y); ctx.stroke();
       }
@@ -405,7 +495,7 @@ export class GridView {
     const s = Math.min((W - 16) / n, (H - 8) / rows.length);
     const ox = (W - n * s) / 2, oy = (H - rows.length * s) / 2;
     this.miniBox = { ox, oy, s };
-    const tint = { '#': '#3a2711', S: '#ff4426', H: '#0d4a59', C: '#ff4426', B: '#ff2bd6', R: '#b45cff', L: '#b45cff', '>': C.entry, X: C.exit };
+    const tint = { '#': '#3a2711', S: '#ff4426', H: '#0d4a59', C: '#ff4426', B: '#ff2bd6', R: '#b45cff', L: '#b45cff', '(': C.beam, ')': C.beam, '~': C.lava, '^': '#7dff4a', '>': C.entry, X: C.exit };
     ctx.fillStyle = '#120b20'; ctx.fillRect(ox, oy, n * s, rows.length * s);
     for (let i = 0; i < rows.length; i++)
       for (let c = 0; c < n; c++) {

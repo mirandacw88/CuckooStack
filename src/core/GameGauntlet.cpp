@@ -27,20 +27,21 @@ glm::vec3 steam() { return hexColor("#8a78b0"); }
 void Game::enterGauntlet(const PlacedGauntlet& p) {
     gIn_ = p;
     gDir_ = 1;
-    gMoves_ = 0; gBotLay_ = -99;
+    gFly_ = false;
+    gMoves_ = 0; gBotLay_ = -99; gBounced_ = false;
     if (surging_) endSurge();
     graceT_ = 0; // (no smashing through a maze)
     // the droid peels off; raids due inside wait till she's out
     if (raid_.on && raid_.leaving < 0) raid_.leaving = 0, raid_.leaveFrom = droidPose().pos - glm::vec3(float(x_), 0.f, 0.f);
     for (double& r : raidPlan_) if (r >= p.x0 - 5 && r < p.x1() + 10) r = p.x1() + 10;
+    if (p.g->isZone()) return; // (a bounce zone on the course: no door, no banner)
     // the door slams shut behind her
     sfx(Sfx::Bounce, 1); buzz(30);
     shake_ = std::max(shake_, 0.22f);
     const glm::vec3 door{float(p.x0), float(baseY_) + 0.6f, 0.4f};
     puff(door, 10, hexColor("#5a4a3a"), 1.4f, 0.5f);
     burst(door, 24, {glow("#ff2a3a", 2.5f), glow("#ffb43a", 2.5f)}, 1.5f, 4, 0.5f, 0.06f, 0.6f, 0, false, 2.f, 3);
-    popup("THE " + [&] { std::string n = p.g->name(); for (char& ch : n) ch = char(std::toupper(ch)); return n; }(),
-          {float(x_) + 2.5f, float(baseY_) + 2.6f, 0}, PopKind::Sector);
+    popup(gauntletTitle(p.g->name()), {float(x_) + 2.5f, float(baseY_) + 2.6f, 0}, PopKind::Sector);
 }
 
 void Game::endSqueeze() {
@@ -52,8 +53,15 @@ void Game::endSqueeze() {
 void Game::leaveGauntlet() {
     endSqueeze();
     const glm::vec3 door{float(gIn_.x1()), float(baseY_) + 0.8f, 0.3f};
+    const bool zone = gIn_.g->isZone();
     gIn_ = {};
     gDir_ = 1;
+    gFly_ = false;
+    if (zone) { // out of a bounce zone: a spark of light, on she runs
+        rings_.spawn(door, glow("#ff2bd6", 2.5f), 1.6f, 0.4f, true);
+        burst(door, 20, {glow("#ff2bd6", 3.f), volt()}, 1.5f, 4, 0.5f, 0.06f, 0.6f, 2.f, false, 2.5f, 3);
+        return;
+    }
     popup("ESCAPED!", door + glm::vec3(1.5f, 1.6f, 0.f), PopKind::Surge);
     sfx(Sfx::SurgeStart); buzz(25);
     rings_.spawn(door, volt(), 2.6f, 0.6f, true);
@@ -63,7 +71,7 @@ void Game::leaveGauntlet() {
 
 void Game::gauntletBounce(int c, int r) {
     gDir_ = -gDir_;
-    ++gMoves_;
+    gBounced_ = true; // (the move was counted as her front edge came into the cell: a bounce is one solver step, not two)
     squash_ = 0.25f;
     gFlash_ = 1.f;
     gFlashAt_ = {float(gIn_.x0 + (c + 0.5) * U), float((r + 0.5) * U), 0.f};
@@ -73,8 +81,71 @@ void Game::gauntletBounce(int c, int r) {
     burst(hit, 14, {glow("#ff2bd6", 3.f), white()}, 1.5f, 4, 0.3f, 0.06f, 0.3f, gDir_ * 2.f, false, 2.5f, 2);
 }
 
+Spring* Game::mazeSpringAt(int col, int row) {
+    const double x = gIn_.x0 + (col + 0.5) * U;
+    for (std::vector<Spring>* v : {&level_.gsprings, &level_.springs})
+        for (Spring& s : *v)
+            if (s.floor == row + 1 && std::abs(s.x - x) < U / 2 + 1e-6) return &s;
+    return nullptr;
+}
+
+// A spring cell under her middle: she's launched. The flight is the solver's (Gauntlet::flightFrom: the arc, the walls
+// and roofs, the bounces and the landing worked out ahead), played out in time, so she comes down where the solver says.
+void Game::launchGauntlet(int col, int row, double over) {
+    const Gauntlet& g = *gIn_.g;
+    gPlan_ = g.flightFrom(col, row + 1, static_cast<int>(eggs_.size()), gDir_);
+    gFly_ = true;
+    gFlyT_ = over;
+    gFlyBounce_ = 0;
+    launched_ = true;
+    endSqueeze();
+    if (Spring* s = mazeSpringAt(col, row)) springFx(*s); else { ++springsFired_; sfx(Sfx::Bounce, 2); }
+    x_ = gIn_.x0 + gPlan_.xAt(over) * U;
+    baseY_ = gPlan_.rowAt(over) * U;
+    vy_ = gPlan_.vyAt(over);
+    baseY_ = std::max(baseY_, (row + 1) * U + 1e-3);
+    gBotLay_ = -99;
+}
+
+void Game::flyGauntlet(float dt) {
+    const Gauntlet::Flight& f = gPlan_;
+    gFlyT_ += dt;
+    const double t = std::min(gFlyT_, f.seconds);
+    while (gFlyBounce_ < f.bounces.size() && f.bounces[gFlyBounce_].t <= t) { // a bumper or a gate against her, in the air
+        const Gauntlet::Flight::Bounce& b = f.bounces[gFlyBounce_++];
+        x_ = gIn_.x0 + f.xAt(b.t) * U;
+        baseY_ = f.rowAt(b.t) * U;
+        gauntletBounce(b.c, b.r);
+    }
+    x_ = gIn_.x0 + f.xAt(t) * U;
+    baseY_ = f.rowAt(t) * U;
+    vy_ = f.vyAt(t);
+    if (gFlyT_ < f.seconds) return;
+    gFly_ = false;
+    if (f.end != Gauntlet::Flight::End::Landed) { // into a wall or a roof (the solver's crash)
+        launched_ = false;
+        die(f.end == Gauntlet::Flight::End::Ceiling);
+        return;
+    }
+    // down: on the floor the plan landed her on, as the ground rules find it (floorUnder)
+    baseY_ = f.floor * U;
+    if (vy_ < -4) {
+        squash_ = 0.24f; sfx(Sfx::Land); shake_ = std::max(shake_, 0.12f);
+        puff({float(x_), float(baseY_) + 0.05f, 0}, 7, steam(), 1.6f, 0.45f);
+        rings_.spawn({float(x_), float(baseY_) + 0.02f, 0}, cyan(), 1.2f, 0.35f, false);
+        for (size_t i = 0; i < eggs_.size(); ++i) { eggs_[i].jig = 1; eggs_[i].jd = i * 0.035f; }
+    }
+    vy_ = 0;
+    launched_ = false;
+    gDir_ = f.dir;
+    gBounced_ = false;
+    gMoves_ += Gauntlet::kLayGap + 1;
+    gBotLay_ = -99;
+}
+
 void Game::updateGauntlet(float dt) {
     const Gauntlet& g = *gIn_.g;
+    if (gFly_) { flyGauntlet(dt); return; }
     // the floor under her: over either side of her footprint, the highest solid top at or below her stack's base
     auto floorUnder = [&](double x) {
         double best = 0;
@@ -88,6 +159,20 @@ void Game::updateGauntlet(float dt) {
     const bool airborne = baseY_ > floorUnder(x_) + 1e-4;
     if (!airborne) {
         double nx = x_ + gDir_ * speed_ * dt;
+        // over a spring: launched as her middle reaches the cell's middle (she's run in to it first: the rules of the column
+        // her front edge came into have been met, as the solver has it)
+        if (vy_ == 0) {
+            const int mc = gIn_.col(x_), mr = static_cast<int>(std::lround(baseY_ / U));
+            if (mc >= 0 && mc < g.cols() && g.springAt(mc, mr - 1)) {
+                const double xs = gIn_.x0 + (mc + 0.5) * U;
+                if (gDir_ * (nx - xs) >= 0) { // (reached it this frame, or already on it: the rest of the frame is in the air)
+                    const double over = std::max(0.0, gDir_ * (nx - xs)) / std::max(1.f, speed_);
+                    x_ = xs;
+                    launchGauntlet(mc, mr - 1, over);
+                    return;
+                }
+            }
+        }
         // stepping off a ledge, she drops in the first cell past it, as the solver has her: a frame that takes her
         // off it stops where her back edge leaves it (her front edge, kHb * 2 on, still in that cell), so her front
         // edge never reaches the cell after it before she's dropped (with a lower roof there, it would crash her)
@@ -100,6 +185,7 @@ void Game::updateGauntlet(float dt) {
         const int c = gIn_.col(x_ + gDir_ * kHb), a = gIn_.col(nx + gDir_ * kHb);
         if (a != c) { // her front edge reaches the next column: what's there
             ++gMoves_;
+            gBounced_ = false;
             const int b = static_cast<int>(std::lround(baseY_ / U)), feet = b + static_cast<int>(eggs_.size());
             for (int r = feet; r < feet + Gauntlet::kBodyRows; ++r)
                 if (g.blocks(a, r, gDir_)) {
@@ -163,7 +249,7 @@ void Game::updateGauntlet(float dt) {
 }
 
 void Game::emitGauntlets(RenderList& out, float pz) {
-    if (level_.gauntlets.empty()) return;
+    if (level_.gauntlets.empty() && level_.zones.empty()) return;
     LitMaterial stone, cube;
     float courses = 1.f;
     wallMaterials(pz, stone, cube, courses);
@@ -215,6 +301,13 @@ void Game::emitGauntlets(RenderList& out, float pz) {
                 out.add(Pass::Lit, MeshId::Box) = makeEmissive(
                     compose(k.pos + glm::vec3(dir * (flow - 0.5f) * Uf * 0.5f, arm * 0.06f, DEPTH / 2 + 0.012f), {0, 0, dir * arm * 0.8f}, {0.16f, 0.04f, 0.01f}),
                     field * (2.6f * (1.f - std::abs(flow - 0.5f))));
+            break;
+        }
+        case Gauntlet::Cell::Lava: { // basalt glowing through its cracks (the molten top: emitLava)
+            LitMaterial m = stone;
+            m.color = hexColor("#2a140c");
+            m.emissive = glow("#ff5a14", 0.45f + 0.15f * std::sin(time_ * 2.f + k.pos.x * 3.f));
+            (out.add(Pass::Lit, MeshId::Box) = makeLit(compose(k.pos, cell), m, k.pos.x)).color.a = 1.f;
             break;
         }
         default:

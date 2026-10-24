@@ -1,0 +1,20 @@
+; Two saws and a step: tap, climb, tap.
+chunk course
+ranges 20
+weight 8
+uses 2
+mirror yes
+---
+length 54
+difficulty 0 0.35
+raids auto
+course
+13 0 crate
+20 0 hay
+12 2 crate
+20 2 crate
+12 0 crate
+13 0 crate
+saws
+13.8 33
+discos

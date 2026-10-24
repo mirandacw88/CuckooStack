@@ -441,6 +441,7 @@ button.danger:hover { background: linear-gradient(180deg, #ff6479, #e22a47); }
 .tip-head { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
 .tip-head b { font-weight: 700; color: var(--volt); margin-right: auto; letter-spacing: 0.02em; }
 .tip-text { color: var(--muted); }
+.tip-warn { color: var(--red); font-weight: 600; margin-top: 3px; }
 .tip kbd, .keycap {
   display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 5px; font: 700 10px var(--ui);
   color: var(--text); background: linear-gradient(180deg, #2b2045, #1b1330); border: 1px solid rgba(190, 160, 255, 0.35); box-shadow: 0 2px 0 #0b0714;

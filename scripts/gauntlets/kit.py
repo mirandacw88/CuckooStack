@@ -2,7 +2,8 @@
 reads it, and printed top first; and the patterns the gauntlets are built from.
 
 Cells: '#' stone, 'H' cyber cube, 'B' bumper, 'R' / 'L' one-way gate (passed running right / left), 'S' a saw in
-stone, 'C' a saw in a cube, '>' the entry (left edge), 'X' the exit (right edge), '.' air. One cell is one egg high.
+stone, 'C' a saw in a cube, '(' / ')' stone with a wall laser in its left / right face, '~' lava, '^' a spring (a floor she is
+launched off: up 5 rows and on, Gauntlet::flightFrom), '>' the entry (left edge), 'X' the exit (right edge), '.' air. One cell is one egg high.
 The hen's body fills two cells over her feet (Gauntlet::kBodyRows): a room `room` eggs high has air for
 2 + room rows, its roof right over that.
 """

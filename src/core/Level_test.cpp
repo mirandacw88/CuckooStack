@@ -5,6 +5,8 @@
 #include "core/Campaign.h"
 #include "core/Difficulty.h"
 #include "core/Level.h"
+#include "core/LevelBake.h"
+#include "core/LevelData.h"
 
 #include <cstdio>
 #include <set>
@@ -350,6 +352,38 @@ void eggBudget() {
     check(worstOff < 0, "...(switched off, the same seeds give climbs no meter can pay for)");
 }
 
+// the generator's wall lasers: each set into a drop's face (the wall she comes off higher than the stretch below it),
+// its row between the stretch's floor and the drop's top, firing on along the stretch: she falls down through it, an
+// egg cut out. No more than the level's count; a level file the game reads; none when the editors' switch is off
+void lasersOnDrops() {
+    int laid = 0;
+    bool onDrops = true, valid = true, counted = true;
+    for (const int n : {32, 37, 45, 58, 71}) {
+        const LevelData d = bakeLevel(n, nullptr);
+        std::string why;
+        valid = valid && parseLevel(n, levelText(d), &why).has_value();
+        Level l;
+        l.load(d);
+        l.generateUntil(d.length + 20);
+        int here = 0;
+        for (const Laser& z : l.lasers) {
+            const int above = l.heightAt(z.x - 0.3), below = l.heightAt(z.x + 0.3);
+            onDrops = onDrops && z.dir == 1 && above > z.row && z.row >= below && l.laserTakesAnEgg(z);
+            ++here;
+        }
+        counted = counted && here <= Campaign::lasersOf(n);
+        laid += here;
+        std::printf("      level %d: %d lasers (of %d due)\n", n, here, Campaign::lasersOf(n));
+    }
+    check(laid >= 5, "the generator lays wall lasers on the levels past the authored ones");
+    check(onDrops, "...each in a drop's face, its row under the drop's top, firing on along the stretch below (an egg)");
+    check(counted && valid, "...no more than the level's count, in a level file the game reads");
+    GenOptions sawsOnly;
+    sawsOnly.only = {"saw"};
+    check(bakeLevel(45, nullptr, 7u, sawsOnly).countOf(kLaserHazard) == 0, "...none with the editors' laser switch off");
+    check(levelText(bakeLevel(45, nullptr, 7u)) == levelText(bakeLevel(45, nullptr, 7u)), "...the same seed, the same lasers");
+}
+
 int main() {
     test::useFixtures(); // (the levels and gauntlets these tests are written round: tests/fixtures)
     fairness();
@@ -361,5 +395,6 @@ int main() {
     difficultyScale();
     lookups();
     blocks();
+    lasersOnDrops();
     return finish("Level");
 }

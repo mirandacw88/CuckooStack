@@ -46,3 +46,17 @@ test('the changelog has a dated line', () => {
   assert.ok(dates.length > 0);
   assert.deepEqual(dates, [...dates].sort().reverse(), 'newest first');
 });
+
+test('the Chunks section covers the maze chunk: its block, its checker, Mirror, an example file, and a changelog line', () => {
+  const chunks = html.slice(html.indexOf('id="chunks"'), html.indexOf('</section>', html.indexOf('id="chunks"')));
+  for (const word of ['<h3>A maze chunk</h3>', '<h3>Mirror, for a maze</h3>', 'data-scene="mazechunk"', 'chunk maze', 'Its bottom row is the floor', 'test corridor', 'Generate a new maze']) assert.ok(chunks.includes(word) || html.includes(word), `the Chunks section lacks: ${word}`);
+  assert.ok(!chunks.includes('coming soon'), 'maze chunks are no longer "coming soon"');
+  assert.match(html, /<time>[\d-]+<\/time> <b>Maze chunks\.<\/b>/, 'a changelog line for maze chunks');
+  assert.match(figures, /\n  mazechunk: \(\) =>/);
+});
+
+test('the Chunks section says a roll never comes back empty because of a chunk, and the Mac judges maze chunks on push', () => {
+  const chunks = html.slice(html.indexOf('id="chunks"'), html.indexOf('</section>', html.indexOf('id="chunks"')));
+  for (const word of ['<h3>A roll never comes back empty</h3>', 'Left out: three-saws', 'Fewer of:', 'plays it in the test corridor']) assert.ok(chunks.includes(word), `the Chunks section lacks: ${word}`);
+  assert.match(html, /<time>[\d-]+<\/time> <b>A roll never comes back empty because of a chunk\.<\/b>/, 'a changelog line for it');
+});

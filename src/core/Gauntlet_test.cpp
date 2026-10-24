@@ -8,11 +8,14 @@
 // way, unlike every other one (mirror images included), out with its level's egg meter at its hardest, and full of near
 // misses; and each design's signature (the Grand Gallery's climb, the wells, the labyrinth's forks, the ascent's).
 #include "TestUtil.h"
+
+#include <algorithm>
 #include "core/Campaign.h"
 #include "core/Gauntlet.h"
 #include "core/GauntletDesigns.h"
 #include "core/LevelData.h"
 #include "core/Level.h"
+#include "core/LevelCatalog.h"
 
 #include <deque>
 #include <map>
@@ -335,6 +338,162 @@ void registry() {
 
 } // namespace
 
+// wall lasers ('(' and ')': stone with a laser in its left or right face, its beam along its row through the air) and
+// lava ('~': a floor) in a maze. A laser hits her once a pass (zapped till she's out of every beam's columns): the
+// first time its row meets her, an egg there is cut out (the egg right under her: a CLOSE SHAVE), her body there
+// crashes her (cut in half); falling down through it, her bottom egg meets it first. Its beam just over her head as she
+// comes into its reach brushes it (a CLOSE CALL). Lava burns an egg a cell (none: a crash, her last: a CLOSE SHAVE);
+// the solver and the bot take them through
+void hazards() {
+    // a laser in a wall's right face, at its foot, firing right along the floor she drops onto
+    const std::vector<std::string> drop = {
+        "##########",
+        "#........#",
+        "#........#",
+        "#........#",
+        "...#......",
+        ">..).....X",
+        "##########",
+    };
+    std::string err;
+    const auto f = Gauntlet::parse("drop", drop, &err);
+    check(f.has_value() && f->rowsTopFirst() == drop, ("a laser in a face parses and writes back " + err).c_str());
+    if (!f) return;
+    check(f->solid(3, 1) && f->beamAt(4, 1) && f->beamAt(9, 1) && !f->beamAt(2, 1) && f->beamColumn(5) && !f->beamColumn(3),
+          "its cell is solid; its beam runs along its row from its face, the way it fires");
+    S o;
+    Gauntlet::StepInfo in;
+    check(f->step({3, 3, 0, 1}, 0, o, &in) == M::Crash, "dropping down through its beam with no egg: cut in half");
+    check(f->step({3, 3, 1, 1}, 0, o, &in) == M::Ok && o.b == 1 && o.n == 0 && o.z == 1 && in.cut == 1 && in.lastEgg, "...with one: her bottom egg cut out, a CLOSE SHAVE");
+    check(f->step({4, 1, 0, 1, 0, 1}, 0, o, &in) == M::Ok && o.z == 1, "...then it's done with her this pass (her body in it)");
+    check(f->step({4, 1, 0, 1, 0, 0}, 0, o, &in) == M::Crash, "in it, not hit yet, her body in its row: cut in half");
+    check(f->step({4, 1, 2, 1, 0, 0}, 0, o, &in) == M::Ok && o.n == 1 && in.cut == 1 && !in.lastEgg, "...an egg lower down in it: cut out, the rest drop");
+
+    // a laser in a hanging pillar's left face, over her head, firing back along the hall; then lava
+    const std::vector<std::string> rows = {
+        "######################",
+        "#............##......#",
+        "#............##......#",
+        "#............(.......#",
+        "......................",
+        ">....................X",
+        "###################~~#",
+    };
+    const auto g = Gauntlet::parse("hazards", rows, &err);
+    check(g.has_value() && g->rowsTopFirst() == rows, ("a laser and lava parse and write back " + err).c_str());
+    if (!g) return;
+    check(g->beamAt(1, 3) && g->beamAt(12, 3) && !g->beamAt(0, 3) && g->lavaAt(19, 0) && g->solid(19, 0), "its beam stops at the first solid cell; lava is a floor");
+    check(g->step({0, 1, 0, 1}, 0, o, &in) == M::Ok && in.brush, "coming into its reach with its beam just over her head: a CLOSE CALL");
+    check(g->step({3, 1, 2, 1}, 0, o, &in) == M::Crash, "...her body in its row: cut in half");
+    check(g->step({3, 1, 3, 1}, 0, o, &in) == M::Ok && o.n == 2 && in.cut == 1 && in.lastEgg, "...the egg right under her in it: cut out, a CLOSE SHAVE");
+    check(g->step({12, 1, 0, 1, 0, 1}, 0, o, &in) == M::Ok && o.z == 0, "out of its reach: it can hit her again");
+    check(g->step({3, 1, 0, 1, 0, 0}, 1, o, &in) == M::Crash, "an egg laid in its reach lifting her body into its row: cut in half where she stands");
+    check(g->step({3, 1, 0, 1, 0, 1}, 1, o, &in) == M::Ok, "...not once it's had her this pass");
+    check(!Gauntlet::parse("old", {"####", "#..#", ">=.X", "####"}, &err) && err.find("unknown cell") != std::string::npos, "the old beam cell ('=') is gone");
+    check(g->step({18, 1, 2, 1}, 0, o, &in) == M::Ok && o.n == 1 && in.burned && !in.lastEgg, "lava: an egg burned as she comes onto a cell of it");
+    check(g->step({19, 1, 1, 1}, 0, o, &in) == M::Ok && o.n == 0 && in.burned && in.lastEgg, "...her last: a CLOSE SHAVE");
+    check(g->step({19, 1, 0, 1}, 0, o, &in) == M::Crash, "...with none: she burns up");
+    const Gauntlet::Solution sol = g->solve();
+    check(sol.reachable && !g->botTrace().empty(), "the solver gets her through (short under the beam), the bot's way too");
+    int shaves = 0, calls = 0;
+    for (const Gauntlet::NearMissAt& m : Gauntlet::nearMisses(g->botTrace())) { shaves += m.kind == Gauntlet::NearMiss::Shave; calls += m.kind == Gauntlet::NearMiss::CloseCall; }
+    check(shaves >= 1 && calls >= 1, "...its near misses counted");
+    auto mirror = [](std::vector<std::string> m) {
+        for (std::string& r : m) { std::reverse(r.begin(), r.end()); for (char& c : r) c = c == '>' ? 'X' : c == 'X' ? '>' : c == '(' ? ')' : c == ')' ? '(' : c; }
+        return m;
+    };
+    check(g->fingerprint() == Gauntlet::parse("mirror", mirror(rows))->fingerprint(), "...and its mirror image (its lasers facing the other way) is the same layout");
+
+    // on the course: the maze's lasers join the level's, in their cells' faces, their reach the grid's beams
+    LevelCatalog cat;
+    std::string why;
+    check(cat.setGauntlet("drop", drop, &why) && cat.setLevel(4, "length 30\ncourse\n10 0 crate\n10 0 gauntlet drop\n40 0 crate\n", &why), ("a level laying it " + why).c_str());
+    Level l;
+    l.load(*cat.level(4), &cat);
+    l.generateUntil(40);
+    const double x0 = 10 * U; // (the maze's left edge)
+    check(l.lasers.size() == 1 && std::abs(l.lasers[0].x - (x0 + 4 * U)) < 1e-9 && l.lasers[0].dir == 1 && l.lasers[0].row == 1 && l.lasers[0].traced() &&
+              std::abs(l.lasers[0].x0 - (x0 + 4 * U)) < 1e-9 && std::abs(l.lasers[0].x1 - (x0 + 10 * U)) < 1e-9,
+          "the maze's laser on the course: in its cell's right face, firing right along its row to the maze's end");
+}
+
+// a room to fly in: W wide, H rows of air over a street of stone (row 0), its door and exit at row 1; `set` puts cells in
+// (column, row, char)
+std::vector<std::string> room(int W, int H, const std::vector<std::tuple<int, int, char>>& set = {}) {
+    std::vector<std::string> bottomUp(size_t(H + 1), std::string(size_t(W), '.'));
+    bottomUp[0] = std::string(size_t(W), '#');
+    bottomUp[size_t(H)] = std::string(size_t(W), '#');
+    for (int r = 1; r < H; ++r) bottomUp[size_t(r)][0] = bottomUp[size_t(r)][size_t(W - 1)] = '#';
+    bottomUp[1][0] = '>'; bottomUp[2][0] = '.';
+    bottomUp[1][size_t(W - 1)] = 'X'; bottomUp[2][size_t(W - 1)] = '.';
+    for (const auto& [c, r, ch] : set) bottomUp[size_t(r)][size_t(c)] = ch;
+    return {bottomUp.rbegin(), bottomUp.rend()};
+}
+
+// springs (Gauntlet::flightFrom): a pad she's launched off, up kSpringPower rows and on at kFlightSpeed; the solver flies the
+// arc inside one step, so the bot's way jumps from the pad to where she lands
+void springs() {
+    using F = Gauntlet::Flight;
+    check(Gauntlet::kSpringPower == 5 && Gauntlet::kFlightSpeed == 8.0, "a spring: 5 rows up, 8 m/s along");
+    const auto open = room(40, 9, {{6, 0, '^'}});
+    const Gauntlet g = must(open);
+    check(g.at(6, 0) == Gauntlet::Cell::Spring && g.springAt(6, 0) && g.solid(6, 0) && g.rowsTopFirst() == open, "a '^' reads as a spring, a floor, and writes back as it was");
+    check(g.fingerprint() == must(room(40, 9, {{6, 0, '^'}})).fingerprint(), "...and a layout with one is as itself");
+    F f = g.flightFrom(6, 1, 0, 1);
+    check(f.end == F::End::Landed && f.floor == 1 && f.dir == 1 && f.col == 17 && std::abs(f.seconds - 0.8167) < 0.01, "an open room: flown up and over, down on the floor 11 cells on (0.8 s)");
+    check(f.bounces.empty() && std::abs(f.xAt(0) - 6.5) < 1e-9 && f.rowAt(0) == 1 && std::abs(f.rowAt(f.seconds / 2) - 6.0) < 0.05, "...from the pad's middle, to 5 rows above it at the top of the arc");
+    check(std::abs(f.xAt(f.seconds) - (6.5 + Gauntlet::kFlightSpeed / 0.6 * f.seconds)) < 1e-9, "...running at 8 m/s the whole way");
+    Gauntlet::State o;
+    Gauntlet::StepInfo in;
+    check(g.step({5, 1, 0, 1, 0, 0}, 0, o, &in) == Gauntlet::Move::Ok && in.flew && o.c == 17 && o.b == 1 && o.n == 0 && o.d == 1 && o.k == 0,
+          "a step onto the pad flies her in that step: where she lands, no egg laid in the air, the cooldown over");
+    check(g.step({5, 1, 1, 1, 0, 0}, 0, o, &in) == Gauntlet::Move::Ok && o.n == 1 && o.c == 17, "...her stack along with her");
+    check(g.step({5, 1, 7, 1, 0, 0}, 0, o) == Gauntlet::Move::Crash, "...a stack so tall her head meets the roof in the arc crashes her");
+    // a wall in the way: the arc ends at its face
+    const Gauntlet wall = must(room(40, 9, {{6, 0, '^'}, {12, 1, '#'}, {12, 2, '#'}, {12, 3, '#'}, {12, 4, '#'}, {12, 5, '#'}, {12, 6, '#'}, {12, 7, '#'}}));
+    f = wall.flightFrom(6, 1, 0, 1);
+    check(f.end == F::End::Wall && wall.step({5, 1, 0, 1, 0, 0}, 0, o) == Gauntlet::Move::Crash, "a wall as high as the room in the arc's way: she crashes into its face");
+    // a low wall: over it
+    const Gauntlet low = must(room(40, 9, {{6, 0, '^'}, {12, 1, '#'}, {12, 2, '#'}}));
+    f = low.flightFrom(6, 1, 0, 1);
+    check(f.end == F::End::Landed && f.col == 17, "a wall 2 high: flown over");
+    // a ledge: 3 rows up, 12 cells long: she comes down on it, and the bot runs along it and off its end
+    std::vector<std::tuple<int, int, char>> set = {{5, 0, '^'}};
+    for (int c = 12; c <= 23; ++c) { set.push_back({c, 2, '#'}); set.push_back({c, 3, '#'}); }
+    const Gauntlet ledge = must(room(34, 9, set));
+    f = ledge.flightFrom(5, 1, 0, 1);
+    check(f.end == F::End::Landed && f.floor == 4 && f.col == 14, "a ledge 3 rows up: landed on its top, 9 cells on");
+    check(ledge.step({4, 1, 0, 1, 0, 0}, 0, o, &in) == Gauntlet::Move::Ok && in.flew && o.c == 14 && o.b == 4, "...in one step of the solver's");
+    const Gauntlet::Solution sol = ledge.solve();
+    bool flew = false;
+    int atLedge = 0;
+    for (const Gauntlet::TraceStep& t : ledge.botTrace()) { flew = flew || t.info.flew; atLedge += t.s.b == 4; }
+    check(sol.reachable && sol.routes == 1 && sol.softLocks == 0 && flew && atLedge >= 8, "...the maze is solved over it (one way through, no traps): the bot flies, runs the ledge, drops off its end");
+    // a ledge just too high (the arc's top is 5 rows over the floor: the ledge's top 6)
+    set = {{5, 0, '^'}};
+    for (int c = 12; c <= 23; ++c) { set.push_back({c, 3, '#'}); set.push_back({c, 4, '#'}); set.push_back({c, 5, '#'}); }
+    check(must(room(34, 10, set)).flightFrom(5, 1, 0, 1).end != F::End::Landed, "a ledge 5 rows up (or more): her stack meets its side, no landing");
+    // a bumper in the way: she's turned back in the air, and comes down behind it
+    const Gauntlet bump = must(room(40, 9, {{6, 0, '^'}, {14, 3, 'B'}, {14, 4, 'B'}, {14, 5, 'B'}, {14, 6, 'B'}, {14, 7, 'B'}}));
+    f = bump.flightFrom(6, 1, 0, 1);
+    check(f.end == F::End::Landed && f.dir == -1 && f.bounces.size() == 1 && f.bounces[0].c == 14 && f.col >= 8 && f.col <= 11 && f.floor == 1,
+          "a bumper in the arc's way: bounced back in the air, landing the other way, between the pad and the bumper");
+    check(f.xAt(f.seconds) < f.xAt(f.bounces[0].t) && std::abs(f.xAt(f.bounces[0].t) - (14 - 0.22 / 0.6)) < 0.1, "...her x turning round at the bumper's face");
+    check(bump.step({5, 1, 0, 1, 0, 0}, 0, o, &in) == Gauntlet::Move::Ok && in.flew && o.d == -1 && o.c == f.col, "...the solver has her running left after it");
+    // out of the question: past the exit, on a blade, lava or another pad, a blade in the arc, a beam across it
+    check(must(room(14, 9, {{6, 0, '^'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "a spring too near the exit: the arc never comes down inside (not out by air)");
+    check(must(room(40, 9, {{6, 0, '^'}, {17, 0, 'S'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "...a blade where she'd land: no");
+    check(must(room(40, 9, {{6, 0, '^'}, {17, 0, '~'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "...lava where she'd land: no");
+    check(must(room(40, 9, {{6, 0, '^'}, {17, 0, '^'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "...another spring where she'd land: no");
+    check(must(room(40, 9, {{6, 0, '^'}, {7, 0, 'S'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "...a blade right by the pad: no");
+    check(must(room(40, 9, {{6, 0, '^'}, {14, 3, ')'}})).flightFrom(6, 1, 0, 1).end == F::End::Wall, "...a laser's beam across the landing: no");
+    check(must(room(40, 9, {{6, 0, '^'}, {20, 0, 'S'}})).flightFrom(6, 1, 0, 1).end == F::End::Landed, "a blade past where she lands is a blade like any other: no bother to the arc");
+    // a pad on the other side of the bot's way, running left, flies her left
+    const Gauntlet leftward = must(room(40, 9, {{30, 0, '^'}}));
+    f = leftward.flightFrom(30, 1, 0, -1);
+    check(f.end == F::End::Landed && f.dir == -1 && f.col == 19, "running left: flown left, down 11 cells back");
+}
+
 int main() {
     designs();  // (the game's own gauntlets: what each must be)
     levels();
@@ -345,5 +504,7 @@ int main() {
     solver();
     nearMissCounting();
     tomb();
+    hazards();
+    springs();
     return finish("Gauntlet");
 }

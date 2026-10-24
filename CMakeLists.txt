@@ -164,12 +164,38 @@ foreach(_in ${_outfit_assets})
 endforeach()
 add_library(cs_fonts STATIC ${CS_FONT_SOURCES})
 
+# ---------------------------------------------------------------- level: courses, gauntlets and their rules, OS-free
+# (no game, no services): what the game, the checkers and the level editors share
+add_library(cs_level STATIC
+  src/core/Chunk.cpp
+  src/core/CourseRules.cpp
+  src/core/Difficulty.cpp
+  src/core/Gauntlet.cpp
+  src/core/GauntletDesigns.cpp
+  src/core/Gauntlets.cpp
+  src/core/Hazards.cpp
+  src/core/hazards/Disco.cpp
+  src/core/hazards/Laser.cpp
+  src/core/hazards/Lava.cpp
+  src/core/hazards/Spring.cpp
+  src/core/hazards/Saw.cpp
+  src/core/Json.cpp
+  src/core/Level.cpp
+  src/core/LevelCatalog.cpp
+  src/core/LevelData.cpp
+  src/core/LevelJudge.cpp)
+target_include_directories(cs_level PUBLIC src)
+target_link_libraries(cs_level PUBLIC glm)
+target_compile_options(cs_level PRIVATE ${CS_WARNINGS} ${CS_OPT})
+
 # ---------------------------------------------------------------- core: game logic, OS-free
 add_library(cs_core STATIC
   src/core/Camera.cpp
+  src/core/BotRun.cpp
+  src/core/LevelBake.cpp
+  src/core/LevelBeats.cpp
   src/core/Campaign.cpp
   src/core/Daily.cpp
-  src/core/Difficulty.cpp
   src/core/DroidModel.cpp
   src/core/Economy.cpp
   src/core/HenModel.cpp
@@ -178,15 +204,14 @@ add_library(cs_core STATIC
   src/core/FileStorage.cpp
   src/core/Font.cpp
   src/core/Game.cpp
-  src/core/GameDroid.cpp src/core/GameBot.cpp src/core/GameSaw.cpp
-  src/core/Gauntlet.cpp src/core/Gauntlets.cpp src/core/GauntletDesigns.cpp src/core/GameGauntlet.cpp
+  src/core/GameDroid.cpp src/core/GameBot.cpp src/core/GameSaw.cpp src/core/GameLaser.cpp src/core/GameLava.cpp src/core/GameSpring.cpp
+  src/core/GameGauntlet.cpp
   src/core/GameHud.cpp
   src/core/GameSurge.cpp
   src/core/GameUi.cpp
   src/core/HudImage.cpp
   src/core/Geometry.cpp
   src/core/Hen.cpp
-  src/core/Level.cpp src/core/LevelData.cpp
   src/core/Meta.cpp
   src/core/Monetization.cpp
   src/core/Reminders.cpp
@@ -204,10 +229,35 @@ if(CS_PLATFORM STREQUAL "desktop")
 endif()
 set_source_files_properties(src/core/audio/MiniaudioImpl.cpp PROPERTIES COMPILE_OPTIONS "-O2;-w") # decode fast even in Debug
 find_package(Threads REQUIRED) # (Neon Egypt's backdrop art is decoded off the main thread)
-target_link_libraries(cs_core PUBLIC glm Threads::Threads PRIVATE cs_fonts)
+target_link_libraries(cs_core PUBLIC cs_level glm Threads::Threads PRIVATE cs_fonts)
 # the SDF atlas bake (stb_truetype) runs at startup: keep it optimised even in Debug builds
 set_source_files_properties(src/core/Font.cpp PROPERTIES COMPILE_OPTIONS "-O2")
 target_compile_options(cs_core PRIVATE ${CS_WARNINGS} ${CS_OPT})
+
+# ---------------------------------------------------------------- validation: the checkers' reports and bot runs
+# (level_check, gauntlet_check, the level editors): the game played headless, in-memory services
+add_library(cs_validate STATIC
+  src/core/GauntletReport.cpp
+  src/core/ReportJson.cpp)
+target_link_libraries(cs_validate PUBLIC cs_core)
+target_compile_options(cs_validate PRIVATE ${CS_WARNINGS} ${CS_OPT})
+
+# ---------------------------------------------------------------- the level editor's core (src/editor): a level open
+# for editing, its tools and scene, the bot in the background, merge and refit; the iPhone and iPad editor's, behind a
+# plain C API (cs_editor.h)
+add_library(cs_editor STATIC
+  src/editor/BotJob.cpp
+  src/editor/CEditor.cpp
+  src/editor/EditCourse.cpp
+  src/editor/EditorDoc.cpp
+  src/editor/EditorScene.cpp
+  src/editor/EditorTools.cpp
+  src/editor/GridDoc.cpp
+  src/editor/GridJob.cpp
+  src/editor/MazeGen.cpp
+  src/editor/LevelMerge.cpp)
+target_link_libraries(cs_editor PUBLIC cs_validate)
+target_compile_options(cs_editor PRIVATE ${CS_WARNINGS} ${CS_OPT})
 
 # ---------------------------------------------------------------- graphics: Vulkan 1.0 + volk + VMA, OS-free
 add_library(cs_graphics STATIC
@@ -411,6 +461,78 @@ elseif(CS_PLATFORM STREQUAL "ios")
     XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY ON
     XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY ON)
 
+  # The level editor (CuckooEditor): a separate app for iPhone and iPad, SwiftUI over the editor's core (cs_editor.h)
+  # and the game itself for play-testing (EngineHost.mm); no ads, no Firebase. It syncs with tools/level_editor's
+  # server on the Mac (--lan).
+  option(CS_BUILD_EDITOR "Build the level editor app (CuckooEditor) for iPhone and iPad" ON)
+  if(CS_BUILD_EDITOR)
+    file(GLOB CS_EDITOR_SWIFT ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios_editor/*.swift)
+    set(CS_EDITOR_ASSETS ${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios_editor/Assets.xcassets) # (scripts/icon/make_editor_icon.py)
+    add_executable(CuckooEditor MACOSX_BUNDLE
+      ${CS_EDITOR_SWIFT}
+      src/platform/ios_editor/EngineHost.mm
+      src/platform/ios/IOSAudio.mm
+      src/platform/ios/IOSWindow.mm
+      ${CS_EDITOR_ASSETS})
+    set_source_files_properties(${CS_EDITOR_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_link_libraries(CuckooEditor PRIVATE cs_editor cs_graphics ${CS_MOLTENVK_XCFRAMEWORK}
+      "-framework UIKit" "-framework QuartzCore" "-framework Metal" "-framework IOSurface" "-framework Foundation"
+      "-framework AVFoundation" "-framework Network" "-framework WebKit")
+    target_compile_options(CuckooEditor PRIVATE "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:${CS_WARNINGS};${CS_OPT};-fobjc-arc>")
+    set_target_properties(CuckooEditor PROPERTIES
+      OUTPUT_NAME "CuckooEditor"
+      MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios_editor/Info.plist.in
+      MACOSX_BUNDLE_GUI_IDENTIFIER "${CS_BUNDLE_ID}.editor"
+      XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${CS_BUNDLE_ID}.editor"
+      MACOSX_BUNDLE_BUNDLE_NAME "Cuckoo Editor"
+      MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+      MACOSX_BUNDLE_BUNDLE_VERSION "1"
+      XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+      XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios_editor/EditorBridging.h"
+      XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "CuckooEditor"
+      XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "17.0"
+      XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+      XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+      XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES YES
+      XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+      XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS "$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(SDKROOT)/usr/lib/swift"
+      XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
+      XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${CS_IOS_TEAM_ID}"
+      XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+      XCODE_EMBED_FRAMEWORKS ${CS_MOLTENVK_XCFRAMEWORK}
+      XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY ON
+      XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY ON)
+
+    # The editor's UI tests (tests/ui/ios_editor, XCUITest): they drive CuckooEditor on a simulator with --ui-test-reset (its
+    # own empty data folder). Run: xcodebuild test -project build-ios/CuckooStack.xcodeproj -scheme CuckooEditor
+    # -destination 'id=<a simulator of its own>' (README: Testing)
+    file(GLOB CS_EDITOR_UITEST_SWIFT ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/ios_editor/*.swift)
+    set(CS_EDITOR_UITEST_FIXTURES ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/ios_editor/Fixtures/hurdles.txt)
+    if(CS_EDITOR_UITEST_SWIFT)
+      add_executable(CuckooEditorUITests MACOSX_BUNDLE ${CS_EDITOR_UITEST_SWIFT} ${CS_EDITOR_UITEST_FIXTURES})
+      set_source_files_properties(${CS_EDITOR_UITEST_FIXTURES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+      target_link_libraries(CuckooEditorUITests PRIVATE "-framework XCTest" "-framework Foundation" "-framework UIKit")
+      add_dependencies(CuckooEditorUITests CuckooEditor)
+      set_target_properties(CuckooEditorUITests PROPERTIES
+        OUTPUT_NAME "CuckooEditorUITests"
+        XCODE_PRODUCT_TYPE "com.apple.product-type.bundle.ui-testing"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${CS_BUNDLE_ID}.editor.uitests"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${CS_BUNDLE_ID}.editor.uitests"
+        XCODE_ATTRIBUTE_WRAPPER_EXTENSION "xctest"
+        XCODE_ATTRIBUTE_TEST_TARGET_NAME "CuckooEditor"
+        XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE YES
+        XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+        XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "17.0"
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${CS_IOS_TEAM_ID}"
+        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+        XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "$(PLATFORM_DIR)/Developer/Library/Frameworks"
+        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks @loader_path/Frameworks $(PLATFORM_DIR)/Developer/Library/Frameworks"
+        XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS "$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(SDKROOT)/usr/lib/swift"
+        XCODE_ATTRIBUTE_ENABLE_TESTING_SEARCH_PATHS YES)
+    endif()
+  endif()
+
 else()
   include(FetchContent)
   set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -455,12 +577,21 @@ if(CS_PLATFORM STREQUAL "desktop")
   endfunction()
 
   foreach(f Campaign Daily Economy EndCard FileStorage Game GameSurge HenIdle Math Meta Monetization Reminders RenderList ReplayClip
-            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Level Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev HudImg GameSaw Gauntlet GameGauntlet LevelData)
+            Services Tuning Difficulty Camera Materials HudStyle BeatClock Geometry Effects World HenModel Hen Font HudImage GameUi GameHud DroidModel GameDroid GameDev HudImg GameSaw GameLava Gauntlet GameGauntlet LevelData GameBlock CourseRules Hazards Chunk)
     cs_test(src/core/${f})
   endforeach()
+  cs_test(src/core/LevelCatalog LIBS cs_validate) # (two games on two threads: BotRun)
+  cs_test(src/core/ReportJson LIBS cs_validate) # (a chunk judged; the bot plays it: BotRun)
+  foreach(f Level GameLaser GameSpring GameBounce LevelBeats) # (the generator's own courses, LevelBake; a bot's run, BotRun)
+    cs_test(src/core/${f} LIBS cs_validate)
+  endforeach()
+  foreach(f EditorDoc LevelMerge BotJob GridDoc MazeGen)
+    cs_test(src/editor/${f} LIBS cs_editor)
+  endforeach()
   # the bot plays every level through (all 30, their gauntlets too): 3 minutes or so on a laptop, past the 120 s the
-  # pre-commit hook and CI give a test by default (`ctest --timeout 120`), so these have their own
-  set_tests_properties(GameDev GameDroid PROPERTIES TIMEOUT 600)
+  # pre-commit hook and CI give a test by default (`ctest --timeout 120`), so these have their own (MazeGen: hundreds
+  # of mazes generated, judged and played in the game, at every density and floor count)
+  set_tests_properties(GameDev GameDroid LevelBeats MazeGen PROPERTIES TIMEOUT 600)
   target_include_directories(HudImg_test SYSTEM PRIVATE ${TP}/stb) # (stb_image: the PNGs, to compare with the atlas)
   foreach(f AudioParam Mp3 Music Synth)
     cs_test(src/core/audio/${f})
@@ -487,11 +618,14 @@ if(CS_PLATFORM STREQUAL "desktop")
   # the gauntlet designer's checker (scripts/gauntlets): a gauntlet's way through, near misses and egg meter
   add_executable(gauntlet_check tests/gauntlet_check.cpp)
   target_include_directories(gauntlet_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(gauntlet_check PRIVATE cs_core)
+  target_link_libraries(gauntlet_check PRIVATE cs_validate)
   # ...and the level designer's (assets/levels): a level's course checked, played by the bot; or baked by the generator
+  add_executable(level_range tests/level_range.cpp) # (the generators' expressive range: scripts/levels/expressive_range.py)
+  target_include_directories(level_range PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(level_range PRIVATE cs_core)
   add_executable(level_check tests/level_check.cpp)
   target_include_directories(level_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(level_check PRIVATE cs_core)
+  target_link_libraries(level_check PRIVATE cs_editor) # (--refit: LevelMerge)
   # the asset scripts (scripts/tests): the droid mesh format, and the Daily Drop sprites and HUD atlas reproducing the
   # committed files (those image tests skip themselves without Pillow and numpy)
   find_package(Python3 COMPONENTS Interpreter)
@@ -508,5 +642,16 @@ if(CS_PLATFORM STREQUAL "desktop")
     set(_editor_js ${CMAKE_CURRENT_SOURCE_DIR}/tools/level_editor/tests)
     add_test(NAME level_editor_js COMMAND ${NODE_EXECUTABLE} --test ${_editor_js}/grid.test.mjs ${_editor_js}/course.test.mjs
              ${_editor_js}/history.test.mjs ${_editor_js}/wiki.test.mjs)
+  endif()
+  # the iPhone and iPad editor's rules apart from its looks (Foundation only: the rails' groups, what a group's button
+  # wears, the generators' switches, the maze's cells), built with swiftc on a Mac and checked
+  find_program(SWIFTC_EXECUTABLE swiftc)
+  if(APPLE AND SWIFTC_EXECUTABLE)
+    set(_ios_logic ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/ios_editor)
+    set(_ios_logic_bin ${CMAKE_CURRENT_BINARY_DIR}/ios_editor_logic_test)
+    add_test(NAME ios_editor_logic COMMAND sh -c "\"${SWIFTC_EXECUTABLE}\" -o \"${_ios_logic_bin}\" \"${_ios_logic}/ToolGrouping.swift\" \"${_ios_logic}/MazeCells.swift\" \"${_ios_logic}/GridNames.swift\" \"${_ios_logic}/ChunkLogic.swift\" \"${_ios_logic}/LaunchRequest.swift\" \"${CMAKE_CURRENT_SOURCE_DIR}/tests/swift/ios_editor/main.swift\" && \"${_ios_logic_bin}\"")
+    # ...and the chunk store and the core's chunk calls (EdDoc, the chunk files: Chunk.h through cs_editor.h), with the core linked in
+    set(_ios_chunks_bin ${CMAKE_CURRENT_BINARY_DIR}/ios_editor_chunks_test)
+    add_test(NAME ios_editor_chunks COMMAND sh -c "\"${SWIFTC_EXECUTABLE}\" -import-objc-header \"${CMAKE_CURRENT_SOURCE_DIR}/src/editor/cs_editor.h\" -o \"${_ios_chunks_bin}\" \"${_ios_logic}/CoreBridge.swift\" \"${_ios_logic}/ChunkCore.swift\" \"${_ios_logic}/StoreBasics.swift\" \"${_ios_logic}/ChunkLogic.swift\" \"${_ios_logic}/ChunkStore.swift\" \"${_ios_logic}/ChunkSyncLogic.swift\" \"${_ios_logic}/SyncConflict.swift\" \"${_ios_logic}/Core.swift\" \"${_ios_logic}/Models.swift\" \"${_ios_logic}/LevelStore.swift\" \"${_ios_logic}/ChunkStoreApp.swift\" \"${_ios_logic}/LaunchRequest.swift\" \"${_ios_logic}/BackupModel.swift\" \"${_ios_logic}/ChunkModel.swift\" \"${_ios_logic}/MazeStorage.swift\" \"${_ios_logic}/ToolGrouping.swift\" \"${_ios_logic}/GridNames.swift\" \"${CMAKE_CURRENT_SOURCE_DIR}/tests/swift/ios_editor_chunks/main.swift\" $<TARGET_FILE:cs_editor> $<TARGET_FILE:cs_validate> $<TARGET_FILE:cs_core> $<TARGET_FILE:cs_level> $<TARGET_FILE:cs_fonts> -Xlinker -lc++ && \"${_ios_chunks_bin}\"")
   endif()
 endif()

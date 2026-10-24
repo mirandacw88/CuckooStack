@@ -19,4 +19,5 @@ cmake -S "$ROOT" -B "$OUT" -G Xcode \
   -DCS_MOLTENVK_XCFRAMEWORK="$MVK" \
   -DCS_ENV="$ENV" \
   -DCS_IOS_TEAM_ID="${1:-}"
+python3 "$ROOT/platforms/ios/make_ui_test_scheme.py" "$OUT" # (the editor's UI tests: scheme CuckooEditorUITests)
 echo "Open $OUT/CuckooStack.xcodeproj ($ENV)"

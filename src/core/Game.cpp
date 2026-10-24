@@ -2,6 +2,7 @@
 #include "HenIdle.h"
 
 #include <cstdio>
+#include "CourseRules.h"
 #include "EndCard.h"
 #include "Links.h"
 #include "Log.h"
@@ -86,24 +87,40 @@ GameServices withDefaults(GameServices s) {
     return s;
 }
 
+const FontAtlas& sharedFonts() {
+    static const FontAtlas* atlas = [] {
+        auto* a = new FontAtlas();
+        if (!a->build()) CS_LOGE("Font atlas could not be built; text disabled");
+        return a;
+    }();
+    return *atlas;
+}
+
+const HudImage& sharedHudIcons() {
+    static const HudImage* icons = [] {
+        auto* h = new HudImage();
+        if (!h->buildIcons()) CS_LOGE("HUD sprites could not be decoded");
+        return h;
+    }();
+    return *icons;
+}
+
 const glm::vec3 kCapOk = glow("#ffbe3a", 1.5f), kCapDanger = glow("#ff2a3a", 2.2f), kTileWhite = glow("#ffffff", 1.25f);
 } // namespace
 
 Game::Game(const GameServices& services)
     : svc_(withDefaults(services)), rng_(static_cast<uint64_t>(std::time(nullptr)) * 2654435761ull + 1),
-      sceneRng_(static_cast<uint64_t>(std::time(nullptr)) * 40503ull + 7), dda_(svc_.storage), world_(sceneRng_),
+      sceneRng_(static_cast<uint64_t>(std::time(nullptr)) * 40503ull + 7), dda_(svc_.storage), world_(sceneRng_), fonts_(sharedFonts()), hudIcons_(sharedHudIcons()),
       profile_(svc_.storage, svc_.clock), wallet_(svc_.storage, svc_.analytics), adPolicy_(svc_.storage, svc_.clock, tune_),
       prog_(svc_.storage, tune_), dayStreak_(svc_.storage, svc_.clock), missions_(svc_.storage, svc_.clock), drop_(svc_.storage, svc_.clock),
-      campaign_(svc_.storage) {
+      campaign_(svc_.storage, svc_.levels) {
     tune_.load(svc_.remoteConfig);
     const Grade& g = grade(0);
     fog_ = g.fog; skyMid_ = g.mid; skyBot_ = g.bot; skyHaze_ = g.haze; pinkLight_ = g.light;
     loadRecords();
     if (profile_.flag("low_end")) setLite(true); // found low-end on an earlier launch: lite from the first frame
     svc_.audio->setMuted(muted_);
-    if (!fonts_.build()) CS_LOGE("Font atlas could not be built; text disabled");
     text_ = std::make_unique<TextLayout>(fonts_);
-    if (!hudIcons_.buildIcons()) CS_LOGE("HUD sprites could not be decoded");
     if (campaign_.level() >= 9) egyptBackdropArt(true); // (Egypt is near: its art decodes behind the splash)
     resize(390, 844);
     coinShown_ = float(wallet_.coins());
@@ -269,18 +286,18 @@ void Game::reset() {
     campaign_.applyTo(level_);                                 // the current level: seed, difficulty, finish line
     if (debugSaws_) { // (developer menu: the generator's course, with a saw about every 25 m)
         debugSaws_ = false;
-        campaign_.applyGenerated(level_);
+        campaign_.applyClassic(level_);
         level_.setSaws(std::max(Campaign::sawsOf(campaign_.level()), int(campaign_.length() / 25)));
     }
     level_.generateUntil(60); level_.rebuildBlocks();
     clearT_ = -1; runCleared_ = false;
-    x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
+    x_ = 0; speed_ = 0; baseY_ = 0; vy_ = 0; launched_ = false; springsFired_ = 0; meter_ = MAXE; bonus_ = 0; lastBonus_ = 0; cornCount_ = 0; score_ = 0; hop_ = 0; hopV_ = 0;
     timeScale_ = 1; freeze_ = 0; danger_ = 0; prevFull_ = MAXE; sector_ = 1; streak_ = 0; gradeIdx_ = zoneGrade(campaign_.zone()); camKick_ = 0;
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
     hen_.nodes[hen_.root].pos = glm::vec3(0.f);
-    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0; sawSlash_.t = -1; sawZoom_ = 0;
-    gIn_ = {}; gDir_ = 1; gK_ = 0; gLead_ = 1; henYaw_ = 0; gFlash_ = 0; maxX_ = 0;
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0; sawSlash_.t = -1; sawZoom_ = 0; henDrop_ = henDropV_ = 0; zapped_ = brushed_ = false; lavaAt_ = -1; lavaCell_ = -1; death_ = Death::Crash;
+    gIn_ = {}; gFly_ = false; gDir_ = 1; gK_ = 0; gLead_ = 1; henYaw_ = 0; gFlash_ = 0; maxX_ = 0;
     gSqueezeFrom_ = -1; gSqueezeCols_ = 0; nearMissT_ = sawCutT_ = -10; nearChain_ = 0;
     resetSurge();
 }
@@ -515,6 +532,7 @@ void Game::closeScreen() {
 }
 
 void Game::queueScreen(Screen s) {
+    if (playTest_.level > 0) return; // (the level editor's play-test: the level alone, no rank-ups, drops or primers)
     for (Screen q : screenQueue_) if (q == s) return;
     screenQueue_.push_back(s);
 }
@@ -664,21 +682,29 @@ void Game::lay() {
 
 // OVERDRIVE ends: the walls it smashed collapsed down to the hen's level, so she comes out of it still carrying the
 // stack she went in with, more than the course ahead allows (a low barrier after the next drop is then unpassable;
-// level 28). She sheds what she can't use: down to what the next walls ask for, and what the next barrier lets
-// under. Her meter is full by then, so re-stacking is a tap away
+// level 28). She sheds what she can't use: down to what the next walls (and saws, lava, lasers) ask for, and what the
+// next barrier lets under. Her meter is full by then, so re-stacking is a tap away
 void Game::shedAfterSurge() {
     if (eggs_.empty()) return;
     const double x = x_, base = baseY_;
     int need = 0;                       // eggs to climb the walls ahead (the tallest within ~1 s of running)
     int allow = static_cast<int>(eggs_.size());
+    const double soon = x + std::max(6.5, speed_ * 1.2);
+    auto upTo = [&](double eggsUp) { need = std::max(need, static_cast<int>(std::ceil(eggsUp - base / U - 1e-6))); };
     for (const Segment& s : level_.segs) {
         if (s.x1 <= x) continue;
-        if (s.x0 > x + std::max(6.5, speed_ * 1.2)) break;
-        need = std::max(need, static_cast<int>(std::ceil((s.h * U - base) / U - 1e-6)));
+        if (s.x0 > soon) break;
+        upTo(s.h);
     }
-    for (const Segment& s : level_.segs) { // the lowest barrier within ~2 s: as many as fit under it, standing on its wall
-        if (s.x1 <= x) continue;
-        if (s.x0 > x + std::max(12.0, speed_ * 2.0)) break;
+    // ...and what's coming that takes eggs: a saw's (an egg over it), lava's (an egg a cell), a laser's she can't pass
+    // short (an egg in its row)
+    for (const Saw& w : level_.saws) if (w.x + Level::kSawReach > x && w.x - Level::kSawReach < soon) upTo(w.y + 1);
+    for (const Lava& f : level_.lavas) if (f.x1 > x && f.x0 < soon) upTo(f.floor + f.cells());
+    for (Laser z : level_.lasers)
+        if (level_.traceLaser(z) && z.x1 > x && z.x0 < soon && level_.laserTakesAnEgg(z)) upTo(std::max(z.row, level_.heightAt(z.x0 - 0.3)) + 1);
+    for (const Segment& s : level_.segs) { // the lowest barrier within ~4 s (one past a long drop too, as off a tower in
+        if (s.x1 <= x) continue;          // the sky onto a gauntlet's door): as many as fit under it, standing on its wall
+        if (s.x0 > x + std::max(40.0, speed_ * 4.0)) break;
         if (s.ceil) allow = std::min(allow, std::max(0, static_cast<int>(std::floor((s.ceil * U - HEN_H - 0.02 - s.h * U) / U + 1e-6)) + static_cast<int>(std::floor((s.h * U - base) / U + 1e-6))));
     }
     const int keep = std::min({static_cast<int>(eggs_.size()), std::max(need, 0), allow}); // (a barrier wins over a wall)
@@ -737,16 +763,32 @@ void Game::closeCall(float top, const char* label) {
     burst({float(x_), top, 0}, 22, {C().white, C().cyan}, 2, 5, 0.4f, 0.07f, 0, 0, false, 2.5f, 3);
 }
 
-void Game::die(bool ceiling) {
+void Game::die(bool ceiling, Death how, float cutY) {
     state_ = State::Dead; deadT_ = 0;
-    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0;
+    death_ = how;
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0; henDrop_ = henDropV_ = 0; zapped_ = brushed_ = false;
+    for (Egg& e : eggs_) { e.drop = e.dropV = e.burn = 0; }
     surging_ = false; graceT_ = 0; surgeSpeedMul_ = 1; beat_.setParty(false);
     glm::vec3 p = hen_.nodes[hen_.root].pos; p.y += 0.55f;
     if (ceiling) { henV_ = {-1.5f - speed_ * 0.2f, -3, rng_.range(1, 2.5f)}; henW_ = {rng_.range(-3, 3), rng_.range(-4, 4), -6}; }
     else { henV_ = {-2.5f - speed_ * 0.3f, 6.5f, rng_.range(1, 2.5f)}; henW_ = {rng_.range(-3, 3), rng_.range(-4, 4), 7}; }
     // the base crash: the hen shatters like glass (the procedural hen, without the model, bursts into feathers);
     // the equipped crash effect (crashFx) plays on top
-    if (hen_.canShatter()) {
+    if (how == Death::Sliced && hen_.canShatter()) { // cut in half: the top half thrown off, a line of light along the cut
+        hen_.slice(cutY, glm::vec3(gDir_ * speed_, 0.f, 0.f), float(baseY_), uint32_t(time_ * 1000.f));
+        const glm::vec3 at{p.x, cutY, 0.f};
+        burst(at, 60, {glow("#fff1c8", 3.5f), glow("#ff2b4a", 3.4f), glow("#ffc23a", 3.f)}, 2, 8, 0.6f, 0.06f, 0.3f, gDir_ * 2.f, true, 1.5f, 5);
+        spawnFeathers(at, 22, 1.f);
+        rings_.spawn(at + glm::vec3(0, 0, 0.4f), glow("#ff2b4a", 2.8f), 2.4f, 0.45f, true);
+    } else if (how == Death::Burned && hen_.canShatter()) { // burned up: she chars where she stands, in flames, and crumbles
+        hen_.burn(glm::vec3(gDir_ * speed_, 0.f, 0.f), float(baseY_), uint32_t(time_ * 1000.f));
+        for (int i = 0; i < 90; ++i)
+            fxAdd_.emit(p + glm::vec3(rng_.range(-0.35f, 0.35f), rng_.range(-0.6f, 0.4f), rng_.range(-0.3f, 0.3f)),
+                        {rng_.range(-0.6f, 0.6f), rng_.range(1.5f, 4.f), rng_.range(-0.5f, 0.5f)}, rng_.range(0.4f, 1.1f), rng_.range(0.1f, 0.22f),
+                        0.f, i % 3 ? glow("#ff5a14", 3.4f) : glow("#ffc23a", 3.2f), 1, 1.f, -3.f);
+        puff(p, 26, C().smoke, 1.4f, 0.9f);
+        rings_.spawn({p.x, float(baseY_) + 0.05f, 0.f}, glow("#ff6a1a", 2.6f), 2.4f, 0.5f, false);
+    } else if (hen_.canShatter()) {
         hen_.shatter(p, henV_ * 0.6f, level_.heightAt(p.x) * Uf, uint32_t(time_ * 1000.f));
         burst(p, 160, {glow("#e6fbff", 3.5f), glow("#9ff6ff", 3.f), C().white}, 3, 12, 1.2f, 0.05f, 0.8f, 0, false, 1.4f, 7); // glass dust
         burst(p, 24, {glow("#ffffff", 6.f)}, 1, 4, 0.25f, 0.35f, 0.2f, 0, false, 2.f, 0);                                     // glints
@@ -754,15 +796,20 @@ void Game::die(bool ceiling) {
     } else if (crash_ != CrashFx::Feathers) {
         spawnFeathers(p, 34, 1.3f);
     }
-    burst(p, 110, {C().cyan, C().pink, C().white, C().volt}, 3, 11, 0.9f, 0.11f, 0, 0, false, 1.8f, 6);
+    if (how == Death::Crash) { // (a slice or a burn has its own: the neon rings would hide it)
+        burst(p, 110, {C().cyan, C().pink, C().white, C().volt}, 3, 11, 0.9f, 0.11f, 0, 0, false, 1.8f, 6);
+        rings_.spawn({p.x, p.y, 0.6f}, C().pink, 3.4f, 0.6f, true); rings_.spawn({p.x, p.y, 0.6f}, C().cyan, 2.2f, 0.45f, true);
+        flashScreen(srgbColor("#ff2bd6"), 0.5f);
+    } else {
+        flashScreen(srgbColor(how == Death::Sliced ? "#ff2b4a" : "#ff6a1a"), 0.25f);
+    }
     puff({p.x, p.y - 0.3f, 0}, 18, C().smoke, 2, 0.6f);
-    rings_.spawn({p.x, p.y, 0.6f}, C().pink, 3.4f, 0.6f, true); rings_.spawn({p.x, p.y, 0.6f}, C().cyan, 2.2f, 0.45f, true);
-    flashScreen(srgbColor("#ff2bd6"), 0.5f);
     while (!eggs_.empty()) {
         const Egg e = eggs_.back(); eggs_.pop_back();
         debris_.push_back({DebrisKind::Egg, e.pos, e.rot, e.scale, {rng_.range(-3, 1), rng_.range(2, 6), rng_.range(-2, 2)},
                            {rng_.range(-10, 10), rng_.range(-4, 4), rng_.range(-10, 10)}, 3, 0, e.ring});
     }
+    lavaAt_ = -1; lavaCell_ = -1;
     sfx(Sfx::Squawk); buzz(60); shake_ = 0.55f;
     beat_.stop(); svc_.audio->musicStop(true);
     timeScale_ = 0.2f; chromaKick_ = 1.5f;
@@ -785,10 +832,11 @@ void Game::revive() {
     run_.continues++;
     state_ = State::Play; deadT_ = 0; overDelay_ = -1;
     eggs_.clear();
-    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0;
+    cutSawX_ = -1; sawDrop_ = sawDropV_ = 0; henDrop_ = henDropV_ = 0; zapped_ = brushed_ = false;
+    lavaAt_ = -1; lavaCell_ = -1; death_ = Death::Crash;
     meter_ = MAXE; prevFull_ = MAXE;
-    baseY_ = std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U; vy_ = 0; hop_ = 0; hopV_ = 0;
-    if (gIn_.g) { x_ = gIn_.x0 + 0.3; baseY_ = gIn_.g->entryRow() * U; gDir_ = 1; gSqueezeFrom_ = -1; } // a crash in a maze: back in at its door
+    baseY_ = std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U; vy_ = 0; launched_ = false; hop_ = 0; hopV_ = 0;
+    if (gIn_.g) { x_ = gIn_.x0 + 0.3; baseY_ = gIn_.g->entryRow() * U; gDir_ = 1; gSqueezeFrom_ = -1; gFly_ = false; } // a crash in a maze: back in at its door
     hen_.nodes[hen_.root].pos = {float(x_), float(baseY_), 0};
     hen_.nodes[hen_.root].rot = glm::vec3(0.f);
     hen_.unshatter();
@@ -820,7 +868,7 @@ void Game::finishRun(bool cleared) {
     finalScore_ = score_; finalDist_ = static_cast<int>(std::floor(furthest()));
     newBestRun_ = (isBest || levelBest) && score_ > 0;
     {
-        const int toGo = int(std::ceil(campaign_.lengthOf(levelPlayed) - furthest()));
+        const int toGo = int(std::ceil(campaign_.lengthOf(levelPlayed, campaign_.catalog()) - furthest()));
         std::string hook;
         if (cleared) hook = attempts <= 1 ? std::string("First try!") : "Cleared on attempt " + std::to_string(attempts);
         else if (pbBefore <= 0) hook = "First run of level " + std::to_string(levelPlayed);
@@ -1304,7 +1352,11 @@ void Game::update(double rawDt) {
         const float sway = std::sin(time_ * 2.6f + e.sway) * 0.004f * std::pow(float(i + 1), 1.2f) * (eggs_.size() > 4 ? 1.f : 0.3f);
         const float wide = std::min(1.f, s * 1.05f) * (2 - jy);
         e.scale = {wide, s * jy, wide};
-        e.pos = {float(x_) + sway, cursor + hgt * 0.5f, 0};
+        if (e.drop > 0) { // (an egg over one a laser cut out, falling onto the one below)
+            e.dropV -= 60 * dt; e.drop = std::max(0.f, e.drop + e.dropV * dt);
+            if (e.drop == 0) { e.dropV = 0; e.jig = 1; e.jd = 0; }
+        }
+        e.pos = {float(x_) + sway, cursor + hgt * 0.5f + e.drop, 0};
         e.ringRot = time_ * 1.5f + float(i);
         cursor += hgt;
     }
@@ -1315,11 +1367,13 @@ void Game::update(double rawDt) {
             if (!showPlaced_) { showSpot_ = showroomSpot(); showPlaced_ = true; }
             hen_.nodes[hen_.root].pos = {showSpot_.x, showSpot_.y + hop_, 0};
         } else {
-            hen_.nodes[hen_.root].pos = {float(x_), cursor + hop_, 0};
+            if (henDrop_ > 0) { henDropV_ -= 60 * dt; henDrop_ = std::max(0.f, henDrop_ + henDropV_ * dt); if (henDrop_ == 0) { henDropV_ = 0; squash_ = 0.22f; } }
+            hen_.nodes[hen_.root].pos = {float(x_), cursor + hop_ + henDrop_, 0};
         }
     }
     updateHen(dt);
     updateDebris(dt);
+    if (state_ != State::Play) coolLasers(dt); // (her run over: a beam fired finishes, a charge dies away)
     updateSmashDebris(dt);
     updateParty(rdt);
     if (partyK_ > 0.f) // rainbow outline glow on the hen; it also keeps her readable against the party lights
@@ -1472,7 +1526,7 @@ void Game::update(double rawDt) {
     else overT_ += rdt;
     for (float& p : popT_) p = std::max(0.f, p - rdt);
 
-    buildRenderList();
+    if (!headless_) buildRenderList();
 }
 
 void Game::updatePlay(float dt, float rdt) {
@@ -1523,14 +1577,22 @@ void Game::updatePlay(float dt, float rdt) {
     }
 
     if ((autoSurge_ || runBoost_ == Boost::Surge) && !autoSurgeFired_ && x_ > 4) { autoSurgeFired_ = true; chain_ = 0; startSurge(); }
+    updateSprings(dt); // a spring under her: launched (GameSpring.cpp)
     // a maze gauntlet: in through its door, and its own rules till she's out (GameGauntlet.cpp)
-    if (!gIn_.g && clearT_ < 0)
+    if (!gIn_.g && clearT_ < 0) {
         if (const PlacedGauntlet* p = level_.gauntletAt(x_ + 0.22)) enterGauntlet(*p);
+        else if (const PlacedGauntlet* z = level_.zoneAt(x_ + 0.22)) enterGauntlet(*z); // (a bounce zone: the maze's rules)
+    }
     if (gIn_.g) {
         updateGauntlet(dt);
         if (state_ != State::Play) return;
         updateSaws(dt);
         if (state_ != State::Play) return;
+        updateLasers(dt);
+        if (state_ != State::Play) return;
+        updateLava(dt);
+        if (state_ != State::Play) return;
+        if (gIn_.g && gIn_.g->isZone()) collectDiscos(baseY_ + eggs_.size() * U); // (a bounce zone's are the course's)
         danger_ += (0 - danger_) * std::min(1.f, dt * 10);
         score_ = static_cast<int>(std::floor(maxX_)) + bonus_;
         if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
@@ -1538,8 +1600,11 @@ void Game::updatePlay(float dt, float rdt) {
     }
     if (smashing()) smashAhead();
     const double hb = 0.22;
-    const double hFront = level_.heightAt(x_ + hb) * U;
-    const double support = std::max(level_.heightAt(x_ - hb), level_.heightAt(x_ + hb)) * U;
+    // the wall ahead: a floating block's top if she's up there or stacked as high as it (she climbs onto it), else
+    // what's under it (she ducks under, its underside her barrier)
+    const double stackTop = baseY_ + eggs_.size() * U;
+    const double hFront = level_.floorAt(x_ + hb, std::max(baseY_, stackTop)) * U;
+    const double support = supportY();
     if (hFront > baseY_ + 0.05) {
         const int k = static_cast<int>(std::ceil((hFront - baseY_) / U - 0.5 - 1e-6));
         const double top = baseY_ + eggs_.size() * U;
@@ -1553,8 +1618,8 @@ void Game::updatePlay(float dt, float rdt) {
                 fxAdd_.emit({float(x_) + 0.3f, float(hFront) + 0.02f, rng_.range(-0.6f, 0.6f)}, {rng_.range(-3, -1), rng_.range(0.5f, 2), rng_.range(-0.5f, 0.5f)},
                             rng_.range(0.2f, 0.4f), 0.07f, 0, i % 2 ? C().cyan : C().ember, 1, 3, 8);
         }
-    } else if (support < baseY_ - 1e-4) {
-        vy_ -= 36 * dt; baseY_ += vy_ * dt;
+    } else if (support < baseY_ - 1e-4 || vy_ > 0) { // (falling, or flying up off a spring)
+        vy_ -= float(rules::kGravity) * dt; baseY_ += vy_ * dt;
         if (baseY_ <= support) {
             if (vy_ < -4) {
                 squash_ = 0.24f; sfx(Sfx::Land); shake_ = std::max(shake_, 0.1f);
@@ -1576,6 +1641,7 @@ void Game::updatePlay(float dt, float rdt) {
         const double henTop = baseY_ + eggs_.size() * U + HEN_H;
         for (Segment& sg : level_.segs) {
             if (!sg.ceil || x_ + 0.25 < sg.x0 || x_ + 0.22 >= sg.x1) continue; // the barrier ends exactly when the stack steps onto the next wall
+            if (sg.top && std::max(baseY_, stackTop) >= sg.top * U - 0.05) continue; // (a floating block she's up on, or stacked to climb onto: its underside is below her)
             if (henTop > sg.ceil * U + 0.02 && !smashing()) { die(true); return; }
             sg.minHead = sg.hasMinHead ? std::min(sg.minHead, sg.ceil * U - henTop) : sg.ceil * U - henTop;
             sg.hasMinHead = true;
@@ -1587,6 +1653,10 @@ void Game::updatePlay(float dt, float rdt) {
             }
     }
     updateSaws(dt); // saw blades: the bottom egg sawn off, or the hen caught (GameSaw.cpp)
+    if (state_ != State::Play) return;
+    updateLasers(dt); // wall lasers: an egg cut out of the stack, or the hen cut in half (GameLaser.cpp)
+    if (state_ != State::Play) return;
+    updateLava(dt);   // lava: the egg under her burning, or the hen (GameLava.cpp)
     if (state_ != State::Play) return;
     // danger: the next wall is taller than the stack (judged by where the stack will land)
     const double landBase = std::min(baseY_, support), topNow = landBase + eggs_.size() * U;
@@ -1607,10 +1677,17 @@ void Game::updatePlay(float dt, float rdt) {
     for (const Segment& sg : level_.segs)
         if (sg.ceil && x_ + 0.25 >= sg.x0 && x_ + 0.22 < sg.x1)
             wallH = std::min(wallH, std::floor((sg.ceil * U - HEN_H - 0.02) / U + 1e-6) * U); // snapped to whole eggs
-    needEggs_ = wallH > topNow + 0.05 && !smashing(); // no 'need more eggs' warning while smashing
+    needEggs_ = wallH > topNow + 0.05 && !smashing() && !launched_; // no 'need more eggs' warning while smashing, or flying off a spring
     danger_ += ((needEggs_ ? 1.f : 0.f) - danger_) * std::min(1.f, dt * 10);
 
-    // disco ball pickups
+    collectDiscos(topNow); // disco ball pickups
+    const int s = static_cast<int>(std::floor(maxX_)) + bonus_;
+    score_ = s;
+    if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
+}
+
+// Disco balls she runs through (her stack's top `topNow`): +5, a beat on the meter, toward a surge
+void Game::collectDiscos(double topNow) {
     const double hy = topNow + 0.45;
     auto& corns = level_.corns;
     for (size_t i = corns.size(); i-- > 0;) {
@@ -1641,9 +1718,6 @@ void Game::updatePlay(float dt, float rdt) {
             corns[i].missed = true; // counted once; a miss no longer breaks the count: any 10 balls in a run trigger a surge
         }
     }
-    const int s = static_cast<int>(std::floor(maxX_)) + bonus_;
-    score_ = s;
-    if (bonus_ != lastBonus_) { lastBonus_ = bonus_; scoreBump_ = 0.32f; }
 }
 
 // The title screen's idle loop (HenIdle.h) laid over the standing pose: jogging in place, a stretch, two jumps
@@ -1690,10 +1764,11 @@ void Game::updateHen(float dt) {
         const bool onEggs = state_ == State::Play && !eggs_.empty() && hop_ == 0; // running on the rolling eggs
         const bool running = onSurface || onEggs || show; // the showroom hen jogs in place
         const bool falling = state_ == State::Play && vy_ < -1;
+        const bool flying = state_ == State::Play && launched_ && vy_ > 1; // off a spring: wings up, legs tucked
         const bool tall = eggs_.size() > 4;
         runPhase_ += dt * (running ? std::max(speed_, 2.f) * 4.5f : 0);
         body.pos.y = running ? std::abs(std::sin(runPhase_)) * 0.06f : std::sin(time_ * 3) * 0.012f;
-        const float leanT = onSurface ? -0.14f : falling ? 0.2f : tall ? std::sin(time_ * 2.6f) * 0.05f - 0.04f : -0.05f;
+        const float leanT = onSurface ? -0.14f : flying ? -0.28f : falling ? 0.2f : tall ? std::sin(time_ * 2.6f) * 0.05f - 0.04f : -0.05f;
         lean_ += (leanT - lean_) * std::min(1.f, dt * 8);
         // showroom: a slow turn left and right so the outfit and the trail streaming off it are seen from both sides
         const float lk = lockerK_ * lockerK_ * (3 - 2 * lockerK_);
@@ -1703,12 +1778,13 @@ void Game::updateHen(float dt) {
         for (int k = 0; k < 2; ++k) {
             const float s = k == 0 ? -1.f : 1.f;
             float& rx = hen_.nodes[hen_.wings[k]].rot.x;
-            if (falling) rx = s * (-0.7f - std::sin(time_ * 42) * 0.45f);
+            if (flying) rx = s * (-1.25f - std::sin(time_ * 30) * 0.3f);
+            else if (falling) rx = s * (-0.7f - std::sin(time_ * 42) * 0.45f);
             else if (flap_ > 0) rx = s * (-(std::sin(flap_ * 18) * flap_ * 1.1f) - 0.02f);
             else if (tall) rx = s * (-0.35f - std::sin(time_ * 2.6f + s) * 0.12f);
             else rx = s * (onSurface ? -0.1f - std::abs(std::sin(runPhase_)) * 0.2f : -0.02f);
             hen_.nodes[hen_.legs[k]].rot.z = running ? std::sin(runPhase_ + k * kPi) * 0.75f
-                                           : falling ? 0.35f + std::sin(time_ * 20 + k) * 0.25f : 0.f;
+                                           : flying ? -0.7f : falling ? 0.35f + std::sin(time_ * 20 + k) * 0.25f : 0.f;
         }
         if (state_ == State::Title) {
             head.pos.x = 0.3f + std::max(0.f, std::sin(time_ * 1.7f)) * 0.06f;
@@ -1774,12 +1850,27 @@ void Game::updateDebris(float dt) {
     for (size_t i = debris_.size(); i-- > 0;) {
         Debris& d = debris_[i];
         d.life -= dt;
+        if (d.kind == DebrisKind::Burnt) { // sinking into the lava as it burns (ph: the lava's surface), flames licking it
+            d.v.x *= 1 - dt * 4; d.v.z *= 1 - dt * 4;
+            d.pos += glm::vec3(d.v.x, 0.f, d.v.z) * dt;
+            d.pos.y = std::max(d.ph - 0.25f, d.pos.y - dt * 0.45f);
+            d.rot += d.w * dt * 0.3f;
+            if (rng_.next01() < dt * 60)
+                fxAdd_.emit(d.pos + glm::vec3(rng_.range(-0.18f, 0.18f), rng_.range(-0.05f, 0.15f), rng_.range(-0.15f, 0.15f)),
+                            {rng_.range(-0.3f, 0.3f), rng_.range(1.2f, 2.6f), rng_.range(-0.3f, 0.3f)}, rng_.range(0.18f, 0.35f), rng_.range(0.07f, 0.13f),
+                            0.f, rng_.next01() < 0.5f ? glow("#ff5a14", 3.2f) : glow("#ffc23a", 3.f), 1, 1.f, -2.f);
+            if (d.life <= dt * 1.5f) puff(d.pos, 5, C().smoke, 0.6f, 0.7f); // (crumbled: a puff of ash)
+            if (d.life <= 0) debris_.erase(debris_.begin() + static_cast<long>(i));
+            continue;
+        }
         if (d.kind == DebrisKind::Feather) {
             d.v.y = std::max(d.v.y - 6 * dt, -0.7f); d.v.x *= 1 - dt * 1.5f; d.v.z *= 1 - dt * 1.5f;
             d.pos += d.v * dt; d.pos.x += std::sin(time_ * 5 + d.ph) * 0.4f * dt;
             d.rot.x += d.w.x * dt * 0.4f; d.rot.z += d.w.z * dt * 0.4f;
         } else {
             d.v.y -= 22 * dt; d.pos += d.v * dt; d.rot += d.w * dt;
+            d.heat = std::max(0.f, d.heat - dt / 1.1f); // (a laser's halves cooling)
+            if (d.heat > 0.4f && rng_.next01() < dt * 30) fxAdd_.emit(d.pos, glm::vec3(0.f, 0.6f, 0.f), 0.3f, 0.06f, 0, glow("#ff6a2b", 2.5f), 0.8f, 0, -1);
             if (d.kind == DebrisKind::Egg) fxAdd_.emit(d.pos, glm::vec3(0.f), 0.3f, 0.12f, 0, C().cyan, 0.7f, 0, 0);
             if (d.zapped && d.life > 3.f - 0.5f) // (zapped: crackling blue for half a second)
                 for (int k = 0; k < 2; ++k)
@@ -1924,7 +2015,7 @@ void Game::buildRenderList() {
     // disco floor tiles and barrier underside edges
     const float flashOn = std::sin(time_ * 16) > 0 ? 1.f : 0.45f, flashSoft = 0.6f + 0.4f * std::max(0.f, std::sin(time_ * 16));
     const double topNow = state_ == State::Play
-        ? std::min(baseY_, std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U) + eggs_.size() * U : -1.0;
+        ? std::min(baseY_, supportY()) + eggs_.size() * U : -1.0;
     const double henTop = state_ == State::Play ? baseY_ + eggs_.size() * U + HEN_H : -1.0;
     const glm::vec3 tileSize{Level::TW * 0.93f, 0.05f, Level::TD * 0.93f};
     for (const Segment& sg : level_.segs) {
@@ -1954,6 +2045,9 @@ void Game::buildRenderList() {
             out.add(Pass::UnlitAdd, MeshId::Plane) = makeUnlit(compose(c.pos + glm::vec3(0, 3.5f, 0), {c.width, 7, 1}), glow("#ff2a3a", 1.1f), 1, Shape::Curtain);
     emitGauntlets(out, pz); // maze gauntlets (GameGauntlet.cpp)
     emitSaws(out, pz);      // saw blades (GameSaw.cpp)
+    emitLava(out, pz);      // lava (GameLava.cpp)
+    emitSprings(out, pz);   // springs (GameSpring.cpp)
+    emitLasers(out, pz);    // wall lasers (GameLaser.cpp)
 
     // disco balls
     {
@@ -1999,7 +2093,13 @@ void Game::buildRenderList() {
     const auto stackMark = out.litMark();
     for (size_t i = 0; i < eggs_.size(); ++i) {
         const glm::mat4 m = stackEggMatrix(i);
-        out.add(Pass::Lit, MeshId::Egg) = makeLit(m, egg);
+        LitMaterial em = egg;
+        if (const float b = eggs_[i].burn; b > 0) { // (on lava: heating, glowing from below, starting to char)
+            em.color = glm::mix(egg.color, hexColor("#5a2a1a"), b * 0.6f);
+            em.emissive = glm::mix(egg.emissive, glow("#ff6a1a", 1.6f), b);
+            em.rimColor = glow("#ff8a2b", 1.f + 2.f * b);
+        }
+        out.add(Pass::Lit, MeshId::Egg) = makeLit(m, em);
         out.add(Pass::Lit, MeshId::EggRing) = makeEmissive(m * compose({}, {1.02f, 1.17f, 1.02f}), ringCol[eggs_[i].ring]);
     }
     if (onStreet) out.reflectSince(stackMark);
@@ -2021,6 +2121,7 @@ void Game::buildRenderList() {
             out.add(Pass::UnlitAlpha, MeshId::Plane) = makeUnlit(compose(d.pos, d.rot, d.scale * glm::vec3(0.1f, 0.2f, 1)), {0.85f, 0.95f, 1.05f}, 1, Shape::Feather);
             break;
         case DebrisKind::EggHalf: case DebrisKind::Yolk: case DebrisKind::Blade: emitSawDebris(out, d); break;
+        case DebrisKind::Burnt: emitBurnt(out, d); break;
         }
     }
     for (const Splat& s : splats_) {

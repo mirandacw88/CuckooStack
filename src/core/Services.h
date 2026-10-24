@@ -11,6 +11,8 @@
 
 namespace cs {
 
+class LevelCatalog;
+
 enum class Sfx { Lay, Crack, Perfect, Corn, Land, Squawk, Empty, Smash, SurgeStart, SurgeEnd, LifeLost,
                  Cheer,     // recorded applause (assets/sfx), crossing the finish line
                  Firework,   // a shell bursting (variant: 0 sphere, 1 ring, 2 crackling willow)
@@ -19,8 +21,13 @@ enum class Sfx { Lay, Crack, Perfect, Corn, Land, Squawk, Empty, Smash, SurgeSta
                  // saw blades (GameSaw.cpp): a whine as one comes up ahead; the cut (variant 0: the blade bites the
                  // bottom egg, 1: the egg falls apart in two halves, 2: the blade catches the hen)
                  SawWhirr, SawCut,
-                 // maze gauntlets (GameGauntlet.cpp): off a bumper (variant 0), the entry's door shutting behind her (1)
-                 Bounce };
+                 // maze gauntlets (GameGauntlet.cpp): off a bumper (variant 0), the entry's door shutting behind her (1);
+                 // a spring firing (2: GameSpring.cpp)
+                 Bounce,
+                 // wall lasers (GameLaser.cpp): a hum as one comes up ahead; the cut (variant 0: an egg, 1: the hen)
+                 LaserHum, LaserCut,
+                 // lava (GameLava.cpp): a bubbling sizzle as it comes up ahead; a burn (variant 0: an egg, 1: the hen)
+                 LavaSizzle, LavaBurn };
 
 // Web Audio replacement. The web build synthesizes every sound live (see docs/PORTING.md, "Audio");
 // a native backend (AAudio/Oboe, AVAudioEngine) implements this with the same synth graph.
@@ -271,6 +278,7 @@ struct GameServices {
     IReplay* replay = nullptr;
     ILeaderboards* leaderboards = nullptr;
     IBackend* backend = nullptr;
+    const LevelCatalog* levels = nullptr; // the levels and gauntlets it plays (null: LevelCatalog::dev(), the game's own)
 };
 
 } // namespace cs

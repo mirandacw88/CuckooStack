@@ -2,6 +2,8 @@
 #include "TestUtil.h"
 #include "core/HudStyle.h"
 #include "core/Campaign.h"
+#include "core/Chunk.h"
+#include "core/LevelBake.h"
 #include "core/Gauntlet.h"
 #include "core/LevelData.h"
 
@@ -22,8 +24,8 @@ struct Env {
         return s;
     }
 };
-std::vector<Segment> courseOf(int level, double until) {
-    Campaign c(nullptr);
+std::vector<Segment> courseOf(int level, double until, const LevelCatalog* cat = nullptr) {
+    Campaign c(nullptr, cat);
     c.debugSetLevel(level);
     Level course;
     c.applyTo(course);
@@ -168,6 +170,48 @@ int main() {
         c.debugReset();
         Campaign again(&st);
         check(again.level() == 1 && again.cleared() == 0 && again.best() == 0, "developer reset: back to level 1 (saved)");
+    }
+    {   // ---- the designer's chunks (Chunk.h, assets/chunks): a generated level (31 and up, no file of its own) holds the ones whose ranges
+        // cover it; none built in: the levels are as they always were; a level with a file never changes
+        const char* text = "; Hurdle\nchunk course\nranges 31-40\nweight 10\nuses any\nmirror no\n---\nlength 33\ncourse\n13 0 crate\n30 0 hay\n13 0 crate\nsaws\n16.8\n";
+        const auto chunk = parseChunk("test-chunk", text);
+        check(chunk.has_value(), "(the test chunk reads)");
+        LevelCatalog plain, mine;
+        check(&plain.chunks() == &LevelCatalog::builtin().chunks(), "a catalog over the built-in one has its chunks");
+        if (chunk) mine.setChunks({*chunk});
+        check(mine.chunks().size() == 1 && mine.chunks()[0].id == "test-chunk", "a catalog given its own chunks has those");
+        const double until = 600;
+        // (the built-in chunks, if the designer has made some, are in the plain catalog's levels: the claims below are against the generator with the same ones)
+        GenOptions none;
+        for (const Chunk& c : plain.chunks()) if (!c.maze && c.inRange(35)) none.chunks.push_back(c);
+        Level baked35;
+        baked35.load(bakeLevel(35, nullptr, std::nullopt, none), &plain);
+        baked35.generateUntil(until);
+        check(same(courseOf(35, until, &plain), baked35.segs), "level 35 with nothing but the built-in chunks: the generator's course for it");
+        if (chunk && plain.chunks().empty()) {
+            check(same(courseOf(35, until), courseOf(35, until, &plain)), "no chunks built in: level 35 is the same in the game's own catalog and a plain one over it (the course as it always was)");
+        }
+        GenOptions with;
+        with.chunks.push_back(*chunk);
+        std::vector<ChunkUse> used;
+        const LevelData bakedWith = bakeLevel(35, nullptr, std::nullopt, with, &used);
+        check(!used.empty(), "(the generator does place the test chunk at level 35)");
+        Level expect;
+        expect.load(bakedWith, &mine);
+        expect.generateUntil(until);
+        const std::vector<Segment> got = courseOf(35, until, &mine);
+        check(same(got, expect.segs), "generated level 35 in a catalog with a 31-40 chunk: the course the generator lays holding it");
+        check(!same(got, courseOf(35, until, &plain)), "...not the course without it");
+        check(same(courseOf(41, until, &mine), courseOf(41, until, &plain)), "level 41 (past the chunk's ranges): the same as without it");
+        check(same(courseOf(30, until, &mine), courseOf(30, until, &plain)), "level 30 (before them, and a saved level): the same as without it");
+        // a saved level never changes: the chunk's ranges cover level 12 too
+        LevelCatalog wide;
+        std::string why;
+        Chunk everywhere = *chunk;
+        everywhere.ranges = {{1, 100}};
+        wide.setChunks({everywhere});
+        check(same(courseOf(12, until, &wide), courseOf(12, until, &plain)), "a saved level (12) never changes, whatever a chunk's ranges say");
+        check(same(courseOf(35, until, &mine), courseOf(35, until, &mine)), "(and the same chunks lay the same course every time: the cache keeps each catalog's apart)");
     }
     return test::finish("Campaign");
 }

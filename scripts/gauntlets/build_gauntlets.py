@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds src/core/GauntletLayouts.inc, the gauntlets Gauntlets.cpp includes, from their grids: assets/gauntlets/<name>.txt,
+"""Builds src/core/GauntletLayouts.inc, the gauntlets LevelCatalog.cpp includes, from their grids: assets/gauntlets/<name>.txt,
 rows top first (Gauntlet.h's cells), the ';' lines at the top its description (carried into the .inc as comments).
 The grids are what ships: tune them in the level editor (tools/level_editor), which saves through here, or by hand.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds src/core/LevelLayouts.inc, the campaign's levels LevelData.cpp includes, from their files: assets/levels/level_NN.txt
+"""Builds src/core/LevelLayouts.inc, the campaign's levels LevelCatalog.cpp includes, from their files: assets/levels/level_NN.txt
 (LevelData.h has the format: the course wall by wall, its saws and disco balls, its finish line, difficulty and raids).
 The files are what ships: tune them in the level editor (tools/level_editor), which saves through here, or by hand.
 
@@ -77,48 +77,17 @@ def gauntlets_in(text):
     return out
 
 
-def refit(text, name, width, unit=0.6):
+def refit(text, name, width, build=os.path.join(ROOT, "build")):
     """the level's text with the named gauntlet's span made `width` cells wide (its grid grown or shrunk): what's after
-    it (saws, disco balls, the finish line) moved on or back with it; every other line as it was"""
-    lines = text.split("\n")
-    part, cells, at, old = None, 0, None, None
-    for i, line in enumerate(lines):
-        body = line.split(";")[0]
-        word = body.strip()
-        if word in ("course", "saws", "discos"):
-            part = word
-            continue
-        if part != "course" or not word:
-            continue
-        m = COURSE_LINE.match(body)
-        if m and m.group(6) == name and at is None:
-            old = int(m.group(2))
-            if old == width:
-                return text
-            at = (cells + old) * unit  # (what's past here moves)
-            lines[i] = "%d 0 gauntlet %s" % (width, name)
-        cells += int(word.split()[0])
-    if at is None:
-        return text
-    shift = (width - old) * unit
-    on = lambda x: x + shift if x >= at - 1e-9 else x
-    part = None
-    for i, line in enumerate(lines):
-        body = line.split(";")[0]
-        word = body.strip()
-        if word in ("course", "saws", "discos"):
-            part = word
-            continue
-        if not word:
-            continue
-        w = word.split()
-        if part is None and w[0] == "length":
-            lines[i] = "length " + fmt(on(float(w[1])))
-        elif part == "saws":
-            lines[i] = " ".join(fmt(on(float(x))) for x in w)
-        elif part == "discos":
-            lines[i] = "%s %s" % (fmt(on(float(w[0]))), w[1])
-    return "\n".join(lines)
+    it (hazards, the finish line) moved on or back with it; every other line as it was. The game's own refit does it
+    (build/level_check --refit: src/editor/LevelMerge.cpp, the iPhone and iPad editor's too)"""
+    checker = os.path.join(build, "level_check")
+    if not os.path.exists(checker):
+        raise RuntimeError("build/level_check isn't built (cmake --build build --target level_check): it refits levels")
+    done = subprocess.run([checker, "--refit", name, str(width), "--file", "-"], input=text, capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        raise RuntimeError("level_check --refit failed: " + done.stderr.strip())
+    return done.stdout
 
 
 def bake(n, build=os.path.join(ROOT, "build"), gauntlet=None):

@@ -302,7 +302,7 @@ void Game::hudOverOverlay() {
         for (TextStyle* s : {&b, &rb, &span}) s->opacity *= a.alpha;
         rspan.opacity *= a.alpha;
         const int shownLevel = runCleared_ ? campaign_.level() - 1 : campaign_.level(); // a clear has already moved on
-        const int shownBest = runCleared_ ? int(Campaign::lengthOf(shownLevel)) : int(campaign_.best());
+        const int shownBest = runCleared_ ? int(Campaign::lengthOf(shownLevel, campaign_.catalog())) : int(campaign_.best());
         const std::string cells[2][2][2] = {
             {{std::to_string(static_cast<int>(std::round(finalScore_ * e))), "Score"},
              {std::to_string(static_cast<int>(std::round(finalDist_ * e))) + " m", "Distance"}},

@@ -12,13 +12,17 @@ import { renderHistory } from './historycard.js';
 import { TIPS, CELL_TIP, setTip } from './tips.js';
 import { showAt, hide as hideTip } from './tooltip.js';
 import { GAUNTLET_TOOLS, GAUNTLET_OVERLAYS } from './tools.js';
-import { setStart, clearStart, startOf, startLabel } from './levels.js';
+import { setStart, clearStart, startOf, startLabel, gauntletRenamed } from './levels.js';
 
 const key = (rows) => rows.join('\n');
 
 const RATES = [1, 1.25, 1.4];          // the meter refilling this many times slower than the level's (the checker's runs)
 const SPEEDS = [0.25, 0.5, 1];         // the replay, against the game's own pace
 const NEED_MISSES = 15;                // (Gauntlet_test: every gauntlet in a level's near misses)
+// ...and the checklist bends for a "; hard N" maze (N 6 to 10, GauntletReady): 15 + (N - 5) near misses, and the meter's spare
+// 1.25 - 0.05 (N - 5) (down to 1.0 at 10): the report says (wantMisses, the second meter run's rate)
+const needOf = (ch) => (ch && ch.wantMisses) || NEED_MISSES;
+const rateOf = (g, i) => { const m = g && g.check && g.check.ok && g.check.meter && g.check.meter[i]; return m && m.rate ? +m.rate.toFixed(2) : RATES[i]; };
 const TOOLS = GAUNTLET_TOOLS, OVERLAYS = GAUNTLET_OVERLAYS; // (tools.js)
 
 const S = {
@@ -215,14 +219,14 @@ export function verdict(g) {
   if (!g.check || !fresh(g)) return { state: 'busy', items: [] };
   const ch = g.check, lv = levelOf(g);
   if (!ch.ok) return { state: 'bad', items: [{ ok: false, what: 'A valid grid', why: ch.error || 'it doesn’t parse' }] };
-  const s = ch.solution, hard = ch.meter[1], items = [];
+  const s = ch.solution, hard = ch.meter[1], items = [], need = needOf(ch), slow = rateOf(g, 1);
   items.push({ ok: true, what: 'A valid grid', why: `${ch.cols} × ${ch.rows}, closed, a door each side` });
   items.push({ ok: s.reachable, what: 'Out, by stacking alone', why: s.reachable ? `${s.minEggs} eggs at the least` : 'no way to the exit: turn on “Where she gets” to see where she’s stuck' });
   if (s.reachable) {
     items.push({ ok: s.routes === 1, what: 'One way through', why: s.routes === 1 ? 'every cell on it unavoidable' : `${s.routes - 1} cells on other ways through` });
     items.push({ ok: s.softLocks === 0, what: 'No traps', why: s.softLocks ? `${s.softLocks} places she’d bounce forever (a dead end has to end her run)` : s.deadEndCells ? `${s.deadEndCells} dead-end cells, each one ending her run` : 'no dead ends at all' });
-    items.push({ ok: hard.out, what: 'Out with the meter at its hardest', why: hard.out ? `refilling 1.25× slower, 2 eggs at the door (${hard.waiting} waits)` : `out of eggs at col ${hard.crash[0]}, row ${hard.crash[1]}`, at: hard.out ? null : { c: hard.crash[0], b: hard.crash[1] + hard.crash[2] } });
-    items.push({ ok: s.nearMisses >= NEED_MISSES, what: `${NEED_MISSES}+ near misses`, why: `${s.nearMisses} on the bot’s way` });
+    items.push({ ok: hard.out, what: 'Out with the meter at its hardest', why: hard.out ? `refilling ${slow}× slower, 2 eggs at the door (${hard.waiting} waits)${ch.hard ? `, as a “hard ${ch.hard}” maze is judged` : ''}` : `out of eggs at col ${hard.crash[0]}, row ${hard.crash[1]}`, at: hard.out ? null : { c: hard.crash[0], b: hard.crash[1] + hard.crash[2] } });
+    items.push({ ok: s.nearMisses >= need, what: `${need}+ near misses`, why: `${s.nearMisses} on the bot’s way` });
   }
   items.push({ ok: !ch.sameAs.length, what: 'Unlike every other gauntlet', why: ch.sameAs.length ? `the same as ${ch.sameAs.join(', ')} (mirror images count)` : 'mirror images included' });
   for (const d of ch.designs || []) items.push({ ok: d.ok, what: d.what, why: d.why });
@@ -241,7 +245,7 @@ export function verdict(g) {
       at: gm.crash ? { c: Math.round(gm.crash[0]), b: Math.round(gm.crash[1]) } : null });
     if (gm.out) {
       const shown = gm.perfects + gm.closeCalls;
-      items.push({ ok: shown >= NEED_MISSES && Math.abs(shown - s.nearMisses) <= 2, what: 'The game shows its near misses', why: `${shown} shown, the solver’s ${s.nearMisses} (within 2)` });
+      items.push({ ok: shown >= need && Math.abs(shown - s.nearMisses) <= 2, what: 'The game shows its near misses', why: `${shown} shown, the solver’s ${s.nearMisses} (within 2)` });
     }
   }
   const bad = items.some((it) => it.ok === false), busy = items.some((it) => it.busy);
@@ -285,6 +289,29 @@ export async function newGauntlet(suggest = '') {
   return g;
 }
 
+// A gauntlet renamed: a saved one's file moved by the server (and the saved levels laying it rewritten); here, its
+// draft and history under the new name, and every level laying it (levels.js gauntletRenamed). Nothing else changes
+export async function renameGauntlet(g) {
+  const taken = new Set(store.gauntlets.map((x) => x.name));
+  const name = await askText({ title: `Rename the ${titled(g.name)}`, ok: 'Rename', value: g.name, placeholder: 'e.g. hall_of_saws',
+    body: 'Lower case letters, digits and _ (its file, assets/gauntlets/<name>.txt; the game’s banner shows _ as spaces). The levels that lay it are rewritten to the new name; nothing else in them changes.',
+    check: (v) => (!v ? 'A name, to rename it' : !/^[a-z][a-z0-9_]{0,31}$/.test(v) ? 'A letter first, then lower case letters, digits or _ (up to 32)' : v !== g.name && taken.has(v) ? `There’s a gauntlet called ${v} already` : null) });
+  if (name === null || name === g.name) return false;
+  const old = g.name;
+  if (g.saved) {
+    try { await api('POST', '/api/gauntlet/rename', { from: old, to: name }); } catch (e) { toast(e.message, 'bad'); return false; }
+  }
+  local.set(draftKey(g), null);
+  H.keep('gauntlet:' + old, null);
+  g.name = name;
+  storeDraft(g); keepHistory(g);
+  gauntletRenamed(old, name);
+  emit('show-gauntlet', name); // (its address: #gauntlet/<name>)
+  renderTabs(); renderPanels(); emit('top');
+  toast(`The ${titled(old)} is the ${titled(name)} now${levelOf(g) ? `, in level ${levelNo(g)} too` : ''}`, 'ok');
+  return true;
+}
+
 // ---- the tools column
 function swatch(ch) {
   const cv = el('canvas');
@@ -293,8 +320,14 @@ function swatch(ch) {
   ctx.scale(2, 2);
   ctx.fillStyle = C.air; ctx.fillRect(0, 0, 28, 28);
   const fake = { ctx, z: 28 };
+  if (ch === '^') { // a spring: a stone floor with the pad on it
+    ctx.fillStyle = C.stone; ctx.fillRect(0, 21, 28, 7); ctx.fillStyle = C.stoneLit; ctx.fillRect(2, 23, 24, 4);
+    ctx.strokeStyle = C.stoneEdge; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, 21.5); ctx.lineTo(28, 21.5); ctx.stroke();
+    view.spring.call({ ctx, z: 24 }, 14, 21, 0.4, false);
+    return cv;
+  }
   view.cell.call(fake, ch, 0, 0, 28);
-  if ('#HSC'.includes(ch)) { ctx.strokeStyle = 'HC'.includes(ch) ? C.cubeEdge : C.stoneEdge; ctx.lineWidth = 2; ctx.strokeRect(1, 1, 26, 26); }
+  if ('#HSC()'.includes(ch)) { ctx.strokeStyle = 'HC'.includes(ch) ? C.cubeEdge : C.stoneEdge; ctx.lineWidth = 2; ctx.strokeRect(1, 1, 26, 26); }
   if (ch === 'S' || ch === 'C') { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, 28, 28); ctx.clip(); view.blade.call(fake, 14, 8, 22); ctx.restore(); }
   return cv;
 }
@@ -344,7 +377,10 @@ export function renderPanels() {
   const v = verdict(g), lv = levelOf(g);
   const vd = $('verdict');
   const head = v.state === 'ok' ? ['ok', 'Ready to ship', lv ? 'Every check the tests make passes.' : 'Every check passes; it’s in no level yet.'] : v.state === 'bad' ? ['bad', 'Not ready', 'The tests will fail (and block commits) until these pass.'] : ['busy', 'Checking', 'The solver, then the real game…'];
-  vd.innerHTML = `<h3>${esc(titled(g.name))}${lv ? ` <button class="aside link" data-level="${lv.number}" data-tip="Opens level ${lv.number}’s course." data-tip-title="Level ${lv.number}">level ${lv.number} ↗</button>` : ' <span class="aside">in no level</span>'}</h3><div class="headline"><span class="badge ${head[0]}">${head[1]}</span><span class="sub">${head[2]}</span></div>`;
+  vd.innerHTML = `<h3>${esc(titled(g.name))} <button class="aside link rename">rename</button>${lv ? ` <button class="aside link" data-level="${lv.number}" data-tip="Opens level ${lv.number}’s course." data-tip-title="Level ${lv.number}">level ${lv.number} ↗</button>` : ' <span class="aside">in no level</span>'}</h3><div class="headline"><span class="badge ${head[0]}">${head[1]}</span><span class="sub">${head[2]}</span></div>`;
+  const rename = vd.querySelector('.rename');
+  setTip(rename, 'gauntlet.rename');
+  rename.onclick = () => renameGauntlet(g);
   const back = vd.querySelector('[data-level]');
   if (back) back.onclick = () => emit('show-level', lv.number);
   const ul = el('ul', 'checks');
@@ -387,14 +423,14 @@ function renderNumbers(g) {
   const lv = levelOf(g);
   n.innerHTML = `<h3>The run <span class="aside">${fresh(g) ? '' : 'updating…'}</span></h3>
     <div class="stats">
-      <div class="stat"><div class="v">${r.seconds.toFixed(1)}<small>s</small></div><div class="l">Inside, at ${RATES[S.rate]}×</div></div>
+      <div class="stat"><div class="v">${r.seconds.toFixed(1)}<small>s</small></div><div class="l">Inside, at ${rateOf(g, S.rate)}×</div></div>
       <div class="stat"><div class="v">${total}</div><div class="l">Near misses</div>
         <div class="nm-split">${KIND.map((k, i) => `<span data-tip="${k.label}"><i style="background:${k.color}"></i>${split[i]}</span>`).join('')}</div></div>
       <div class="stat"><div class="v">${s.reachable ? s.minEggs : '—'}</div><div class="l">Eggs at the least</div></div>
       <div class="stat"><div class="v">${ch.cols}<small>× ${ch.rows}</small></div><div class="l">Cells</div></div>
     </div>
     <table class="rates"><tr><th>Meter</th><th>Bot</th><th>Moves</th><th>Waits</th><th>Misses</th></tr>
-    ${ch.meter.map((m, i) => `<tr class="${i === S.rate ? 'sel' : ''}"><td>${RATES[i]}×</td><td class="${m.out ? 'out' : 'crash'}">${m.out ? 'out' : 'crash'}</td><td>${m.cells}</td><td>${m.waiting}</td><td>${m.out ? m.nearMisses.length : '—'}</td></tr>`).join('')}
+    ${ch.meter.map((m, i) => `<tr class="${i === S.rate ? 'sel' : ''}"><td>${rateOf(g, i)}×</td><td class="${m.out ? 'out' : 'crash'}">${m.out ? 'out' : 'crash'}</td><td>${m.cells}</td><td>${m.waiting}</td><td>${m.out ? m.nearMisses.length : '—'}</td></tr>`).join('')}
     </table>
     <dl class="kv"><dt>Door in, out</dt><dd>row ${ch.entryRow}, row ${ch.exitRow}</dd><dt>An egg back every</dt><dd>${ch.cellsPerEgg.toFixed(1)} cells (${(ch.cellsPerEgg * ch.secondsPerCell).toFixed(2)} s)</dd>
     ${lv && ch.course.placed ? `<dt>On level ${lv.number}’s course</dt><dd>${Math.round(ch.course.x0)}–${Math.round(ch.course.x1)} m of ${Math.round(ch.course.finish)}</dd>` : `<dt>Its meter</dt><dd>level ${ch.level}’s</dd>`}</dl>`;
@@ -415,7 +451,7 @@ function renderMisses(g) {
   const c = $('misses');
   const r = run(g);
   if (!r) { c.innerHTML = '<h3>Near misses</h3><p class="hint">They come with a way through.</p>'; return; }
-  c.innerHTML = `<h3>Near misses <span class="aside">as the game shows them, at ${RATES[S.rate]}×</span></h3>`;
+  c.innerHTML = `<h3>Near misses <span class="aside">as the game shows them, at ${rateOf(g, S.rate)}×</span></h3>`;
   if (!r.out) { c.insertAdjacentHTML('beforeend', '<p class="hint">The bot runs out of eggs at this meter: no run to count.</p>'); return; }
   const ul = el('ul', 'misslist');
   for (const [cc, b, kind, step] of r.nearMisses) {
@@ -455,7 +491,8 @@ function renderTransport() {
   }
   const rt = $('rpRate');
   rt.innerHTML = '';
-  RATES.forEach((r, i) => {
+  RATES.forEach((r0, i) => {
+    const r = rateOf(cur(), i);
     const b = el('button', S.rate === i ? 'on' : '', `${r}×`);
     b.dataset.tip = i ? `The meter refilling ${r} times slower than the level’s.` : 'The meter at the level’s own refill.';
     b.onclick = () => { S.rate = i; clampReplay(); renderTransport(); renderPanels(); renderTrack(); renderReadout(); redraw(); };
@@ -582,6 +619,7 @@ function draw() {
     selection, run: fr || sameSize ? run(g) : null, replay: { step: R.step }, lints: g.lints, game: gameFresh(g) ? g.game : null,
     start: st, hoverStart: st && S.hover && S.hover.c === st.c && (G.gameRow(rows, S.hover.i) === st.b || G.gameRow(rows, S.hover.i) === st.b + 1), focus: S.focus });
   view.minimap(rows, fr || sameSize ? run(g) : null, true);
+  if (view.animated && !frame) frame = requestAnimationFrame(draw); // (a spring's plate bobs, a flight's dots march: keep drawing while one is on screen)
 }
 
 // ---- pointing at the board
@@ -796,8 +834,8 @@ export function keydown(e) {
   switch (e.key) {
     case 'x': case 'X': if (!DOOR(S.primary)) { [S.primary, S.secondary] = [S.secondary, S.primary]; renderTools(); } return true;
     case 'f': case 'F': if (S.selection) flipSel(); else { view.fit(cur().rows); redraw(); } return true;
-    case '[': view.zoomAt(view.w / 2, view.h / 2, 1 / 1.25); redraw(); return true;
-    case ']': view.zoomAt(view.w / 2, view.h / 2, 1.25); redraw(); return true;
+    case '-': view.zoomAt(view.w / 2, view.h / 2, 1 / 1.25); redraw(); return true; // ([ and ] are the laser cells here)
+    case '+': view.zoomAt(view.w / 2, view.h / 2, 1.25); redraw(); return true;
     case 'p': case 'P': playPause(); return true;
     case ',': R.playing = false; renderTransport(); setStep(R.step - 1); return true;
     case '.': R.playing = false; renderTransport(); setStep(R.step + 1); return true;

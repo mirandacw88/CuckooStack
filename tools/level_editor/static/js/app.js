@@ -258,8 +258,10 @@ async function start() {
   staticTips();
   let levels, grids;
   let kept;
-  try { [levels, grids, kept] = await Promise.all([api('GET', '/api/levels'), api('GET', '/api/gauntlets'), H.loadAll()]); } catch (e) { $('loading').textContent = 'The editor’s server isn’t answering: ' + e.message; return; }
+  let rules;
+  try { [levels, grids, kept, rules] = await Promise.all([api('GET', '/api/levels'), api('GET', '/api/gauntlets'), H.loadAll(), api('GET', '/api/rules')]); } catch (e) { $('loading').textContent = 'The editor’s server isn’t answering: ' + e.message; return; }
   $('loading').remove();
+  K.useRules(rules); // (the game's forecourt, lintel and porch: else the editor's own)
   const restored = [];
   store.gauntlets = grids.gauntlets.map((g) => Gm.gauntlet(g));
   for (const g of store.gauntlets) if (Gm.restoreDraft(g)) restored.push(`the ${g.name}`);

@@ -129,6 +129,17 @@ tested by `src/core/Camera_test.cpp` (ctest name `Camera`). Register a new one i
 too (`src/platform/ios/IOSVideoRecorder_test.mm`). Tests that span many files stay in `tests/`. The app builds
 list their sources by name, so test files never end up in the game.
 
+**UI tests (the iPhone/iPad editor).** `tests/ui/ios_editor` holds XCUITests that drive CuckooEditor on a simulator
+(start screen, chunk list and settings, rolls with a chunk, backup and restore, the maze chunk, and the small fixes). They launch
+the app with `--ui-test-reset`, so it uses its own empty data folder and never touches your levels or chunks. They are not part
+of `ctest` or the commit hook. They need **a simulator of their own** (not one you use): create it once with
+`xcrun simctl create "Cuckoo UI Tests iPad" "iPad Pro 13-inch (M5)"`, then:
+```
+platforms/ios/generate_xcode.sh <team id>      # also writes the CuckooEditorUITests scheme
+xcodebuild test -project build-ios/CuckooStack.xcodeproj -scheme CuckooEditorUITests -destination 'id=<that simulator UDID>'
+```
+(`-only-testing:CuckooEditorUITests/FixesUITests` runs one class; the whole suite takes about 6 minutes.)
+
 **Every commit runs them.** A pre-commit hook (`.githooks/pre-commit`) builds the desktop target and runs `ctest`;
 a failing build or test stops the commit. Turn it on once per clone:
 
@@ -167,6 +178,9 @@ a gauntlet's grid. The game's own checkers judge every edit against what the tes
 each level a moment after; replay its run. Save writes every edit into the game together, Play opens the desktop
 game on the level as edited, and Simulator builds and installs the iOS app with what's saved. It builds
 `build/gauntlet_check`, `build/level_check` and `build/cuckoo_stack` first. More in `docs/LEVEL_DESIGN.md`.
+
+The same levels can be edited on an iPhone or iPad with Cuckoo Editor (the `CuckooEditor` app), synced with this
+checkout over Wi-Fi (`server.py --lan`). Every editor command, the app's included: `docs/LEVEL_EDITOR_COMMANDS.md`.
 
 ## Editing shaders
 

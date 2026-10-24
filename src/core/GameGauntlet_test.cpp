@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <tuple>
 
 using namespace cs;
 using namespace test;
@@ -452,6 +453,98 @@ void playTest() {
     check(out && g.state() == Game::State::Play, "...and the bot gets out from there");
 }
 
+
+// a room to fly in: W wide, H rows of air over a street of stone (row 0); its door and exit at row 1; `set` puts cells in
+// (column, row, char)
+std::vector<std::string> room(int W, int H, const std::vector<std::tuple<int, int, char>>& set = {}) {
+    std::vector<std::string> bottomUp(size_t(H + 1), std::string(size_t(W), '.'));
+    bottomUp[0] = std::string(size_t(W), '#');
+    bottomUp[size_t(H)] = std::string(size_t(W), '#');
+    for (int r = 1; r < H; ++r) bottomUp[size_t(r)][0] = bottomUp[size_t(r)][size_t(W - 1)] = '#';
+    bottomUp[1][0] = '>'; bottomUp[2][0] = '.';
+    bottomUp[1][size_t(W - 1)] = 'X'; bottomUp[2][size_t(W - 1)] = '.';
+    for (const auto& [c, r, ch] : set) bottomUp[size_t(r)][size_t(c)] = ch;
+    return {bottomUp.rbegin(), bottomUp.rend()};
+}
+
+// Springs in a maze (Gauntlet::flightFrom): the game flies her the solver's arc, so she comes down in the column, on the
+// floor, the solver says, whatever the run's speed (the arc is one at every level's speed); a wall in her way ends her
+// run where the solver says
+struct Flown { bool launched = false, landed = false, died = false; int col = -1; double base = -1, seconds = 0; };
+Flown flyIn(const std::vector<std::string>& rows, double diffOffset, int startCol) {
+    LevelCatalog cat;
+    std::string why;
+    Flown out;
+    if (!cat.setGauntlet("fly", rows, &why) || !cat.setLevel(3, "length 40\ndifficulty " + std::to_string(int(diffOffset)) + " 0.35\nraids none\ncourse\n10 1 crate\n" +
+                                                               std::to_string(cat.gauntlet("fly") ? cat.gauntlet("fly")->cols() : 40) + " 0 gauntlet fly\n40 1 crate\n", &why)) {
+        std::printf("  %s\n", why.c_str());
+        return out;
+    }
+    FakeStorage st = FakeStorage::ready();
+    FakeClock clock;
+    FakeAds ads;
+    ads.state = RewardedState::Unavailable;
+    Campaign(&st, &cat).debugSetLevel(3);
+    GameServices svc;
+    svc.storage = &st; svc.clock = &clock; svc.ads = &ads; svc.levels = &cat;
+    Game g(svc);
+    g.debugSeed(1);
+    g.setHeadless(true);
+    g.debugSetBot({true, false, false, 0});
+    g.debugPlayTest({3, -1, startCol, 1, 1});
+    g.press();
+    const PlacedGauntlet p = g.course().gauntlets.front();
+    int frames = 0;
+    for (; frames < 60 * 20 && g.state() == Game::State::Play; ++frames) {
+        const bool was = g.launched();
+        g.update(1.0 / 60.0);
+        out.launched = out.launched || g.launched();
+        if (was && !g.launched() && g.state() == Game::State::Play) {
+            out.landed = true;
+            out.col = p.col(henX(g) + 0.22 * g.runDirection());
+            out.base = g.henBase();
+            break;
+        }
+        if (g.state() != Game::State::Play) out.died = true;
+    }
+    out.died = out.died || g.state() != Game::State::Play;
+    out.seconds = frames / 60.0;
+    return out;
+}
+
+void springs() {
+    struct Case { std::string what; std::vector<std::string> rows; int spring; };
+    std::vector<Case> cases;
+    for (const int at : {5, 6, 7, 9}) // (a stump to land on, 20 cells on; the pad so her middle meets it at a different phase of the columns)
+        cases.push_back({"an open room, the pad at " + std::to_string(at), room(40, 9, {{at, 0, '^'}, {26, 1, '#'}, {26, 2, '#'}, {27, 1, '#'}, {27, 2, '#'}}), at});
+    std::vector<std::tuple<int, int, char>> ledge = {{5, 0, '^'}};
+    for (int c = 12; c <= 23; ++c) { ledge.push_back({c, 2, '#'}); ledge.push_back({c, 3, '#'}); }
+    cases.push_back({"onto a ledge 3 rows up", room(34, 9, ledge), 5});
+    cases.push_back({"bounced off a bumper in the air", room(40, 9, {{6, 0, '^'}, {14, 3, 'B'}, {14, 4, 'B'}, {14, 5, 'B'}, {14, 6, 'B'}, {14, 7, 'B'}}), 6});
+    int checks = 0;
+    std::string wrong;
+    for (const double offset : {0.0, 120.0, 400.0})       // (the run's speed: slowest to fastest)
+        for (const Case& k : cases) {
+            const Gauntlet g = *Gauntlet::parse("fly", k.rows);
+            const Gauntlet::Flight f = g.flightFrom(k.spring, 1, 0, 1);
+            const Flown w = flyIn(k.rows, offset, k.spring - 2);
+            ++checks;
+            const bool ok = f.end == Gauntlet::Flight::End::Landed && w.landed && w.col == f.col && std::abs(w.base - f.floor * U) < 1e-6 && std::abs(w.seconds - f.seconds) < 0.4;
+            if (!ok) wrong += " (" + k.what + ", offset " + std::to_string(int(offset)) + ": solver col " + std::to_string(f.col) + " floor " + std::to_string(f.floor) + " t " + std::to_string(f.seconds) +
+                              ", game col " + std::to_string(w.col) + " base " + std::to_string(w.base / U) + " t " + std::to_string(w.seconds) + ")";
+        }
+    if (!wrong.empty()) std::printf("  not as the solver says:%s\n", wrong.c_str());
+    check(checks == 18 && wrong.empty(), "a spring in a maze: the game lands her in the column, on the floor, the solver says (18 flights: open, onto a ledge, off a bumper in the air; three speeds)");
+    // a wall in her way: the solver crashes her there, and so does the game (no landing)
+    int crashes = 0;
+    for (const double offset : {0.0, 400.0}) {
+        const auto rows = room(40, 9, {{6, 0, '^'}, {12, 1, '#'}, {12, 2, '#'}, {12, 3, '#'}, {12, 4, '#'}, {12, 5, '#'}, {12, 6, '#'}, {12, 7, '#'}});
+        const Flown w = flyIn(rows, offset, 4);
+        crashes += Gauntlet::parse("fly", rows)->flightFrom(6, 1, 0, 1).end == Gauntlet::Flight::End::Wall && w.launched && !w.landed && w.died;
+    }
+    check(crashes == 2, "...and a wall in the arc's way ends her run there in the game too, at either speed");
+}
+
 void revive() {
     Env env;
     env.ads.state = RewardedState::Ready;
@@ -485,6 +578,7 @@ int main() {
     turnstile();
     noRaidsNoOverdrive();
     revive();
+    springs();
     playTest();
     return finish("GameGauntlet");
 }

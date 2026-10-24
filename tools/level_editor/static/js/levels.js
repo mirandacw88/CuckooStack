@@ -1,5 +1,5 @@
 // The level editor's level view: a campaign level's whole course, edited as the game lays it (assets/levels, LevelData.h):
-// its walls (how high, their kind), barriers, saws, disco balls, finish line, difficulty band, the droid's raids, and the
+// its walls (how high, their kind), barriers, saws, disco balls, wall lasers, lava, springs, finish line, difficulty band, the droid's raids, and the
 // maze gauntlet it plays (which, where: a gauntlet moves between levels here, and a new one starts here too). The
 // level's checker judges every edit (build/level_check: the egg budget, notes), and the real game's bot plays the whole
 // level a moment after; its run replays along the course.
@@ -14,19 +14,22 @@ import * as D from './describe.js';
 import { renderHistory } from './historycard.js';
 import { TIPS, tipAttrs, setTip } from './tips.js';
 import { showAt, hide as hideTip } from './tooltip.js';
-import { LEVEL_TOOLS, KINDS, LEVEL_OVERLAYS } from './tools.js';
+import { LEVEL_TOOLS, BOUNCER_TOOLS, KINDS, LEVEL_OVERLAYS } from './tools.js';
 
 const U = K.U;
 const SPEEDS = [0.5, 1, 2, 4];
 const CLEAR_WITHIN = 150;          // (GameDev_test: every level cleared by the bot within 150 s)
 const NEAR_FROM = 11, NEAR_MIN = 3; // (...and from level 11, 3 close calls at least)
-const TOOLS = LEVEL_TOOLS, OVERLAYS = LEVEL_OVERLAYS; // (tools.js)
+const TOOLS = [...LEVEL_TOOLS, ...BOUNCER_TOOLS], OVERLAYS = LEVEL_OVERLAYS; // (tools.js)
+const bouncing = (tool) => K.BOUNCERS.includes(tool); // (a Bouncers tool building walls of its kind: its id is the kind)
+const KIND_WORDS = { crate: 'crates', hay: 'hay', mix: 'hay-topped crates', bumper: 'a bumper', 'gate>': 'a gate →', 'gate<': 'a gate ←' };
+const BOUNCER_TIP = { bumper: 'hazard.bumper', 'gate>': 'hazard.gate-right', 'gate<': 'hazard.gate-left' };
 
 const S = {
   cur: null, active: false,
   tool: 'wall', kind: 'crate',
   overlays: { bot: true, notes: true, changes: true, grid: true },
-  hover: null, preview: null, selection: null, clipboard: null, drag: null, space: false, selected: null, hoverSpan: null, hoverFinish: false,
+  hover: null, preview: null, selection: null, clipboard: null, drag: null, space: false, selected: null, hoverSpan: null, hoverZone: null, hoverFinish: false,
   hoverStart: false, focus: null, notesBefore: null, hazard: null,
 };
 const R = { i: 0, playing: false, speed: 1, last: 0, follow: true };
@@ -92,6 +95,18 @@ export function commitTo(lv, L, kind = 'edit', { snapshot = null, hint = null } 
   lv.L = L;
   refresh(lv);
   return true;
+}
+// its gauntlet renamed (gauntlets.js renameGauntlet; the server rewrote the saved file): its course, saved text and
+// every state on its history lay it by the new name (not an edit: undo never brings back a name that's gone)
+export function gauntletRenamed(from, to) {
+  const r = (t) => K.renameIn(t, from, to);
+  for (const lv of store.levels) {
+    if (!lv.L.cols.some((k) => k.g === from) && r(lv.saved.text) === lv.saved.text && lv.hist.states.every((t) => r(t) === t)) continue;
+    lv.saved = { text: r(lv.saved.text), L: K.parseLevel(r(lv.saved.text)) };
+    lv.hist = { ...lv.hist, states: lv.hist.states.map(r) };
+    lv.L = { ...lv.L, cols: lv.L.cols.map((k) => (k.g === from ? { ...k, g: to } : k)) };
+    refresh(lv);
+  }
 }
 export const commit = (L, kind, opts) => cur() && commitTo(cur(), L, kind, opts);
 function live(L) { const lv = cur(); if (!lv || L === lv.L) return; lv.L = L; refresh(lv, { live: true }); }
@@ -368,11 +383,14 @@ function renderTools() {
     sw.append(b);
   }
   t.append(sw, el('div', 'rule'), el('h4', null, 'Tools'));
-  for (const tool of TOOLS) {
+  const button = (tool) => {
     const b = setTip(el('button', 'tool' + (S.tool === tool.id ? ' on' : ''), `<svg viewBox="0 0 24 24">${tool.icon}</svg><span>${tool.label}</span>`), tool.tip);
     b.onclick = () => setTool(tool.id);
     t.append(b);
-  }
+  };
+  LEVEL_TOOLS.forEach(button);
+  t.append(el('div', 'rule'), el('h4', null, 'Bouncers'));
+  BOUNCER_TOOLS.forEach(button);
 }
 function setTool(id) { S.tool = id; S.preview = null; S.selected = null; if (id !== 'select') S.selection = null; renderTools(); redraw(); updateCursor(); }
 function renderChips() {
@@ -648,11 +666,15 @@ function draw(time) {
   const L = S.drag && S.drag.view ? S.drag.view : lv.L;
   const s = { L, zone: zoneOf(lv), grids: grids(), check: fresh(lv) ? lv.check : lv.check && lv.check.ok ? lv.check : null, game: gm, stale: !gameFresh(lv),
     overlays: S.overlays, hover: S.hover, preview: S.preview, selection: S.selection, changed: lv.changed, diff: lv.diff, time,
-    selected: S.selected, hoverSpan: S.hoverSpan, hoverFinish: S.hoverFinish || (S.drag && S.drag.kind === 'finish'), replay: trace() ? replayPoint() : null,
-    start: lv.start, hoverStart: S.hoverStart || (S.drag && S.drag.kind === 'start'), focus: S.focus };
+    selected: S.selected, hoverSpan: S.hoverSpan, hoverZone: S.hoverZone, hoverFinish: S.hoverFinish || (S.drag && S.drag.kind === 'finish'), replay: trace() ? replayPoint() : null,
+    start: lv.start, hoverStart: S.hoverStart || (S.drag && S.drag.kind === 'start'), focus: S.focus, arcs: arcsOf(lv) };
   view.draw(s);
   view.minimap(s);
 }
+
+// the springs' flights from the latest check, if it's of the level as it is (level_check's arcs: { x, end, path })
+const arcsOf = (lv) => (fresh(lv) && lv.check && lv.check.ok && lv.check.arcs) || [];
+const arcAt = (lv, x) => arcsOf(lv).find((a) => Math.abs(a.x - x) < 0.05) || null;
 
 // ---- pointing at the course
 const pointOf = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
@@ -670,6 +692,36 @@ function discoAt(p) {
   lv.L.discos.forEach((d, i) => { const dx = view.X(d.x / U) - p.x, dy = view.Y(d.y / U) - p.y, dd = Math.hypot(dx, dy); if (dd < bd) { bd = dd; best = i; } });
   return best;
 }
+function laserAt(p) { // a laser under the pointer: its emitter, on its wall's side at its row
+  const lv = cur(), at = view.at(p.x, p.y), tol = Math.max(0.45, 8 / view.z * U), r = at.y / U;
+  let best = -1, bd = Infinity;
+  lv.L.lasers.forEach((z, i) => {
+    const dx = Math.abs(z.x - at.x), dy = Math.abs(r - (z.row + 0.5));
+    if (dx <= tol && dy < 0.9 && dx + dy * U < bd) { bd = dx + dy * U; best = i; }
+  });
+  return best;
+}
+function lavaAt(p) { // lava under the pointer, round about its surface: { i, end } (end: its right end, to stretch it)
+  const lv = cur(), at = view.at(p.x, p.y), grip = Math.max(0.3, 6 / view.z * U);
+  for (let i = 0; i < lv.L.lava.length; i++) {
+    const f = lv.L.lava[i], x1 = K.lavaEnd(f), floor = K.surfaceAt(lv.L, f.x);
+    if (Math.abs(at.y / U - floor) > 1.2 || at.x < f.x - 0.1 || at.x > x1 + grip) continue;
+    return { i, end: Math.abs(at.x - x1) < grip };
+  }
+  return null;
+}
+function springAt(p) { // a spring under the pointer, round about its pad, or a selected one's lift handle: { i, lift }
+  const lv = cur(), at = view.at(p.x, p.y), sel = S.selected ? S.selected.spring ?? -1 : -1;
+  if (sel >= 0 && lv.L.springs[sel]) { const h = view.springHandle(lv.L, lv.L.springs[sel]); if (Math.hypot(p.x - h.x, p.y - h.y) < 10) return { i: sel, lift: true }; }
+  const i = K.springNear(lv.L, at.x, Math.max(0.4, 8 / view.z * U));
+  if (i < 0) return null;
+  const up = at.y / U - K.surfaceAt(lv.L, lv.L.springs[i].x);
+  return up > -0.6 && up < 1.4 ? { i, lift: false } : null;
+}
+const deci = (x) => Math.round(x * 10) / 10;
+const springIndex = (L, x) => L.springs.findIndex((q) => Math.abs(q.x - x) < 1e-6);
+const lavaCell = (x) => Math.round(K.colAt(Math.max(0, x)) * U * 1000) / 1000; // (lava starts on a cell's edge)
+function zoneLabelAt(p) { return (view.zoneLabels || []).find((q) => p.x >= q.x0 && p.x <= q.x1 && p.y >= q.y0 && p.y <= q.y1) || null; } // (a bounce zone's tag)
 function spanUnder(p) { const lv = cur(), at = view.at(p.x, p.y); const s = K.spanAt(lv.L, at.c); if (!s) return null; const rows = gauntletNamed(s.name) ? gauntletNamed(s.name).rows.length : 12; return at.r < rows + 1 && at.r >= -1 ? s : null; }
 function nearFinish(p) {
   const lv = cur(), h = view.finishHandle(lv.L.length);
@@ -725,6 +777,13 @@ canvas.addEventListener('pointerdown', (e) => {
       S.drag = { kind: 'wall', snapshot: lv.L, last: at.c, lock: e.shiftKey ? h : null, zero: alt };
       return live(K.setHeight(lv.L, at.c, h, S.kind));
     }
+    case 'bumper': case 'gate>': case 'gate<': { // (the Walls tool, its walls of the tool's kind: 1 high at least)
+      if (!inCourse(at.c) || K.spanAt(lv.L, at.c)) return;
+      if (at.c === 0 && !alt) return toast('Never the course’s first wall: she comes to a bumper or a gate', 'bad');
+      const h = alt ? 0 : Math.max(1, at.r + 1);
+      S.drag = { kind: 'wall', snapshot: lv.L, last: at.c, lock: e.shiftKey ? h : null, zero: alt, bouncer: S.tool };
+      return live(K.setBouncer(lv.L, at.c, h, S.tool));
+    }
     case 'paint': {
       if (!inCourse(at.c)) return;
       S.drag = { kind: 'paint', snapshot: lv.L, last: at.c };
@@ -734,6 +793,13 @@ canvas.addEventListener('pointerdown', (e) => {
       if (!inCourse(at.c)) return;
       S.drag = { kind: 'ceil', c0: at.c, r: Math.max(2, at.r), remove: alt };
       S.preview = ceilPreview(at.c, at.c, Math.max(2, at.r), alt);
+      return redraw();
+    }
+    case 'block': {
+      if (!inCourse(at.c)) return;
+      const r = Math.max(0, at.r);
+      S.drag = { kind: 'block', c0: at.c, r0: r, remove: alt };
+      S.preview = blockPreview(at.c, at.c, r, r, alt);
       return redraw();
     }
     case 'saw': {
@@ -764,6 +830,50 @@ canvas.addEventListener('pointerdown', (e) => {
       S.selected = { disco: cur().L.discos.findIndex((d) => d.x === x && d.y === y) };
       return redraw();
     }
+    case 'laser': {
+      const i = laserAt(p);
+      if (i >= 0) {
+        if (alt) { S.selected = null; return commit(K.removeLaser(lv.L, i), 'laser-remove'); }
+        S.selected = { laser: i }; S.drag = { kind: 'laser', snapshot: lv.L, i, moved: false };
+        return redraw();
+      }
+      if (alt) return;
+      const face = K.faceNear(lv.L, at.x, Math.max(0, at.y)), next = K.addLaser(lv.L, at.x, Math.max(0, at.y));
+      if (next === lv.L) return toast(K.inGauntlet(lv.L, at.x) ? 'A gauntlet’s lasers are its grid’s (its ( and ) cells)' : !face ? 'No wall’s or block’s side near here in this row: a laser is set into one' : 'A laser’s there already', 'bad');
+      commit(next, 'laser-add');
+      S.selected = { laser: K.laserIndex(cur().L, face) };
+      return redraw();
+    }
+    case 'lava': {
+      const hit = lavaAt(p);
+      if (hit) {
+        if (alt) { S.selected = null; return commit(K.removeLava(lv.L, hit.i), 'lava-remove'); }
+        const f = lv.L.lava[hit.i];
+        S.selected = { lava: hit.i }; S.drag = { kind: 'lava', snapshot: lv.L, i: hit.i, end: hit.end, grab: at.x - f.x, moved: false };
+        return redraw();
+      }
+      if (alt) return;
+      const x = lavaCell(at.x);
+      const next = K.addLava(lv.L, x);
+      if (next === lv.L) return toast(K.spanAt(lv.L, K.colAt(x)) || K.spanAt(lv.L, K.colAt(x + (K.LAVA_LEN.def - 0.5) * U)) ? 'A gauntlet’s lava is its grid’s (edit its grid)' : 'Not over other lava, and short of the course’s end', 'bad');
+      commit(next, 'lava-add');
+      S.selected = { lava: cur().L.lava.findIndex((f) => f.x === x) };
+      return redraw();
+    }
+    case 'spring': {
+      const hit = springAt(p);
+      if (hit) {
+        if (alt) { S.selected = null; return commit(K.removeSpring(lv.L, hit.i), 'spring-remove'); }
+        S.selected = { spring: hit.i }; S.drag = { kind: 'spring', snapshot: lv.L, i: hit.i, lift: hit.lift, grab: at.x - lv.L.springs[hit.i].x, moved: false };
+        return redraw();
+      }
+      if (alt) return;
+      const x = deci(at.x), next = K.addSpring(lv.L, x);
+      if (next === lv.L) return toast(K.spans(lv.L).some((sp) => x > sp.c0 * U - 0.3 && x < sp.c1 * U + 0.3) ? 'A gauntlet’s bouncers are its grid’s (edit its grid)' : 'Not within 1.2 m of another spring, and on the course', 'bad');
+      commit(next, 'spring-add');
+      S.selected = { spring: springIndex(cur().L, x) };
+      return redraw();
+    }
     case 'cols': {
       if (!inCourse(at.c)) return;
       S.drag = { kind: 'cols', remove: alt };
@@ -788,7 +898,14 @@ canvas.addEventListener('pointerdown', (e) => {
     default: break;
   }
 });
-function ceilPreview(c0, c1, r, remove) { const L = cur().L; return { kind: 'ceil', c0, c1, r, remove, ok: (c) => !!L.cols[c] && !L.cols[c].g && r >= L.cols[c].h + 2 }; }
+// a floating block over columns c0..c1, rows ra..rb (its underside the lower, its top over the higher)
+// (never over a bumper or a gate)
+function blockPreview(c0, c1, ra, rb, remove) {
+  const L = cur().L, bottom = Math.min(ra, rb), top = Math.max(ra, rb) + 1;
+  return { kind: 'block', c0, c1, bottom, top, remove, kind2: S.kind, ok: (c) => !!L.cols[c] && !L.cols[c].g && !K.isBouncer(L.cols[c]) && bottom >= L.cols[c].h + 1 && top <= K.MAX_H };
+}
+function ceilPreview(c0, c1, r, remove) { const L = cur().L; return { kind: 'ceil', c0, c1, r, remove, ok: (c) => !!L.cols[c] && !L.cols[c].g && !K.isBouncer(L.cols[c]) && r >= L.cols[c].h + 2 }; }
+const bouncerIn = (L, p) => wallCols(L, p.c0, p.c1).some((c) => K.isBouncer(L.cols[c]));
 function gauntletPreview(name, info, c) {
   const L = cur().L, fp = K.gauntletFootprint(info, Math.max(K.FORECOURT + K.LINTEL, c));
   return { kind: 'gauntlet', a: fp.a, c: fp.c, z: fp.z, grid: info, ok: K.placeGauntlet(L, name, info, c) !== L || (K.spanOf(L, name) && K.spanOf(L, name).c0 === c) };
@@ -804,21 +921,25 @@ canvas.addEventListener('pointermove', (e) => {
   S.hoverStart = !d && (nearStart(p) || onStartHen(lv, at));
   const sp = !d ? spanUnder(p) : null;
   S.hoverSpan = sp ? sp.name : null;
+  const zl = !d ? zoneLabelAt(p) : null;
+  S.hoverZone = zl ? zl.zone.c0 : null;
   updateCursor(p);
   if (moved) renderHover();
   if (!d) { hoverPreview(p, at, e); hazardCard(e, p, at); return; }
   if (d.kind === 'start') { const x = K.startOnCourse(lv.L, at.x); if (x !== null && (!lv.start || x !== lv.start.x)) setStart(lv, { x }); return; }
   if (d.kind === 'finish') { live(K.setLength(lv.L, Math.round(Math.max(K.MIN_LENGTH, at.x)))); renderProps(lv, true); return; }
-  if (!moved && d.kind !== 'saw' && d.kind !== 'disco') return;
+  if (!moved && d.kind !== 'saw' && d.kind !== 'disco' && d.kind !== 'laser' && d.kind !== 'lava' && d.kind !== 'spring') return;
   if (d.kind === 'wall' || d.kind === 'paint') {
     let L = lv.L;
     for (const c of strokeCols(d.last, at.c)) {
       if (!inCourse(c)) continue;
-      L = d.kind === 'paint' ? K.setKind(L, c, S.kind) : K.setHeight(L, c, d.zero ? 0 : d.lock ?? Math.max(0, at.r + 1), S.kind);
+      if (d.bouncer) L = K.setBouncer(L, c, d.zero ? 0 : d.lock ?? Math.max(1, at.r + 1), d.bouncer);
+      else L = d.kind === 'paint' ? K.setKind(L, c, S.kind) : K.setHeight(L, c, d.zero ? 0 : d.lock ?? Math.max(0, at.r + 1), S.kind);
     }
     d.last = at.c;
     live(L);
   } else if (d.kind === 'ceil') S.preview = ceilPreview(d.c0, at.c, d.r, d.remove);
+  else if (d.kind === 'block') S.preview = blockPreview(d.c0, at.c, d.r0, Math.max(0, at.r), d.remove);
   else if (d.kind === 'cols') S.preview.c1 = at.c;
   else if (d.kind === 'select') S.selection.c1 = at.c;
   else if (d.kind === 'saw') {
@@ -828,6 +949,18 @@ canvas.addEventListener('pointermove', (e) => {
     const x = Math.round(at.x * 10) / 10, y = Math.round(Math.max(0.3, at.y) * 20) / 20;
     const next = K.moveDisco(lv.L, S.selected.disco, x, y);
     if (next !== lv.L) { d.moved = true; live(next); S.selected = { disco: next.discos.findIndex((q) => q.x === x && q.y === y) }; }
+  } else if (d.kind === 'laser') { // (to the wall's or block's side nearest the finger, at its row)
+    const i = d.moved ? S.selected.laser : d.i, face = K.faceNear(lv.L, at.x, Math.max(0, at.y));
+    const next = K.moveLaser(lv.L, i, at.x, Math.max(0, at.y));
+    if (next !== lv.L) { d.moved = true; live(next); S.selected = { laser: K.laserIndex(next, face) }; }
+  } else if (d.kind === 'lava') { // (along, or its right end: how long)
+    const i = d.moved ? S.selected.lava : d.i, f = lv.L.lava[i];
+    const next = d.end ? K.moveLava(lv.L, i, f.x, Math.round((at.x - f.x) / U)) : K.moveLava(lv.L, i, lavaCell(at.x - d.grab + U / 2), f.len);
+    if (next !== lv.L) { d.moved = true; live(next); const x = d.end ? f.x : lavaCell(at.x - d.grab + U / 2); S.selected = { lava: next.lava.findIndex((q) => q.x === x) }; }
+  } else if (d.kind === 'spring') { // (along; or its handle, up and down: its lift)
+    const i = d.moved ? S.selected.spring : d.i, sp = lv.L.springs[i], x = d.lift ? sp.x : deci(at.x - d.grab);
+    const next = d.lift ? K.setSpringPower(lv.L, i, at.y / U - K.surfaceAt(lv.L, sp.x)) : K.moveSpring(lv.L, i, x);
+    if (next !== lv.L) { d.moved = true; live(next); S.selected = { spring: springIndex(next, x) }; }
   } else if (d.kind === 'gauntlet') {
     d.c = Math.max(K.FORECOURT + K.LINTEL, at.c - d.grab);
     S.preview = gauntletPreview(d.name, d.info, d.c);
@@ -837,9 +970,20 @@ function hoverPreview(p, at, e) {
   const lv = cur();
   const alt = e.altKey;
   if (S.tool === 'wall' && inCourse(at.c) && !K.spanAt(lv.L, at.c)) S.preview = { kind: 'wall', cols: [{ c: at.c, h: alt ? 0 : Math.max(0, at.r + 1), kind: lv.L.cols[at.c].h ? lv.L.cols[at.c].kind : S.kind }] };
+  else if (bouncing(S.tool) && inCourse(at.c) && at.c > 0 && !K.spanAt(lv.L, at.c)) S.preview = { kind: 'wall', cols: [{ c: at.c, h: alt ? 0 : Math.max(1, at.r + 1), kind: S.tool }] };
   else if (S.tool === 'ceil' && inCourse(at.c)) S.preview = ceilPreview(at.c, at.c, Math.max(2, at.r), alt);
-  else if (S.tool === 'saw' && sawAt(p) < 0 && inCourse(at.c)) { const x = K.snapSaw(lv.L, at.x), k = lv.L.cols[K.colAt(x)]; S.preview = k ? { kind: 'saw', x, h: k.g ? 0 : k.h, cube: !k.g && k.h > 0 && k.kind !== 'crate', ok: K.addSaw(lv.L, x) !== lv.L } : null; }
-  else if (S.tool === 'disco' && discoAt(p) < 0) S.preview = { kind: 'disco', x: Math.round(at.x * 10) / 10, y: Math.round(Math.max(0.3, at.y) * 20) / 20 };
+  else if (S.tool === 'block' && inCourse(at.c)) S.preview = blockPreview(at.c, at.c, Math.max(0, at.r), Math.max(0, at.r), alt);
+  else if (S.tool === 'saw' && sawAt(p) < 0 && inCourse(at.c)) { const x = K.snapSaw(lv.L, at.x), k = lv.L.cols[K.colAt(x)]; S.preview = k ? { kind: 'saw', x, h: k.g ? 0 : k.top || k.h, cube: !k.g && (k.top || k.h) > 0 && k.kind !== 'crate', ok: K.addSaw(lv.L, x) !== lv.L } : null; }
+  else if (S.tool === 'laser' && laserAt(p) < 0 && inCourse(at.c)) {
+    const face = K.faceNear(lv.L, at.x, Math.max(0, at.y)); // (the side it snaps to: none near, nothing to place)
+    S.preview = face ? { kind: 'laser', ...face, ok: K.addLaser(lv.L, at.x, Math.max(0, at.y)) !== lv.L } : null;
+  } else if (S.tool === 'lava' && !lavaAt(p) && inCourse(at.c)) {
+    const x = lavaCell(at.x);
+    S.preview = { kind: 'lava', x, floor: K.surfaceAt(lv.L, x), len: K.LAVA_LEN.def, ok: K.addLava(lv.L, x) !== lv.L };
+  } else if (S.tool === 'spring' && !springAt(p) && inCourse(at.c)) {
+    const x = deci(at.x);
+    S.preview = { kind: 'spring', x, floor: K.surfaceAt(lv.L, x), power: K.SPRING_POWER.def, ok: K.addSpring(lv.L, x) !== lv.L };
+  } else if (S.tool === 'disco' && discoAt(p) < 0) S.preview = { kind: 'disco', x: Math.round(at.x * 10) / 10, y: Math.round(Math.max(0.3, at.y) * 20) / 20 };
   else if (S.tool === 'cols' && inCourse(at.c)) S.preview = { kind: 'cols', c0: at.c, c1: at.c, remove: alt };
   else if (S.tool === 'select' && S.clipboard && inCourse(at.c)) S.preview = { kind: 'insert', c: at.c };
   else S.preview = null;
@@ -853,6 +997,11 @@ function updateCursor(p) {
   else if (d && d.kind === 'start') cur = 'ew-resize';
   else if (p && S.tool === 'saw' && sawAt(p) >= 0) cur = 'grab';
   else if (p && S.tool === 'disco' && discoAt(p) >= 0) cur = 'grab';
+  else if (p && S.tool === 'laser' && laserAt(p) >= 0) cur = 'grab';
+  else if (d && d.kind === 'lava' && d.end) cur = 'ew-resize';
+  else if (p && S.tool === 'lava' && lavaAt(p)) cur = lavaAt(p).end ? 'ew-resize' : 'grab';
+  else if (d && d.kind === 'spring' && d.lift) cur = 'ns-resize';
+  else if (p && S.tool === 'spring' && springAt(p)) cur = springAt(p).lift ? 'ns-resize' : 'grab';
   else if (S.tool === 'gauntlet' && S.hoverSpan) cur = 'grab';
   canvas.style.cursor = cur;
 }
@@ -861,20 +1010,28 @@ function endDrag() {
   S.drag = null;
   wrap.classList.remove('panning');
   if (!lv || !d) return;
-  const kind = { wall: 'walls', paint: 'kind', finish: 'finish', saw: 'saw-move', disco: 'disco-move' }[d.kind];
+  const kind = { wall: d.bouncer ? 'bouncer' : 'walls', paint: 'kind', finish: 'finish', saw: 'saw-move', disco: 'disco-move', laser: 'laser-move', lava: 'lava-move', spring: d.lift ? 'spring-lift' : 'spring-move' }[d.kind];
   if (kind) {
     if (lv.L !== d.snapshot && d.snapshot) { const L = lv.L; lv.L = d.snapshot; commit(L, kind, { snapshot: d.snapshot }); }
   } else if (d.kind === 'ceil') {
     const p = S.preview; S.preview = null;
     let L = lv.L;
     for (const c of wallCols(L, p.c0, p.c1)) if (!L.cols[c].g) L = p.remove ? K.setCeil(L, c, 0) : (p.ok(c) ? K.setCeil(L, c, p.r) : L);
-    if (L === lv.L && !p.remove) toast('A barrier goes 2 eggs over a wall’s top at least (her body under it)', 'bad');
+    if (!p.remove && bouncerIn(lv.L, p)) toast('No barrier over a bumper or a gate (the game won’t take one)', 'bad');
+    else if (L === lv.L && !p.remove) toast('A barrier goes 2 eggs over a wall’s top at least (her body under it)', 'bad');
     commit(L, p.remove ? 'ceil-off' : 'ceil');
+  } else if (d.kind === 'block') {
+    const p = S.preview; S.preview = null;
+    let L = lv.L;
+    for (const c of wallCols(L, p.c0, p.c1)) if (!L.cols[c].g) L = p.remove ? K.setBlock(L, c, 0, 0) : (p.ok(c) ? K.setBlock(L, c, p.bottom, p.top, S.kind) : L);
+    if (!p.remove && bouncerIn(lv.L, p)) toast('No floating block over a bumper or a gate (the game won’t take one)', 'bad');
+    else if (L === lv.L && !p.remove) toast('A floating block’s underside goes 1 egg over a wall’s top at least, its top up to 60', 'bad');
+    commit(L, p.remove ? 'block-off' : 'block');
   } else if (d.kind === 'cols') {
     const p = S.preview; S.preview = null; S.selection = null;
     const a = Math.min(p.c0, p.c1), b = Math.max(p.c0, p.c1);
     const L = p.remove ? K.deleteCols(lv.L, a, b) : K.duplicateCols(lv.L, a, b);
-    if (L === lv.L) toast(p.remove ? 'Not a gauntlet’s columns (move it, or take it out), and the course keeps 30 m' : 'Not inside a gauntlet (its grid’s columns are the grid’s: edit its grid)', 'bad');
+    if (L === lv.L) toast(p.remove ? 'Not a gauntlet’s columns (move it, or take it out), the course keeps 30 m, and a bumper or a gate is never its first wall' : 'Not inside a gauntlet (its grid’s columns are the grid’s: edit its grid)', 'bad');
     commit(L, p.remove ? 'cols-out' : 'cols-in', { hint: p.remove ? { c0: a, c1: b } : { c0: b + 1, c1: b + 1 + (b - a) } });
   } else if (d.kind === 'gauntlet') {
     S.preview = null;
@@ -889,7 +1046,7 @@ function endDrag() {
 }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
-canvas.addEventListener('pointerleave', () => { if (!S.drag) { S.hover = null; S.preview = null; S.hoverSpan = null; S.hoverFinish = false; S.hoverStart = false; renderHover(); } clearTimeout(hazardTimer); S.hazard = null; hideTip(); });
+canvas.addEventListener('pointerleave', () => { if (!S.drag) { S.hover = null; S.preview = null; S.hoverSpan = null; S.hoverZone = null; S.hoverFinish = false; S.hoverStart = false; renderHover(); } clearTimeout(hazardTimer); S.hazard = null; hideTip(); });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('dblclick', (e) => { const sp = cur() && spanUnder(pointOf(e)); if (sp) emit('show-gauntlet', sp.name); });
 canvas.addEventListener('wheel', (e) => {
@@ -900,29 +1057,54 @@ canvas.addEventListener('wheel', (e) => {
   else view.panBy(-e.deltaX, -e.deltaY);
 }, { passive: false });
 // What's under the pointer, for its card (tips.js, and its particulars): the start, the finish, a saw, a disco ball, a
-// barrier, the gauntlet, a note, a wall
+// laser, lava, a spring, a barrier, the gauntlet, a note, a wall
 function hazardAt(lv, p, at) {
   const t = (key, extra) => ({ id: key + ':' + extra, title: TIPS[key].title, text: TIPS[key].text, extra });
   if (S.hoverStart) return t('hazard.start', lv.start.x !== undefined ? `At ${lv.start.x} m.` : `In the ${titled(lv.start.gauntlet)}, col ${lv.start.c}, row ${lv.start.b}, running ${lv.start.dir < 0 ? 'left' : 'right'}. Click her (Start tool) to turn her round.`);
   if (S.hoverFinish) return t('hazard.finish', `At ${Math.round(lv.L.length)} m.`);
   const si = sawAt(p);
   if (si >= 0) {
-    const x = lv.L.saws[si], k = lv.L.cols[K.colAt(x)], cube = k && !k.g && k.h > 0 && k.kind !== 'crate';
+    const x = lv.L.saws[si], k = lv.L.cols[K.colAt(x)], cube = k && !k.g && (k.top || k.h) > 0 && k.kind !== 'crate';
     const row = lv.L.saws.filter((y) => Math.abs(Math.abs(y - x) - K.SAW_ROW_GAP) < 0.05).length;
-    return t(cube ? 'hazard.cube-saw' : 'hazard.saw', `At ${x} m, in ${k && k.h ? `a wall ${k.h} high` : 'the street'}${row ? `; ${row === 1 ? 'a blade' : 'blades'} back to back with it` : ''}. ${cube ? TIPS['hazard.saw'].text : ''}`.trim());
+    return t(cube ? 'hazard.cube-saw' : 'hazard.saw', `At ${x} m, in ${k && k.top ? `a floating block's top, ${k.top} up` : k && k.h ? `a wall ${k.h} high` : 'the street'}${row ? `; ${row === 1 ? 'a blade' : 'blades'} back to back with it` : ''}. ${cube ? TIPS['hazard.saw'].text : ''}`.trim());
   }
   const di = discoAt(p);
   if (di >= 0) { const d = lv.L.discos[di]; return t('hazard.disco', `At ${d.x} m, ${d.y} m up.`); }
+  const zi = laserAt(p);
+  if (zi >= 0) {
+    const z = lv.L.lasers[zi], [x0, x1] = K.laserReach(lv.L, z);
+    return t('hazard.laser', `Row ${z.row}, fires ${z.dir ? 'right' : 'left'}, reach ${x0}–${x1} m${x1 - x0 < U / 2 ? ' (into a wall: its beam goes nowhere)' : ''}.`);
+  }
+  const la = lavaAt(p);
+  if (la) { const f = lv.L.lava[la.i]; return t('hazard.lava', `At ${f.x}–${K.lavaEnd(f)} m, ${f.len} cell${f.len === 1 ? '' : 's'}: ${f.len} egg${f.len === 1 ? '' : 's'} to cross it.${la.end ? ' Drag its end (Lava tool) to make it longer or shorter.' : ''}`); }
+  const pj = springAt(p);
+  if (pj) { // (where it lands her, from the latest check's arc of it)
+    const sp = lv.L.springs[pj.i], floor = K.surfaceAt(lv.L, sp.x), arc = arcAt(lv, sp.x), end = arc && arc.path.length ? arc.path[arc.path.length - 1] : null;
+    const on = (rows) => (rows ? `a surface ${rows} up` : 'the street');
+    const lands = !arc ? ' Where it lands her: checking…' : arc.end === 'landed' && end ? ` It lands her at ${end[0]} m, on ${on(Math.round(end[1] / U))}.` : '';
+    const warn = !arc || arc.end === 'landed' ? '' : arc.end === 'wall' ? `It flings her into a wall’s face at ${end ? end[0] : sp.x} m.` : arc.end === 'barrier' ? `It flings her into a barrier at ${end ? end[0] : sp.x} m.` : 'Nothing to land on before the course runs out.';
+    return { ...t('hazard.spring', `At ${sp.x} m, on ${on(floor)}.${lands}${pj.lift ? ' Drag its handle up or down (Spring tool), or press ↑ ↓, for its lift.' : ''}`), id: `spring:${sp.x}:${sp.power}:${pj.lift}:${arc ? arc.end + (end || '') : ''}`, title: `Spring · lift ${sp.power} rows`, warn };
+  }
   const k = inCourse(at.c) ? lv.L.cols[at.c] : null;
+  if (k && !k.g && k.top && at.r >= k.ceil - 1 && at.r <= k.top) {
+    const fit = k.ceil - k.h >= 2 ? Math.max(0, Math.floor((k.ceil * U - 1.05 - 0.02) / U + 1e-6) - k.h) : -1;
+    return t('hazard.block', `From ${k.ceil} to ${k.top}, over ${k.h ? `a wall ${k.h} high` : 'the street'}: ${fit < 0 ? 'no room under it (over it is the only way)' : `${fit} egg${fit === 1 ? '' : 's'} fit under it`}; onto it from there, a stack of ${k.top - k.h}.`);
+  }
   if (k && !k.g && k.ceil && at.r >= k.ceil - 1 && at.r <= k.ceil + 2) {
     const fit = Math.max(0, Math.floor((k.ceil * U - 1.05 - 0.02) / U + 1e-6) - k.h);
     return t('hazard.barrier', `Its underside at ${k.ceil}, over ${k.h ? `a wall ${k.h} high` : 'the street'}: ${fit} egg${fit === 1 ? '' : 's'} fit under it there.`);
   }
+  const zl = zoneLabelAt(p);
+  if (zl) { const bz = zl.zone, n = bz.c1 - bz.c0; return t('hazard.bounce-zone', `From ${Math.round(bz.c0 * U * 10) / 10} to ${Math.round(bz.c1 * U * 10) / 10} m, ${n} cells: ${K.walls(lv.L).filter((w) => K.isBouncer(w) && w.c0 >= bz.c0 && w.c1 <= bz.c1).length} bouncer walls.`); }
   if (S.hoverSpan) { const g = gauntletNamed(S.hoverSpan); return t('hazard.gauntlet', `The ${titled(S.hoverSpan)}${g ? `, ${G.cols(g.rows)} × ${g.rows.length}` : ''}.`); }
   const ch = lv.check && lv.check.ok ? lv.check : null;
   if (ch && S.overlays.notes) {
     const n = [...(ch.doors || []), ...ch.short, ...ch.notes].find((q) => Math.abs(view.X(q.x / U) - p.x) < 9 && Math.abs(view.Y(q.y) - 12 - p.y) < 10);
     if (n) return t('hazard.note', n.text);
+  }
+  if (K.isBouncer(k) && at.r >= 0 && at.r < k.h) { // (its kind, how high, what it does; the zone it's in)
+    const bz = K.zoneAt(lv.L, at.c), w = K.walls(lv.L).find((q) => at.c >= q.c0 && at.c < q.c1);
+    return { ...t(BOUNCER_TIP[k.kind], `${w.c1 - w.c0} cell${w.c1 - w.c0 === 1 ? '' : 's'} wide, at ${Math.round(w.c0 * U * 10) / 10} m${bz ? `; in the bounce zone from ${Math.round(bz.c0 * U * 10) / 10} to ${Math.round(bz.c1 * U * 10) / 10} m` : ''}.`), title: `${TIPS[BOUNCER_TIP[k.kind]].title} · ${k.h} high` };
   }
   if (k && !k.g && k.h > 0 && at.r >= 0 && at.r < k.h) return t('hazard.wall', `${titled(k.kind === 'hay' ? 'hay' : k.kind === 'mix' ? 'hay-topped crates' : 'crates')}, ${k.h} high.`);
   return null;
@@ -931,11 +1113,11 @@ let hazardTimer = 0;
 function hazardCard(e, p, at) {
   const lv = cur(), hz = hazardAt(lv, p, at);
   if (!hz) { clearTimeout(hazardTimer); if (S.hazard) { S.hazard = null; hideTip(); } return; }
-  if (S.hazard && S.hazard.id === hz.id) { showAt(e.clientX, e.clientY, { title: hz.title, text: `${hz.text} ${hz.extra}`.trim() }); return; } // (follows the pointer)
+  if (S.hazard && S.hazard.id === hz.id) { showAt(e.clientX, e.clientY, { title: hz.title, text: `${hz.text} ${hz.extra}`.trim(), warn: hz.warn }); return; } // (follows the pointer)
   clearTimeout(hazardTimer);
   S.hazard = null; hideTip();
   const x = e.clientX, y = e.clientY;
-  hazardTimer = setTimeout(() => { if (S.drag) return; S.hazard = hz; showAt(x, y, { title: hz.title, text: `${hz.text} ${hz.extra}`.trim() }); }, 420);
+  hazardTimer = setTimeout(() => { if (S.drag) return; S.hazard = hz; showAt(x, y, { title: hz.title, text: `${hz.text} ${hz.extra}`.trim(), warn: hz.warn }); }, 420);
 }
 function renderHover() {
   const lv = cur(), h = S.hover, out = $('lhoverinfo');
@@ -946,10 +1128,17 @@ function renderHover() {
   if (k.g) {
     const s = K.spanAt(lv.L, h.c);
     what = `the <b>${esc(titled(k.g))}</b>, its col ${h.c - s.c0}`;
-  } else what = k.h ? `${k.kind === 'hay' ? 'hay' : k.kind === 'mix' ? 'hay-topped crates' : 'crates'} <b>${k.h}</b> high` : 'the street';
-  if (k.ceil) what += ` · a barrier at <b>${k.ceil}</b>`;
+  } else what = k.h ? `${KIND_WORDS[k.kind] || k.kind} <b>${k.h}</b> high${K.zoneAt(lv.L, h.c) ? ' · in a bounce zone' : ''}` : `the street${K.zoneAt(lv.L, h.c) ? ' · in a bounce zone' : ''}`;
+  if (k.top) what += ` · a floating block from <b>${k.ceil}</b> to <b>${k.top}</b>`;
+  else if (k.ceil) what += ` · a barrier at <b>${k.ceil}</b>`;
   const saw = K.sawNear(lv.L, h.x, 0.6);
   if (saw >= 0) what += ` · a saw at ${lv.L.saws[saw]} m`;
+  const zi = K.laserNear(lv.L, h.x, 0.6, Math.max(0, h.r));
+  if (zi >= 0) what += ` · a laser at ${lv.L.lasers[zi].x} m, row ${lv.L.lasers[zi].row}, firing ${lv.L.lasers[zi].dir ? 'right' : 'left'}`;
+  const fi = K.lavaOver(lv.L, h.x);
+  if (fi >= 0) what += ` · lava, ${lv.L.lava[fi].len} cells`;
+  const pi = K.springNear(lv.L, h.x, 0.6);
+  if (pi >= 0) what += ` · a spring at ${lv.L.springs[pi].x} m, lift ${lv.L.springs[pi].power}`;
   out.innerHTML = `<b>${h.x.toFixed(1)} m</b> · col ${h.c} · row ${Math.max(0, h.r)} · ${what}`;
 }
 
@@ -981,7 +1170,7 @@ function pasteCols() {
   if (!lv || !S.clipboard) return;
   const c = S.hover && inCourse(S.hover.c) ? S.hover.c : S.selection ? Math.max(S.selection.c0, S.selection.c1) + 1 : 0;
   const L = K.insertCols(lv.L, c, S.clipboard);
-  if (L === lv.L) return toast('Not inside a gauntlet', 'bad');
+  if (L === lv.L) return toast(c === 0 && K.isBouncer(S.clipboard.cols[0]) ? 'Never the course’s first wall: she comes to a bumper or a gate' : 'Not inside a gauntlet', 'bad');
   commit(L, 'paste', { hint: { c0: c, c1: c + S.clipboard.cols.length - 1 } });
   S.selection = { c0: c, c1: c + S.clipboard.cols.length - 1 };
 }
@@ -998,7 +1187,8 @@ export function keydown(e) {
   if (e.key === ' ') { e.preventDefault(); if (!S.space) { S.space = true; updateCursor(); } return true; }
   const kind = KINDS.find((x) => x.key === e.key);
   if (kind) { S.kind = kind.id; renderTools(); return true; }
-  const tool = TOOLS.find((t) => t.key === k);
+  if (e.shiftKey && k === 'y') { setTool('gate<'); return true; } // (⇧Y: Gate ←)
+  const tool = TOOLS.find((t) => t.key && t.key === k);
   if (tool) { setTool(tool.id); return true; }
   switch (e.key) {
     case 'l': case 'L': togglePicker(); return true;
@@ -1010,11 +1200,21 @@ export function keydown(e) {
     case '.': R.playing = false; renderTransport(); setReplay(R.i + 12); return true;
     case 'Home': setReplay(0); return true;
     case 'End': { const tr = trace(); if (tr) setReplay(tr.length - 1); return true; }
+    case 'ArrowUp': case 'ArrowDown': { // (a selected spring: its lift, a row at a time)
+      if (!S.selected || !(S.selected.spring >= 0)) return false;
+      e.preventDefault();
+      const L = cur().L, sp = L.springs[S.selected.spring];
+      if (sp) commit(K.setSpringPower(L, S.selected.spring, sp.power + (e.key === 'ArrowUp' ? 1 : -1)), 'spring-lift');
+      return true;
+    }
     case 'Escape': if (pickerOpen) togglePicker(false); S.selection = null; S.preview = null; S.selected = null; return true;
     case 'Delete': case 'Backspace': {
       e.preventDefault();
       if (S.selected && S.selected.saw >= 0) { commit(K.removeSaw(cur().L, S.selected.saw), 'saw-remove'); S.selected = null; }
       else if (S.selected && S.selected.disco >= 0) { commit(K.removeDisco(cur().L, S.selected.disco), 'disco-remove'); S.selected = null; }
+      else if (S.selected && S.selected.laser >= 0) { commit(K.removeLaser(cur().L, S.selected.laser), 'laser-remove'); S.selected = null; }
+      else if (S.selected && S.selected.lava >= 0) { commit(K.removeLava(cur().L, S.selected.lava), 'lava-remove'); S.selected = null; }
+      else if (S.selected && S.selected.spring >= 0) { commit(K.removeSpring(cur().L, S.selected.spring), 'spring-remove'); S.selected = null; }
       else if (S.selection) deleteSel();
       return true;
     }

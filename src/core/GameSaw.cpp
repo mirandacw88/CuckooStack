@@ -248,7 +248,7 @@ void Game::emitSaws(RenderList& out, float pz) {
     if (level_.saws.empty()) return;
     const glm::vec3 base = sawColor(), hot = hexColor("#ff1e3c");
     const bool play = state_ == State::Play && !smashing();
-    const double topNow = std::min(baseY_, std::max(level_.heightAt(x_ - 0.22), level_.heightAt(x_ + 0.22)) * U) + eggs_.size() * U;
+    const double topNow = std::min(baseY_, supportY()) + eggs_.size() * U;
     const float strobe = std::sin(time_ * 22) > 0 ? 1.f : 0.35f;
     LitMaterial slotMat; slotMat.color = hexColor("#07060d"); slotMat.metalness = 0.3f; slotMat.roughness = 0.6f;
     LitMaterial plate; plate.color = hexColor("#1a1826"); plate.metalness = 0.8f; plate.roughness = 0.3f; plate.rimColor = base; plate.rimStrength = 0.5f; plate.rimPow = 3;
@@ -320,6 +320,11 @@ void Game::emitSawDebris(RenderList& out, const Debris& d) {
         LitMaterial shell; shell.color = hexColor("#f6f3ff"); shell.metalness = 0.15f; shell.roughness = 0.28f; shell.emissive = glm::vec3(0.12f);
         shell.rimColor = hexColor("#ffb8f4"); shell.rimStrength = 1.8f; shell.rimPow = 2.2f;
         LitMaterial white; white.color = hexColor("#fffaf0"); white.roughness = 0.6f; white.emissive = glow("#fff1d6", 0.45f);
+        if (d.heat > 0) { // (a laser's half: its cut face red-hot, cooling)
+            white.color = glm::mix(white.color, hexColor("#ff7a2a"), d.heat);
+            white.emissive = glm::mix(white.emissive, glow("#ff5a14", 3.f), d.heat);
+            shell.rimColor = glm::mix(shell.rimColor, glow("#ff6a2b", 2.f), d.heat);
+        }
         out.add(Pass::Lit, MeshId::EggHalf) = makeLit(g, shell);
         out.add(Pass::Lit, MeshId::EggHalfCap) = makeLit(g, white);
         // the yolk in the cut face (toward the blunt end), and the egg's neon ring round the cut

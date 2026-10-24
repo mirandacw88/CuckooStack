@@ -57,6 +57,16 @@ public:
     bool canShatter() const { return useModel && model().ok; }
     const HenModel& model() const { return henModel(skin.model); }
     void shatter(glm::vec3 impact, glm::vec3 velocity, float floorY, uint32_t seed);
+    // ...or cut in two by a wall laser's beam at `cutY` (world): the hen above it slides off and tumbles, the hen below
+    // slumps, each piece whole but for the line of shards along the cut, its edge glowing red-hot
+    void slice(float cutY, glm::vec3 velocity, float floorY, uint32_t seed);
+    // ...or burned up in lava: she chars black, glowing with embers, and crumbles into ash that sinks away
+    void burn(glm::vec3 velocity, float floorY, uint32_t seed);
+    enum class Breakup : uint8_t { Glass, Slice, Char };
+    Breakup breakup() const { return breakup_; }
+    float breakupTime() const { return shatterT_; }
+    int pieces() const { return int(shards_.size()); } // (tests: the pieces she broke into)
+    glm::vec3 pieceCentre(int i) const { return shards_[size_t(i)].c; }
     void updateShatter(float dt);
     void unshatter() { shattered_ = false; }
     bool shattered() const { return shattered_; }
@@ -80,6 +90,12 @@ private:
     HenModelId shatterModel_ = kClassicHen;
 
     struct Shard { glm::vec3 c0, c, v, axis; float angle, spin; };
+    // the posed hen at the moment it breaks (shatterRest_, the model's shards' centres), and its pieces: the shards as
+    // they are (Glass, Char), or two of them (Slice: above and below the cut), each shard's piece in pieceOf_
+    std::vector<glm::vec3> breakPose(std::vector<int>& count);
+    Breakup breakup_ = Breakup::Glass;
+    std::vector<int> pieceOf_;
+    float cutY_ = 0;
     bool shattered_ = false;
     float shatterT_ = 0.f, floorY_ = 0.f;
     std::vector<Shard> shards_;

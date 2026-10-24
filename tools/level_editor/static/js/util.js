@@ -2,7 +2,7 @@
 export const $ = (id) => document.getElementById(id);
 export const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 export const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
-export const titled = (name) => name.charAt(0).toUpperCase() + name.slice(1);
+export const titled = (name) => name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' '); // (a gauntlet's: spaced, as the game's banner)
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 export const list = (items) => (items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1]);

@@ -7,8 +7,10 @@ import * as G from './grid.js';
 const U = K.U;
 const metres = (x) => `${Math.round(x * 10) / 10} m`;
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
-const KIND_NAME = { crate: 'crates', hay: 'hay', mix: 'hay-topped crates' };
-const titled = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const KIND_NAME = { crate: 'crates', hay: 'hay', mix: 'hay-topped crates', bumper: 'bumper', 'gate>': 'gate →', 'gate<': 'gate ←' };
+const BOUNCER_NAME = { bumper: 'Bumper wall', 'gate>': 'Gate →', 'gate<': 'Gate ←' };
+const bouncerWalls = (L) => K.walls(L).filter((w) => K.isBouncer(w)).length;
+const titled = (s) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
 
 // ---- lining two sequences up: runs of '=' (the same), '-' (only in a), '+' (only in b); one changed in place: '-' then '+'
 const MAX_CELLS = 4e6; // (past this big a middle, the middle is just "replaced")
@@ -55,12 +57,15 @@ function middle(A, B) {
 }
 
 // ---- a course against another (the saved one, or the one before an edit)
-const sig = (k) => (k.g ? 'g:' + k.g : `${k.h}|${k.kind}|${k.ceil}`);
-function sigs(L) { // (a column's saws and disco balls in it too: in a long flat run they're what tells columns apart)
+const sig = (k) => (k.g ? 'g:' + k.g : `${k.h}|${k.kind}|${k.ceil}|${k.top || 0}`);
+function sigs(L) { // (a column's saws, disco balls, lasers, lava and springs in it too: in a long flat run they're what tells columns apart)
   const extra = new Map();
   const add = (x, s) => { const c = K.colAt(x); extra.set(c, (extra.get(c) || '') + s); };
   for (const x of L.saws) add(x, `s${Math.round((x - K.colAt(x) * U) * 100)}`);
   for (const d of L.discos) add(d.x, `d${Math.round((d.x - K.colAt(d.x) * U) * 100)}:${Math.round(d.y * 100)}`);
+  for (const z of L.lasers || []) add((K.laserCol(z) + 0.5) * U, `z${z.dir}:${z.row}`); // (in the column it's set into)
+  for (const f of L.lava || []) add(f.x, `a${Math.round((f.x - K.colAt(f.x) * U) * 100)}:${f.len}`);
+  for (const p of L.springs || []) add(p.x, `j${Math.round((p.x - K.colAt(p.x) * U) * 100)}:${p.power}`);
   return L.cols.map((k, c) => sig(k) + (extra.get(c) || ''));
 }
 export function diffCourse(was, now) {
@@ -99,11 +104,20 @@ export function diffCourse(was, now) {
     const at = mapX(d.x), i = discosLeft.findIndex((e) => near(e.x, at, 0.05) && near(e.y, d.y, 0.05));
     if (i >= 0) discosLeft.splice(i, 1); else discosGone.push({ x: at, y: d.y });
   }
+  const follow = (was, now, same, place = (p) => mapX(p.x)) => { // (each one saved, followed to where it is now: kept, or gone)
+    const left = now.slice(), gone = [];
+    for (const p of was) { const at = { ...p, x: place(p) }, i = left.findIndex((q) => near(q.x, at.x, 0.05) && same(p, q)); if (i >= 0) left.splice(i, 1); else gone.push(at); }
+    return { added: left, removed: gone };
+  };
   const finishWas = mapX(Math.min(was.length, Math.max(0, was.cols.length * U - 1e-6)));
   return {
     changed, replaced, inserted, removed, mapX,
     saws: { added: sawsLeft, removed: sawsGone },
     discos: { added: discosLeft, removed: discosGone },
+    lasers: follow(was.lasers || [], now.lasers || [], (p, q) => p.row === q.row && p.dir === q.dir, (p) => mapX((K.laserCol(p) + 0.5) * U) + (p.dir ? 0.5 : -0.5) * U), // (with the column it's set into)
+    lava: follow(was.lava || [], now.lava || [], (p, q) => p.len === q.len),
+    springs: follow(was.springs || [], now.springs || [], (p, q) => p.power === q.power),
+    bouncers: [bouncerWalls(was), bouncerWalls(now)], // (bumper and gate walls, saved and now)
     finish: Math.abs(was.length - now.length) > 1e-9 ? { from: was.length, to: now.length, ghost: finishWas } : null,
     difficulty: was.diffOffset !== now.diffOffset || was.diffScale !== now.diffScale ? [[was.diffOffset, was.diffScale], [now.diffOffset, now.diffScale]] : null,
     raids: String(was.raids) !== String(now.raids) ? [was.raids, now.raids] : null,
@@ -126,6 +140,13 @@ export function summarizeCourse(d) {
   if (sa || sr) out.push([sa ? plural(sa, 'saw') + ' added' : '', sr ? plural(sr, 'saw') + ' removed' : ''].filter(Boolean).join(', '));
   const da = d.discos.added.length, dr = d.discos.removed.length;
   if (da || dr) out.push([da ? plural(da, 'disco ball') + ' added' : '', dr ? plural(dr, 'disco ball') + ' removed' : ''].filter(Boolean).join(', '));
+  const za = d.lasers.added.length, zr = d.lasers.removed.length;
+  if (za || zr) out.push([za ? plural(za, 'laser') + ' added' : '', zr ? plural(zr, 'laser') + ' removed' : ''].filter(Boolean).join(', '));
+  const aa = d.lava.added.length, ar = d.lava.removed.length;
+  if (aa || ar) out.push([aa ? plural(aa, 'lava run') + ' added' : '', ar ? plural(ar, 'lava run') + ' removed' : ''].filter(Boolean).join(', '));
+  const ja = d.springs.added.length, jr = d.springs.removed.length;
+  if (ja || jr) out.push([ja ? plural(ja, 'spring') + ' added' : '', jr ? plural(jr, 'spring') + ' removed' : ''].filter(Boolean).join(', '));
+  if (d.bouncers && d.bouncers[0] !== d.bouncers[1]) out.push(`bouncer walls ${d.bouncers[0]} → ${d.bouncers[1]}`);
   if (d.finish) out.push(`the finish ${d.finish.to > d.finish.from ? '+' : '−'}${metres(Math.abs(d.finish.to - d.finish.from))}`);
   if (d.difficulty) out.push('its difficulty');
   if (d.raids) out.push('its raids');
@@ -142,6 +163,9 @@ export function courseFocus(d) {
   for (const r of d.removed) take(r.at * U);
   for (const x of [...d.saws.added, ...d.saws.removed]) take(x);
   for (const p of [...d.discos.added, ...d.discos.removed]) take(p.x);
+  for (const p of [...d.lasers.added, ...d.lasers.removed]) take(p.x);
+  for (const p of [...d.lava.added, ...d.lava.removed]) take(p.x, p.x + p.len * U);
+  for (const p of [...d.springs.added, ...d.springs.removed]) take(p.x);
   if (d.finish) take(Math.min(d.finish.ghost, d.finish.to), Math.max(d.finish.ghost, d.finish.to));
   return x0 <= x1 ? [x0, x1] : null;
 }
@@ -161,21 +185,34 @@ export function describeLevel(kind, was, now, hint = null) {
   const run = changedRun(d);
   const label = (() => {
     switch (kind) {
-      case 'walls': {
+      case 'walls': case 'bouncer': {
         if (!run) break;
-        const hs = new Set(run[2].map((c) => now.cols[c].h));
-        const h = [...hs][0];
+        const hs = new Set(run[2].map((c) => now.cols[c].h)), ks = new Set(run[2].map((c) => now.cols[c].kind));
+        const h = [...hs][0], b = BOUNCER_NAME[[...ks][0]];
+        if (b && hs.size === 1 && ks.size === 1) return `${b} ${run[1] - run[0] + 1} × ${h} at ${metres(run[0] * U)}`; // (a bumper's or a gate's: cells × high)
         return `${hs.size === 1 ? (h ? `Walls ${h} high` : 'Walls down to the street') : 'Walls reshaped'} · ${colsAt(run[0], run[1])}`;
       }
       case 'kind': if (run) return `${titled(KIND_NAME[now.cols[run[0]].kind] || now.cols[run[0]].kind)} · ${colsAt(run[0], run[1])}`; break;
       case 'ceil': if (run) return `Barrier at ${now.cols[run[0]].ceil} · ${colsAt(run[0], run[1])}`; break;
       case 'ceil-off': if (run) return `Barriers off · ${colsAt(run[0], run[1])}`; break;
+      case 'block': if (run) { const k = now.cols[run[0]]; return `Floating block ${k.ceil}–${k.top} · ${colsAt(run[0], run[1])}`; } break;
+      case 'block-off': if (run) return `Floating blocks off · ${colsAt(run[0], run[1])}`; break;
       case 'saw-add': if (d.saws.added.length) return `Saw added at ${metres(d.saws.added[0])}`; break;
       case 'saw-remove': if (d.saws.removed.length) return `Saw removed at ${metres(d.saws.removed[0])}`; break;
       case 'saw-move': if (d.saws.added.length && d.saws.removed.length) return `Saw moved ${metres(d.saws.removed[0])} → ${metres(d.saws.added[0])}`; break;
       case 'disco-add': if (d.discos.added.length) return `Disco ball added at ${metres(d.discos.added[0].x)}, ${metres(d.discos.added[0].y)} up`; break;
       case 'disco-remove': if (d.discos.removed.length) return `Disco ball removed at ${metres(d.discos.removed[0].x)}`; break;
       case 'disco-move': if (d.discos.added.length) return `Disco ball moved to ${metres(d.discos.added[0].x)}, ${metres(d.discos.added[0].y)} up`; break;
+      case 'laser-add': if (d.lasers.added.length) return `Laser added at ${metres(d.lasers.added[0].x)}, row ${d.lasers.added[0].row}, firing ${d.lasers.added[0].dir ? 'right' : 'left'}`; break;
+      case 'laser-remove': if (d.lasers.removed.length) return `Laser removed at ${metres(d.lasers.removed[0].x)}`; break;
+      case 'laser-move': if (d.lasers.added.length) return `Laser moved to ${metres(d.lasers.added[0].x)}, row ${d.lasers.added[0].row}, firing ${d.lasers.added[0].dir ? 'right' : 'left'}`; break;
+      case 'lava-add': if (d.lava.added.length) return `Lava added at ${metres(d.lava.added[0].x)}, ${plural(d.lava.added[0].len, 'cell')}`; break;
+      case 'lava-remove': if (d.lava.removed.length) return `Lava removed at ${metres(d.lava.removed[0].x)}`; break;
+      case 'lava-move': if (d.lava.added.length) return `Lava moved to ${metres(d.lava.added[0].x)}, ${plural(d.lava.added[0].len, 'cell')}`; break;
+      case 'spring-add': if (d.springs.added.length) return `Put in a Spring at ${metres(d.springs.added[0].x)}`; break;
+      case 'spring-remove': if (d.springs.removed.length) return `Spring taken out at ${metres(d.springs.removed[0].x)}`; break;
+      case 'spring-move': if (d.springs.added.length && d.springs.removed.length) return `Spring moved ${metres(d.springs.removed[0].x)} → ${metres(d.springs.added[0].x)}`; break;
+      case 'spring-lift': if (d.springs.added.length) return `Spring: Lift ${d.springs.added[0].power}`; break;
       case 'cols-in': case 'paste': {
         const n = hint && hint.c0 !== undefined ? hint.c1 - hint.c0 + 1 : d.inserted.reduce((t, r) => t + r.c1 - r.c0 + 1, 0);
         const at = hint && hint.c0 !== undefined ? hint.c0 : d.inserted.length ? d.inserted[0].c0 : -1;

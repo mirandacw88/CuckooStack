@@ -2,7 +2,10 @@
 // Every edit returns new rows (the editor's undo keeps whole grids). No DOM here: tests/grid.test.mjs runs it in Node.
 //
 // Cells (Gauntlet.h): '#' stone, 'H' cyber cube, 'B' bumper, 'R' / 'L' one-way gate (passed running right / left),
-// 'S' a saw in stone, 'C' a saw in a cube, '>' the entry (left edge), 'X' the exit (right edge), '.' air. Row index i
+// 'S' a saw in stone, 'C' a saw in a cube, '(' / ')' stone with a wall laser in its left / right face (firing that way
+// along its row through the air: beamCells), '~' lava (a floor that burns an egg a cell), '^' a spring (a floor she's
+// launched off: up 5 rows and on, Gauntlet::flightFrom), '>' the entry (left edge),
+// 'X' the exit (right edge), '.' air. Row index i
 // counts from the top; the game's row is rows.length - 1 - i (0 at the street).
 
 export const CELLS = [
@@ -14,19 +17,39 @@ export const CELLS = [
   { ch: 'L', name: 'Gate ←', key: '6', tip: 'One-way gate she passes running left' },
   { ch: 'S', name: 'Saw', key: '7', tip: 'A blade in stone: each crossing takes an egg, or her' },
   { ch: 'C', name: 'Cube saw', key: '8', tip: 'A blade in a cyber cube' },
+  { ch: '(', name: 'Laser ←', key: '[', tip: 'Stone with a laser in its left face, firing left through the air: an egg in its row cut out, her body there cut in half' },
+  { ch: ')', name: 'Laser →', key: ']', tip: 'Stone with a laser in its right face, firing right through the air' },
+  { ch: '~', name: 'Lava', key: '=', tip: 'A floor that burns the egg under her stack, one a cell' },
+  { ch: '^', name: 'Spring', key: '\\', tip: 'A pad she is launched off as she runs over it: up 5 rows and on at 8 m/s, no eggs laid in the air; she lands on the first floor or ledge under her' },
   { ch: '>', name: 'Entry', key: '9', tip: 'The door in, on the left edge: click a row to move it' },
   { ch: 'X', name: 'Exit', key: '0', tip: 'The door out, on the right edge: click a row to move it' },
 ];
 export const CELL = Object.fromEntries(CELLS.map((c) => [c.ch, c]));
 export const DOORS = new Set(['>', 'X']);
-export const SOLID = new Set(['#', 'H', 'B', 'S', 'C']); // (gates are no floor, no roof)
+export const SOLID = new Set(['#', 'H', 'B', 'S', 'C', '(', ')', '~', '^']); // (gates are no floor, no roof)
 
-const MIRROR = { '>': 'X', X: '>', R: 'L', L: 'R' };
+const MIRROR = { '>': 'X', X: '>', R: 'L', L: 'R', '(': ')', ')': '(' };
 
 export const cols = (rows) => (rows.length ? rows[0].length : 0);
 export const at = (rows, c, i) => (i >= 0 && i < rows.length && c >= 0 && c < cols(rows) ? rows[i][c] : '#');
 export const gameRow = (rows, i) => rows.length - 1 - i;
 export const index = (rows, r) => rows.length - 1 - r;
+
+// the lasers' beams: from each '(' / ')' along its row through the air to the first cell that isn't (Gauntlet::parse):
+// [{ c, i, d, c0, c1 }] (its cell, the way it fires, the first and last cell its beam crosses; c1 < c0: none)
+export function beamCells(rows) {
+  const out = [];
+  for (let i = 0; i < rows.length; i++)
+    for (let c = 0; c < cols(rows); c++) {
+      const ch = rows[i][c];
+      if (ch !== '(' && ch !== ')') continue;
+      const d = ch === '(' ? -1 : 1;
+      let n = 0; // (the air cells it crosses)
+      while (c + d * (n + 1) >= 0 && c + d * (n + 1) < cols(rows) && rows[i][c + d * (n + 1)] === '.') n++;
+      out.push({ c, i, d, c0: d > 0 ? c + 1 : c - n, c1: d > 0 ? c + n : c - 1 });
+    }
+  return out;
+}
 
 function put(row, c, ch) {
   return row.slice(0, c) + ch + row.slice(c + 1);
@@ -184,13 +207,14 @@ export function flip(block) {
 }
 
 // What's left where a block was lifted: each of its rows filled with what that row has just outside the block (left,
-// else right): a blade lifted from a floor leaves floor, a pillar lifted from a room leaves air
+// else right): a blade lifted from a floor leaves floor, a pillar lifted from a room leaves air (a laser or lava beside
+// it: plain floor)
 export function vacate(rows, c0, i0, c1, i1, fallback = '#') {
   const [ca, cb] = [Math.min(c0, c1), Math.max(c0, c1)];
   let out = rows;
   for (let i = Math.min(i0, i1); i <= Math.max(i0, i1); i++) {
     const left = ca > 0 ? at(rows, ca - 1, i) : null, right = cb < cols(rows) - 1 ? at(rows, cb + 1, i) : null;
-    const pick = (ch) => (ch && !DOORS.has(ch) && ch !== 'S' && ch !== 'C' ? ch : null);
+    const pick = (ch) => (ch === '~' || ch === '^' || ch === '(' || ch === ')' ? '#' : ch && !DOORS.has(ch) && ch !== 'S' && ch !== 'C' ? ch : null);
     out = fillRect(out, ca, i, cb, i, pick(left) || pick(right) || fallback);
   }
   return out;

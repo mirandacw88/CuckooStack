@@ -23,7 +23,7 @@ added.
 | --- | --- | --- | --- |
 | Neon city | 1–10 | walls, barriers, drops; the droid's raids (from 5) | live |
 | Neon Egypt | 11–20 | saw blades | live |
-| Neon Japan | 21–30 | lasers that shoot from walls | to come |
+| Neon Japan | 21–30 | wall lasers; lava | built (the user places them on authored levels) |
 
 Each zone keeps the hazards of the zones before it.
 
@@ -64,18 +64,103 @@ happens, how it looks).
 
 - **Developer menu:** "Next run: saws" puts about one saw per 25 m on the next run, on any level.
 
+## Wall lasers and lava (any level)
+
+Both are in every level's tool set: on an authored level they are where the user puts them; on a level without an
+authored file the course generator places them (`Level::placeLaserOrLava`, counts `Campaign::lasersOf` /
+`lavaOf`, charged to the egg budget). Code: `hazards/Laser.cpp` / `Lava.cpp` (the rows), `GameLaser.cpp` /
+`GameLava.cpp` (play and look).
+
+- **Wall laser** (`lasers`: `x row dir`): a turret set into a wall's or a block's side (x a column's edge), its beam
+  `row` eggs up from the street, firing left (`dir` 0) or right (1) along the course as far as the first solid cell
+  in that row (16 m at most). As she comes near it charges (a laser pointer's line and dot, a split second), then
+  fires a thick beam. It hits her once a pass, the first time its row meets her: an egg there is cut in half (the eggs
+  above drop; the one right under her: CLOSE SHAVE), her body there cuts her in half; just over her head: CLOSE CALL.
+  Falling down through its row, her bottom egg meets it first. The generator sets them in a drop's face (she falls
+  through: an egg).
+- **Lava** (`lava`: `x len`): `len` cells (0.6 m each) of molten floor on the street or a wall top. Each cell she
+  crosses burns the egg under her; with none, she burns up. Stack `len` eggs before it (the last: CLOSE SHAVE).
+- **In mazes:** `(` stone with a laser in its left side (fires left), `)` in its right side (fires right), `~` a lava
+  floor cell; the same rules.
+
+## Springs and bouncers on the course
+
+- **Spring** (`springs`: `x power`): a pad that launches her, stack and all, `power` rows up (2 to 12) with her speed kept.
+  - She flies over what's ahead with no eggs and lands where the arc comes down (`CourseRules.h` `springFlight`: the game's own physics).
+  - Its front meeting a wall's face below her feet crashes her; so does her head meeting a barrier.
+  - The checker flies it at every speed she may run at (0.8 to 1.24 of the curve's). It notes a crash, a landing too short to react on, and a spring off the flat or too soon after a drop.
+  - What it flies her over costs no eggs.
+  - ![A spring launch](images/hazard-spring.png)
+- **Bumper and gate walls** (`N h bumper`, `N h gate>`, `N h gate<`): each group of them (40 cells apart at the most) is a **bounce zone**, an open-air gauntlet of the course's cells there (`Level::buildZones`).
+  - She plays a zone by the maze's rules. A bumper at her body turns her back. A gate lets her through its way only and is never a floor. She stacks while she bounces to climb out.
+  - The checker solves each zone. It must be possible to get out by stacking, with no bouncing forever. A careful player's meter, refilling as she bounces, must get her out.
+  - Not yet allowed in a zone: wall lasers, and saws, lava and springs on the street (a zone's grid has no row for them; set them in a wall's top).
+  - A spring on a wall's top in a zone is a spring cell of the zone's grid and is flown by the maze's arc (below), not the course's `power`; the checker skips it (the zone's solver judges it).
+  - ![A bounce zone](images/hazard-bumper.png)
+
+## Generated levels: the rhythm-beat generator (levels without a file)
+
+`LevelBeats.h`, after Launchpad (Smith and Whitehead), Compton and Mateas, Tanagra and the expressive-range work.
+
+- **Rhythm first:** groups of beats (stack, shed, duck, wait, launch, bounce), each with a tempo (regular, swing or random), a density and a length. A rest with disco balls comes between groups.
+- **Geometry second:** each beat becomes a piece from a grammar: a climb, a staircase, a saw on a climb's top, a drop, a valley, a mesa, a laser drop, a barrier, a saw or row of saws, lava, a spring, a spring over lava, or a bounce box.
+  - The timing rule: a piece whose fall or flight would run into the next beat isn't chosen.
+  - Pieces come in difficulty tiers, chosen apart from their kind.
+- **The level's arc:** a star verb turns level by level. It's taught alone and gently, tested with the basics, twisted in a composite, and ends in a dense finale.
+- **Generate and test:** candidates are laid from the seed until 40 pass the checker. The critics score them on three things:
+  - the interest curve (a hook, a dip, a build to the climax);
+  - the mix of pieces;
+  - variety (no two groups alike, no endless staircases).
+- **The bot gate:** the game's bot plays the best ones, best first, until one clears. Levels 31 to 100 all clear (`LevelBeats_test`).
+- **Density** (the editors' slider, 0 to 10; the campaign uses 0): Launchpad's knobs, turned up together.
+  - Beats come closer: their spacing is cut to a quarter at 10.
+  - Each piece takes only the run it needs.
+  - Rests become fewer and shorter: one group in five gets one at 10, half as long. From 7 there are none but the one before the finale.
+  - Groups get longer.
+  - The hard tier comes more often.
+  - A density critic aims for 0.85 + 0.12 × density moments a second, plus 0.6 × (density − 5) / 5 above 5.
+  - **Super hard (6 to 10):** the level carries a `hard N` line, and the checker's human margins shrink with it (`CourseRules.h` `marginScale`).
+    - The margins are reaction runs, landing reactions, the gap between hazards for the meter to refill, and the egg budget's spare egg.
+    - The margins scale 1.0 up to 5, then 0.9, 0.8, 0.7, 0.6 and 0.5 for 6 to 10; at 10 there's no spare egg. The generator lays pieces to the same margins and leans on egg-free moments: drops, barriers, and a climb under a barrier.
+    - Densest, 10 comes out at about 0.46 to 0.54 s between moments, against about 1.15 s at 0. The meter is the limit: eggs refill about one each 0.44 s at full speed.
+    - Every course is still cleared by the game's bot.
+  - If nothing passes the checker and the bot at the density asked for, the course is laid a notch down.
+- **Set pieces** (Compton and Mateas's complex and composite patterns): at every density, bigger and more often up the slider (cluster size 2 at 0, 5 at density 6, 9 at 10; saw rows reach 8 blades, lava pools 6, mixed clusters 8).
+  - Mixed clusters: a saw, lava, a laser drop and a saw on a step, back to back. The checker spaces each kind from its own last, so mixed kinds pack tighter.
+  - Saw rows, lava pools and laser staircases.
+  - Block staircases: floating blocks she climbs from top to top.
+  - Barrier staircases: the floor stepping up under one ceiling.
+  - Weaves (over a block, under a block, over), and pockets (a low block with a saw or lava past it).
+  - Springs onto floating blocks, and on up a block staircase from there.
+  - Deadly bounce boxes: a step inside the box with a saw or lava on its top, or a laser in its face. A bare step's far face, met when the bumper turns her back, crashes her unless she's stacked over it.
+- **Storeys and floating floors** (every density; levels 31 and up and the editors' Roll): she climbs to a higher floor, plays on it, and comes back down. The level doesn't have to end on the street: it finishes on whatever floor the path ends on, and the run past the finish line carries on at that height (90 m of it, for the celebration).
+  - **A storey base.** The builder knows the floor of the storey she's on. Climbs go up to the curve's cap over it; nothing is ever higher than 18 rows. Drops stop at the storey's floor, and a bounce box (whose zone stands on the street) is only laid on the street.
+  - **New pieces:** `A` an ascent (a staircase of climbs up 4 to 6 rows, each step with a run-up the egg meter can afford), `F` a spring onto a floating floor, `G` a spring from a floating floor or a storey to a higher floating floor, `D` a descent (a staircase of drops, some with a wall laser in a face (on a storey, not a floating floor); off a floating floor, one long fall with the landing the margins need). The springs are found by `springTo`'s search, so every running speed lands her on the floor.
+  - **A floating floor** is a slab two rows thick over the open street (`h 0`, underside `top - 2`, `top`). While she is on one the builder lays slabs instead of walls, so climbs (3 rows at most: a higher step puts the next slab's underside over her head), drops, saws, lava and springs all work up there. Wall lasers aren't laid on them yet (the checker's egg count for a laser reads the walls, not the slabs). Pieces that need a wall's own barrier (barriers, block stairs, weaves, pockets, bounce boxes, springs onto blocks) are skipped there.
+  - **The floor path:** each level gets a list of storey moves from its seed before laying starts. About 40% of levels are linear (a ramp up and down, a single peak, a long climb that ends high), the rest a random walk (never under the street or over the third storey, never the same move more than four times in a row; about 6 moves at level 31, 13 at 100). Moves are due evenly from after the teach group (which stays on the street) to the finale; each is laid as the piece for the next beat once it is due. A move that can't be laid (no room up there, no storey under her, eight tries) is dropped. With springs switched off: ascents only.
+  - **Never flat:** the critics add the time spent over the street (the floor she runs at on average along the course), and a course that stays on the street most of the way (less than a third over it) isn't a candidate. The mix critic counts the storey pieces.
+  - **The checker** takes a floating floor she lands on from a spring as one she is up on (`LevelJudge`: the spring's flight lands her on its top), and a spring may sit on a floating floor's top (`hazards/Spring.cpp`).
+- **Bounce zones carry lava and lasers** as the maze's cells. The checker solves each zone for the stack she may arrive with (from none up to what the meter holds), so a box that needs a stack going in is fair.
+- **Expressive range:** `build/level_range` and `scripts/levels/expressive_range.py`.
+  - ![Expressive range](images/expressive-range.png)
+- Generated levels: ![Level 33](images/generated-level-33.png) ![Level 34](images/generated-level-34.png) ![Level 35](images/generated-level-35.png)
+- **Kept for now:**
+  - The classic generator (a wall at a time) still lays a course that has a maze in it.
+  - It also lays the developer menu's saws run, and is the fallback when nothing passes.
+  - The daily endless course keeps it too.
+
 ## Maze gauntlets (levels 11 on)
 
 Enclosed sections of a level: the hen runs through on her own at the run's full speed, and turns back only off bumper
 walls and gates set against her. Neon Egypt's five are on 11, 13, 15, 17 and 19, each its own; which level plays which
 is the levels' data (a level's course lays its gauntlet: "Levels as authored", below), so the level editor moves a
 gauntlet between levels, and a gauntlet plays in one level at most. Code: `Gauntlet.{h,cpp}` (the grid and its solver),
-`Gauntlets.cpp` (the layouts, from `GauntletLayouts.inc`), `GauntletDesigns.cpp` (each design's signature),
+`LevelCatalog.cpp` (the layouts, from `GauntletLayouts.inc`, and the levels: each game's own catalog), `GauntletDesigns.cpp` (each design's signature),
 `GameGauntlet.cpp` (play and look), `Level::load` (its span on an authored course), `Level::placeGauntlet` (the
 generator's). Their grids: `assets/gauntlets/<name>.txt`, tuned in the level editor (below).
 
 - **Cells:** `#` stone, `H` cyber cube (stone in the cubes' look), `B` bumper, `R`/`L` one-way gate (passed running
-  right / left), `S` floor saw, `C` cube saw, `>` entry (left edge), `X` exit (right edge), `.` air; one cell is one egg
+  right / left), `S` floor saw, `C` cube saw, `(`/`)` stone with a wall laser in its left/right side, `~` lava, `>` entry (left edge), `X` exit (right edge), `.` air; one cell is one egg
   high (0.6 m).
 - **Rules:** a bumper at her body turns her back; a gate lets her through its way and, the other way, turns her back
   like a bumper (it's never a floor or a roof: she drops through it); stone or a cube at her body crashes her; anything
@@ -149,6 +234,60 @@ generator's). Their grids: `assets/gauntlets/<name>.txt`, tuned in the level edi
   blade at the foot of every well and the turnstile, the labyrinth's forks, the Descending Passage's 12 CLOSE SHAVEs in
   a row); and no two gauntlets alike, mirror images included. The bot plays each through in the real game, showing
   the near misses the solver counts (`GameGauntlet_test`, `GameDev_test refillKeepsUp`).
+- **Generated mazes** (`src/editor/MazeGen.cpp`, the editors' Gauntlet generator): a tower of 3, 5 or 7 floors stacked one over
+  another, the tomb's way: right along the first floor, up a shaft through a one-way gate stacked over its wall, left along
+  the next, ... and the last runs right to the exit (`floors` is odd). `width` is the grid's width. Every one made is judged by
+  `gauntletReady` and thrown away if it fails; a short tower (3 floors under about 200 wide) has too few near misses to
+  find 15, so if none of 60 tries is ready at that width, 60 more are made wider (a quarter wider, 220 / 150 / 110 at the least
+  for 3 / 5 / 7 floors), `MazeGenResult::widened`.
+  - **The floor rises and falls inside each floor.** A floor's corridor is cut into 2 to 5 stretches at different heights, along
+    a floor path (`makePath`: linear, a ramp or a peak or a climb, or a random walk; a move is 2 to 4 rows, and the floor is left
+    4 rows of head room at its highest stretch). Up: the next stretch's floor is a stone wall she stacks over (its eggs stacked
+    in time: the hazards stop `4 x rise + 2` cells before it). Down: she walks off the edge (a drop; the hazards start 6 cells
+    on). The last stretch of a floor she climbs out of is high (the gate's climb is 8 eggs at the most: `h + 1 - its rise`), the
+    first of the next at the shaft's top; the top floor's last stretch may drop before the exit (the exit is then lower than its
+    highest stretch, but on the top floor). Floors are 6 to 11 high in a tower of 3; the exit's porch is a course wall, and
+    `LevelData` allows walls 40 rows at the most (the stair down off it is kept under 36), so the floors of a tower of 5 are
+    5 to 10 high and those of 7 are 4 to 9, the tallest cut back till the exit fits: a tower of 7 is mostly flat inside.
+  - **Wall lasers** are let loose only where the beam stops inside its stretch (never across into the stretch beside it, or
+    the shaft). A dip's laser, firing back over her head, has a stub of the roof 5 to 9 cells back that stops the beam; the
+    next hazard comes 12 cells after it, so the bot isn't asked to lay an egg for it while the beam is over her.
+  - **Ledges.** A stretch she drops into (4 rows or more) that is 8 high or more hangs one or two stone ledges in mid-air under
+    the drop, 2 thick, 14 to 24 long, a drop or three apart, stepping down to the floor. She lands on the first from the edge,
+    runs off its end onto the next, and off that onto the floor. They have the stretch's hazards on them (a saw `S`/`C` or lava
+    `~` in the top, a step, a dip, at times a wall laser in the last one's face). A ledge is never reached from below: stacking up
+    into its side crashes her (a solid cell in front of the stack that doesn't rise from her floor), so a ledge is reached by a
+    drop from above, or by a spring (below).
+  - **Springs** (`^`, key `\`). A floor cell, stone to everything else, with the course spring's pad drawn on it. She is
+    launched as her middle reaches the cell's middle: `Gauntlet::kSpringPower` (5) rows up and on at `kFlightSpeed` (8 m/s: the
+    game's slowest run, the same at every level's speed so the solver, the bot and the game fly one arc), no egg laid in the air.
+    `Gauntlet::flightFrom` works the arc out at 240 steps a second, inside one `step`: a column her front edge comes into is
+    looked at as on the ground (a bumper or a gate against her bounces her mid-air, any other wall in her way crashes her), a solid
+    cell over her stack or body crashes her (a roof), and she lands on the highest floor under her footprint. A blade within 0.9 rows
+    of her and 1.5 cells along, a laser's beam 1.5 cells off, a landing on a blade, lava or another spring, and the exit (not out by
+    air) are all a crash in the solver, because the game's saws, lasers and lava would act on her where the solver has nothing to
+    say: put the landing in a clear stretch. The game follows the solver's plan in time (`Game::launchGauntlet`/`flyGauntlet`), so
+    she comes down where the solver says; the bot lays nothing on a spring cell or in the air. A course spring on a bounce zone's wall
+    top is a spring cell in the zone, flown the same way.
+  - **Generated springs** (`MazeOptions::springs`, on by default; about half the floors of 3 and 5 have one). A stretch 8 high
+    or more, followed by a step up of 2 to 4 rows into a stretch 6 high or more, may have a spring in its floor near its end that
+    flies her over the stacked wall onto the floor of the next stretch: the stacked wall behind it is never walked, the pad
+    launching her, so it is no second way. A stretch 8 high or more that isn't a drop's may hang a ledge in mid-air, 3 or 4 rows
+    over its floor and 12 to 20 long, that a spring flies her onto; she runs along it, past its hazards, and off its end. Each is
+    found by trying columns on the floor's carved grid with `flightFrom` and kept only where she lands where she should; where
+    nothing fits the stretch is as it was. A stretch with a spring has no wall lasers (a beam across the arc), and the hazards
+    start again 4 cells before the pad and 5 cells past her landing (the first thing there takes the egg she has no spare of).
+  - **Density, 0 to 10** (`MazeOptions::density`, the slider on the iPad's Gauntlet generator card). With d = density / 10,
+    the gap between hazards runs from `cost x cellsPerEgg x 1.4 + 1 to 6` cells (0) to `x (1.4 - 0.7 d) + 0 to 2` (10; a
+    gap is 3 cells at the least from 6, 4 below), and hazards come back to back (2 or 3 cells apart) in clusters: after
+    each hazard a cluster starts with a `6 x density` percent chance, 1 to `1 + 3 d` more, mixed; saw rows reach 2 + up to
+    `1 + 2 d` blades (5 at 10), lava runs up to `4 + 2 d` cells. At 0 it is as it was.
+  - **Bent from 6.** A maze made at density 6 or more has a `; hard N` line in its file (a note line: every reader that
+    skips `;` lines is unaffected, and the web editor and `GridDoc` keep it as part of the description; `Gauntlet::parse`
+    reads it, `Gauntlet::hard()`, 0 if none, so an authored gauntlet is judged exactly as before). `gauntletReady` then
+    asks the bot to get out with the meter refilling `1.25 - 0.05 (N - 5)` times slower than the level's (1.0 at 10: no
+    spare) and wants `15 + (N - 5)` near misses (20 at 10). The report (`--json`) says `hard` and `wantMisses`, and its
+    hardest meter run uses the bent rate.
 - **Look (Neon Egypt):** a tomb's back walls are inscribed like the Pyramid Texts, in neon: a column of hieroglyphs
   (birds and the egg most of all) up every room, a blank dado by the floor, stars along the top of tall rooms, rules
   between the columns, and cartouches in the great hall naming it "Cuckoo" (k-w-k-w). They glow dim gold till she
@@ -180,6 +319,10 @@ saws                                    each saw's hub, metres along (set into t
 14.1 22.5
 discos                                  each disco ball: metres along, metres up
 10.5 1.45
+lasers                                  each wall laser: its wall's side (metres along), its row (eggs up), 0 fires left / 1 right
+30.6 1 0
+lava                                    each lava stretch: metres along (its start), its length in cells
+42 3
 ```
 
 - **Checked** (`build/level_check --file assets/levels/level_13.txt --level 13`): its walls, barriers, saws, disco
@@ -212,7 +355,10 @@ or the start on the course for what it is and does there. Two views (⇧G switch
     to the street), Kind (crates, hay, hay-topped), Barrier (its underside at a row), Saw (a blade on a wall top;
     near another it snaps a blade's gap from it, blades back to back; drag one along), Disco, Columns (copied in after
     themselves or taken out, what's after them moving on: saws, disco balls, the finish), Select (copy, cut, put in
-    columns), Gauntlet (drag it along: its forecourt, lintel and porch come with it), the finish line (drag its flag).
+    columns), Gauntlet (drag it along: its forecourt, lintel and porch come with it; off a porch that comes out high a fair
+    stair down to the course, `EditCourse.cpp stairDown`; off one that comes out low onto a wall too tall to climb, a stair up
+    in front of it, `stairUp`: each climb the curve's tallest at the most, the meter's margin to spare, on a run-up that
+    refills it, the course after it moving on), the finish line (drag its flag).
     The inspector: the finish line, the difficulty band (the speed and refill it gives), the droid's raids, the zone,
     and its gauntlet: pick one (one in another level moves here, that level's span and approach street again), Edit
     its grid, or New gauntlet (a plain room to design from; into this level if it has none). Undo all of it.

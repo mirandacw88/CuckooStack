@@ -118,6 +118,7 @@ void Game::removeBarrier(Segment& sg) {
     bonus_ += cols * POINTS_PER_BLOCK;
     smashed_ += cols;
     sg.ceil = 0;
+    sg.top = 0; // (a floating block goes with its underside)
 }
 
 void Game::smashAhead() {
@@ -137,7 +138,8 @@ void Game::smashAhead() {
             changed = true;
         }
         // an overhead barrier she would hit, on the segment ahead or the one she is under
-        if (sg.ceil && x_ + 0.25 + 0.15 >= sg.x0 && x_ + 0.22 < sg.x1 && henTop > sg.ceil * U + 0.02) {
+        if (sg.ceil && x_ + 0.25 + 0.15 >= sg.x0 && x_ + 0.22 < sg.x1 && henTop > sg.ceil * U + 0.02 &&
+            !(sg.top && baseY_ + eggs_.size() * U >= sg.top * U - 0.05)) { // (not one she's riding, or stacked to climb onto)
             removeBarrier(sg);
             changed = true;
         }

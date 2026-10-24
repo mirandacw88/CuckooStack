@@ -11,7 +11,7 @@ function build() {
   card.setAttribute('role', 'tooltip');
   document.body.append(card);
 }
-function fill(title, text, key) {
+function fill(title, text, key, warn) {
   card.innerHTML = '';
   if (title || key) {
     const head = document.createElement('div');
@@ -21,6 +21,7 @@ function fill(title, text, key) {
     card.append(head);
   }
   if (text) { const p = document.createElement('div'); p.className = 'tip-text'; p.textContent = text; card.append(p); }
+  if (warn) { const p = document.createElement('div'); p.className = 'tip-warn'; p.textContent = warn; card.append(p); }
 }
 function place(x, y, w, h, side) { // (beside a box: its side if it fits, else the other; always on screen)
   const cw = card.offsetWidth, ch = card.offsetHeight, gap = 10, W = window.innerWidth, H = window.innerHeight;
@@ -58,10 +59,10 @@ export function hide() {
   if (card) card.style.display = 'none';
   shownFor = null;
 }
-// a card at a point (the canvases: what's under the pointer); content: { title, text, key }
+// a card at a point (the canvases: what's under the pointer); content: { title, text, key, warn (a line in red) }
 export function showAt(px, py, content) {
   if (!card) build();
-  fill(content.title, content.text, content.key);
+  fill(content.title, content.text, content.key, content.warn);
   card.style.display = 'block';
   if (!card.classList.contains('in')) { card.classList.remove('in'); void card.offsetWidth; card.classList.add('in'); }
   place(px + 14, py + 14, 0, 0, 'below');
